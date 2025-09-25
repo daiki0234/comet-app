@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Hiragino Kaku Gothic ProN", "Hiragino Sans", "BIZ UDPGothic", Meiryo, sans-serif;
+  background-color: #F9F9FB;
+  color: #2C2C2E;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* react-calendarのスタイル上書き */
+.react-calendar {
+  border-radius: 12px !important;
+  border: 1px solid #E5E5EA !important;
+  font-family: inherit !important;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+}
+.react-calendar__tile--active {
+  background: #007AFF !important;
+  color: white !important;
+  border-radius: 8px !important;
+}
+.react-calendar__tile--active:hover {
+  background: #0070E0 !important;
+}
+.react-calendar__tile--now {
+  background: #EBF5FF !important;
+  color: #007AFF !important;
+  border-radius: 8px !important;
+}
+.scheduled-day { 
+  background-color: #d1e7dd !important; 
+  border-radius: 8px !important;
+}
+
+/* ★★★ ここから追加 ★★★ */
+/* カレンダーの横幅の制限を解除し、親要素に追従させる */
+.react-calendar {
+  width: 100% !important;
+  max-width: none !important; 
+}
+
+/* 日付タイルの高さを確保して、文字が切れないようにする */
+.react-calendar__tile {
+  height: 64px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
+  padding-top: 4px;
+}
