@@ -105,7 +105,7 @@ const scheduledUserIds = new Set(eventsSnapshot.docs.map(doc => doc.data().userI
     fetchData();
   }, [viewDate, fetchData]); // viewDateが変更されたら再実行
   
-  const handleScan = useCallback(async (result: string) => {
+  const handleScanSuccess = useCallback(async (result: string) => {
     if (isProcessing) return;
     setIsProcessing(true);
     const loadingToast = toast.loading('QRコードを処理中です...');
@@ -153,6 +153,10 @@ const scheduledUserIds = new Set(eventsSnapshot.docs.map(doc => doc.data().userI
       setTimeout(() => setIsProcessing(false), 2000); // 2秒のクールダウン
     }
   }, [isProcessing, fetchData]);
+
+  const handleScanFailure = (error: string) => {
+    // console.warn(`QR error = ${error}`);
+  };
 
 const handleAddAbsence = async () => {
     if (!absentUserId) { return toast.error('利用者を選択してください。'); }
@@ -235,7 +239,8 @@ const handleAddAbsence = async () => {
             <h3 className="text-lg font-bold text-gray-800 mb-4">QRコードスキャン (本日分)</h3>
             <p className="text-center text-gray-600 mb-4">利用者のQRコードをカメラにかざしてください。</p>
             <QrCodeScanner
-              onScanSuccess={handleScan}
+              onScanSuccess={handleScanSuccess}
+              onScanFailure={handleScanFailure}
             />
             <p className="text-sm text-gray-500 mt-4 h-10">スキャン結果: <span className="font-semibold text-gray-700">{scanResult}</span></p>
           </div>
