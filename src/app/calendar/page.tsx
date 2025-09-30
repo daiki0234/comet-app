@@ -6,20 +6,51 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 import { db } from '@/lib/firebase/firebase';
-import { collection, getDocs, query, where, doc, setDoc, addDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, setDoc, addDoc, serverTimestamp, updateDoc ,deleteDoc } from 'firebase/firestore';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { AppLayout } from '@/components/Layout';
 import { ServiceRecordSheet } from '@/components/ServiceRecordSheet';
 import { createRoot } from 'react-dom/client';
 
+
 // 型定義
 type User = { id: string; lastName: string; firstName: string; allergies?: string; serviceHoDay?: string; serviceJihatsu?: string; serviceSoudan?: string; };
-type EventData = { id: string; userId: string; date: string; type: '放課後' | '休校日'; };
+type EventData = {
+  id: string;
+  userId: string;
+  date?: any;               // 既存互換（文字列 or Timestamp）
+  dateKeyJst?: string;      // ★ 追加：JSTキー "yyyy-MM-dd"
+  type: '放課後' | '休校日';
+};
 type Event = EventData & { userName: string; user: User; };
 type PseudoRecord = { userName: string; date: string; usageStatus: '放課後' | '休校日' | '欠席' | null; notes?: string; };
 type GroupedUsers = { [serviceName: string]: Event[]; };
 
+// --- JSTユーティリティ（保存・照合兼用） ---
+const pad2 = (n: number) => n.toString().padStart(2, "0");
+
+/** 入力が Date / "yyyy-MM-dd" / "yyyy/MM/dd" / ISO / 未指定 でも JSTキーを返す */
+const jstDateKey = (src?: string | Date): string => {
+  let d: Date;
+  if (!src) {
+    d = new Date();
+  } else if (src instanceof Date) {
+    d = src;
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(src)) {
+    const [y, m, dd] = src.split("-").map(Number);
+    d = new Date(Date.UTC(y, m - 1, dd, 0, 0, 0));
+  } else if (/^\d{4}\/\d{2}\/\d{2}$/.test(src)) {
+    const [y, m, dd] = src.split("/").map(Number);
+    d = new Date(Date.UTC(y, m - 1, dd, 0, 0, 0));
+  } else {
+    d = new Date(src);
+  }
+  const jst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  return `${jst.getUTCFullYear()}-${pad2(jst.getUTCMonth() + 1)}-${pad2(jst.getUTCDate())}`;
+};
+
+/** 既存の画面表示用（日付文字列） */
 const toDateString = (date: Date) => date.toISOString().split('T')[0];
 
 export default function CalendarPage() {
@@ -50,14 +81,14 @@ export default function CalendarPage() {
 
   const dailyScheduledUsers = useMemo(() => {
     if (!selectedDate || users.length === 0) return [];
-    const dateStr = toDateString(selectedDate);
+    const dateKey = jstDateKey(selectedDate!);
     return allEvents
-      .filter(event => event.date === dateStr)
-      .map(event => {
-        const user = users.find(u => u.id === event.userId);
-        return { ...event, userName: user ? `${user.lastName} ${user.firstName}` : '不明', user: user! };
-      })
-      .filter(e => e.user);
+        .filter(event => (event.dateKeyJst ?? event.date) === dateKey)
+        .map(event => {
+          const user = users.find(u => u.id === event.userId);
+          return { ...event, userName: user ? `${user.lastName} ${user.firstName}` : '不明', user: user! };
+        })
+        .filter(e => e.user);
   }, [selectedDate, users, allEvents]);
 
   const userSchedule = useMemo(() => {
@@ -66,7 +97,8 @@ export default function CalendarPage() {
 
   const eventCounts = useMemo(() => {
     return allEvents.reduce((acc, event) => {
-      acc[event.date] = (acc[event.date] || 0) + 1;
+      const key = (event.dateKeyJst ?? event.date) as string;
+      acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {} as { [date: string]: number });
   }, [allEvents]);
@@ -74,29 +106,39 @@ export default function CalendarPage() {
   const handleDateClickForScheduling = (clickedDate: Date) => {
     if (!selectedUserId) { alert('先に利用者を選択してください。'); return; }
     setSelectedDateForModal(clickedDate);
-    const dateStr = clickedDate.toISOString().split('T')[0];
-    const existingEvent = userSchedule.find(event => event.date === dateStr);
+const dateKey = jstDateKey(clickedDate);
+const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date) === dateKey);
     setEventType(existingEvent ? existingEvent.type : '放課後');
     setIsModalOpen(true);
   };
 
   const handleSaveEvent = async () => {
     if (!selectedUserId || !selectedDateForModal) return;
-    const dateStr = selectedDateForModal.toISOString().split('T')[0];
-    const existingEvent = userSchedule.find(event => event.date === dateStr);
-    if (existingEvent) {
-      await setDoc(doc(db, "events", existingEvent.id), { type: eventType }, { merge: true });
-    } else {
-      await addDoc(collection(db, 'events'), { userId: selectedUserId, date: dateStr, type: eventType });
-    }
+    const dateKey = jstDateKey(selectedDateForModal);
+const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date) === dateKey);
+
+if (existingEvent) {
+  await setDoc(
+    doc(db, "events", existingEvent.id),
+    { type: eventType, dateKeyJst: dateKey },     // ★ JSTキーも補正保存
+    { merge: true }
+  );
+} else {
+  await addDoc(collection(db, 'events'), {
+    userId: selectedUserId,
+    dateKeyJst: dateKey,                          // ★ JSTキーで保存（本丸）
+    date: serverTimestamp(),                      // 実時刻も別フィールドで保持（任意）
+    type: eventType
+  });
+}
     setIsModalOpen(false);
     await fetchInitialData();
   };
 
   const handleDeleteEvent = async () => {
     if (!selectedUserId || !selectedDateForModal) return;
-    const dateStr = selectedDateForModal.toISOString().split('T')[0];
-    const existingEvent = userSchedule.find(event => event.date === dateStr);
+    const dateKey = jstDateKey(selectedDateForModal);
+const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date) === dateKey);
     if (existingEvent) {
       await deleteDoc(doc(db, 'events', existingEvent.id));
     }
@@ -161,8 +203,10 @@ export default function CalendarPage() {
   
   const tileClassName = ({ date: d, view }: { date: Date; view: string }) => {
     if (view === 'month') {
-      const dateStr = toDateString(d);
-      if (userSchedule.some(event => event.date === dateStr)) { return 'scheduled-day'; }
+      const dateKey = jstDateKey(d);
+      if (userSchedule.some(event => (event.dateKeyJst ?? event.date) === dateKey)) {
+        return 'scheduled-day';
+      }
     }
     return null;
   };
@@ -194,6 +238,18 @@ export default function CalendarPage() {
     }
     return acc;
   }, {} as GroupedUsers), [dailyScheduledUsers]);
+
+  async function backfillDateKeyJst() {
+  const snap = await getDocs(collection(db, "events"));
+  for (const d of snap.docs) {
+    const data = d.data() as any;
+    if (!data.dateKeyJst) {
+      const key = jstDateKey(data.date); // dateが文字列/ISO/TimestampでもOK（上の関数で正規化）
+      if (key) await updateDoc(doc(db, "events", d.id), { dateKeyJst: key });
+    }
+  }
+  alert("dateKeyJst を補完しました");
+}
   
   return (
     <AppLayout pageTitle="カレンダー・予定管理">

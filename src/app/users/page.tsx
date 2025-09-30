@@ -7,10 +7,13 @@ import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { AppLayout } from '../../components/Layout'; // パスを修正
 import Papa from 'papaparse';
 
+// 【変更点①】 Userタイプに表示とソートに必要なプロパティを追加
 type User = {
   id: string;
   lastName: string;
   firstName: string;
+  jukyushaNo?: string; // 受給者証番号 (存在しない場合もあるのでオプショナルに)
+  decisionEndDate?: string; // 給付決定終了日 (同様にオプショナルに)
 };
 
 export default function UsersPage() {
@@ -26,6 +29,21 @@ export default function UsersPage() {
       id: doc.id,
       ...doc.data(),
     })) as User[];
+
+    // 【変更点②】 取得したデータを並び替える処理を追加
+    usersData.sort((a, b) => {
+      const aNo = a.jukyushaNo;
+      const bNo = b.jukyushaNo;
+
+      // aかbの受給者証番号が空欄の場合のロジック
+      if (!aNo && !bNo) return 0; // 両方空なら順序はそのまま
+      if (!aNo) return -1;       // aが空ならaを前に
+      if (!bNo) return 1;        // bが空ならbを前に
+
+      // 両方に番号がある場合は、文字列として比較して昇順に並び替え
+      return aNo.localeCompare(bNo);
+    });
+
     setUsers(usersData);
   };
 
@@ -108,22 +126,24 @@ export default function UsersPage() {
           </div>
         </div>
         
-        <div className="border rounded-lg overflow-hidden">
-          <table className="w-full text-sm text-gray-700">
-            <thead className="text-xs text-gray-800 uppercase bg-gray-50">
+        <div className="bg-white shadow-md rounded-lg overflow-hidden">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left">氏名</th>
-                <th className="px-6 py-3 text-right">操作</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">氏名</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">受給者証番号</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">給付決定終了日</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
               </tr>
             </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr key={user.id} className="bg-white border-b hover:bg-gray-50">
-                  <td className="px-6 py-4 font-medium text-gray-900 text-left">
-                    {user.lastName} {user.firstName}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <Link href={`/users/${user.id}`} className="font-medium text-blue hover:underline text-right">
+            <tbody className="bg-white divide-y divide-gray-200">
+              {users.map(user => (
+                <tr key={user.id}>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{`${user.lastName} ${user.firstName}`}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.jukyushaNo || '未設定'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.decisionEndDate || '未設定'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    <Link href={`/users/${user.id}`} className="text-indigo-600 hover:text-indigo-900">
                       詳細・編集
                     </Link>
                   </td>

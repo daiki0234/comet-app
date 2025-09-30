@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { db } from '@/lib/firebase/firebase';
 import { collection, addDoc } from 'firebase/firestore';
 import { AppLayout } from '@/components/Layout';
+import toast from 'react-hot-toast'; // ★ toastをインポート
 
 type ManagedByOffice = { name: string; officeNo: string; tel: string; fax: string; };
 
@@ -62,23 +63,24 @@ export default function NewUserPage() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    const loadingToast = toast.loading('登録処理中です...'); // ★ ローディング通知
     try {
       await addDoc(collection(db, 'users'), formData);
-      alert('利用者を登録しました。');
+      toast.success('利用者を正常に登録しました。', { id: loadingToast }); // ★ 成功通知
       router.push('/users');
     } catch (error) {
       console.error("登録エラー: ", error);
-      alert('登録に失敗しました。');
+      toast.error('登録に失敗しました。', { id: loadingToast }); // ★ エラー通知
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handlePostalCodeSearch = async () => {
-    if (!formData.postalCode) return alert('郵便番号を入力してください。');
+    const handlePostalCodeSearch = async () => {
+    if (!formData.postalCode) return toast.error('郵便番号を入力してください。'); // ★ エラー通知
     try {
       const response = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${formData.postalCode}`);
       const data = await response.json();
@@ -86,12 +88,13 @@ export default function NewUserPage() {
         const result = data.results[0];
         const fullAddress = `${result.address1}${result.address2}${result.address3}`;
         setFormData(prev => ({ ...prev, address: fullAddress }));
+        toast.success('住所を自動入力しました。'); // ★ 成功通知
       } else {
-        alert('該当する住所が見つかりませんでした。');
+        toast.error('該当する住所が見つかりませんでした。'); // ★ エラー通知
       }
     } catch (error) {
       console.error("住所検索エラー:", error);
-      alert('住所の検索に失敗しました。');
+      toast.error('住所の検索に失敗しました。'); // ★ エラー通知
     }
   };
 
