@@ -43,7 +43,7 @@ export const QrCodeScanner = memo(({ onScanSuccess, onScanFailure }: Props) => {
   }, [onScanSuccess, onScanFailure]);
 
   // QRコードを描画するためのdiv要素
-  return <div id="qr-reader" className="w-full md:w-1/2 mx-auto"></div>;
+  return <div id="qr-reader" className="w-full mx-auto"></div>;
 });
 
 // displayNameを追加すると、React DevToolsでコンポーネントが見やすくなります

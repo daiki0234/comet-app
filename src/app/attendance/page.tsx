@@ -1,15 +1,14 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, memo, useRef } from 'react';
+import { Html5QrcodeScanner, Html5QrcodeScannerState ,Html5QrcodeScanType} from 'html5-qrcode';
 import { db } from '@/lib/firebase/firebase';
 import { collection, addDoc, getDocs, query, where, updateDoc, doc } from 'firebase/firestore';
 import { AppLayout } from '@/components/Layout';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
-
-// ステップ1で作成した外部コンポーネントをインポートします
+// QRコードスキャナコンポーネントを外部ファイルからインポートします
 import { QrCodeScanner } from '@/components/QrCodeScanner';
-
 
 // 型定義
 type User = { id: string; lastName: string; firstName: string; };
@@ -51,6 +50,11 @@ const jstStartEndOfToday = () => {
 // 既存：画面の「表示用」日付にはそのまま使ってOK（テーブルの viewDate など）
 const toDateString = (date: Date) => date.toISOString().split('T')[0];
 
+// 置き換え：安定化した QR スキャナ
+//import React, { memo, useEffect, useRef } from "react";
+
+const qrcodeRegionId = "html5-qrcode-scanner-region";
+
 export default function AttendancePage() {
   const [users, setUsers] = useState<User[]>([]);
   const [viewDate, setViewDate] = useState(new Date());
@@ -78,79 +82,22 @@ export default function AttendancePage() {
     records.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
     setAttendanceRecords(records);
 
-    // 3. 今日の利用予定者（JST基準）を取得：Timestamp保存・文字列保存の両方に対応
-const { start, end } = jstStartEndOfToday();
-const todayDash  = jstTodayDash();   // "yyyy-MM-dd"
-const todaySlash = jstTodaySlash();  // "yyyy/MM/dd"
+    // 3. 今日の利用予定者リストを作成
+    const todayStr = toDateString(new Date());
+const eventsQuery = query(collection(db, "events"), where("date", "==", todayStr));
+const eventsSnapshot = await getDocs(eventsQuery);
+const scheduledUserIds = new Set(eventsSnapshot.docs.map(doc => doc.data().userId));
 
-// a) date が Firestore Timestamp の場合（範囲クエリ）
-let eventsSnapshot = await (async () => {
-  try {
-    const qTs = query(
-      collection(db, "events"),
-      where("date", ">=", start),
-      where("date", "<=", end)
+    // 4. 今日の出欠記録も取得して、すでに来所済みのユーザーを把握
+    const todayRecordsQuery = query(collection(db, "attendanceRecords"), where("date", "==", todayStr));
+    const todayRecordsSnapshot = await getDocs(todayRecordsQuery);
+    const attendedUserIds = new Set(todayRecordsSnapshot.docs.map(doc => doc.data().userId));
+
+    // 5. 予定があり、かつ、まだ出欠記録がない利用者のみをプルダウン用に抽出
+    const scheduledForToday = usersData.filter(user => 
+      scheduledUserIds.has(user.id) && !attendedUserIds.has(user.id)
     );
-    return await getDocs(qTs);
-  } catch {
-    return { empty: true, docs: [] } as any;
-  }
-})();
-
-// b) date が 文字列（==）の場合（ダッシュ→ダメならスラッシュ）
-if (eventsSnapshot.empty) {
-  const s1 = await getDocs(query(collection(db, "events"), where("date", "==", todayDash)));
-  eventsSnapshot = s1.empty
-    ? await getDocs(query(collection(db, "events"), where("date", "==", todaySlash)))
-    : s1;
-}
-
-// 参加者抽出（userId 単体 or participants: string[] の両対応）
-const idsA = eventsSnapshot.docs
-  .map(d => d.data()?.userId)
-  .filter((v: any) => typeof v === "string");
-const idsB = eventsSnapshot.docs
-  .flatMap(d => Array.isArray(d.data()?.participants) ? d.data().participants : [])
-  .filter((v: any) => typeof v === "string");
-
-const scheduledUserIds = new Set<string>([...idsA, ...idsB]);
-
-// 4. 今日すでに出欠がある人は除外（attendanceRecords のフォーマットに合わせて）
-const todayForAttendance = todayDash; // ← "attendanceRecords.date" が "yyyy/MM/dd" なら todaySlash に変更
-const todayRecordsQuery = query(
-  collection(db, "attendanceRecords"),
-  where("date", "==", todayForAttendance)
-);
-const todayRecordsSnapshot = await getDocs(todayRecordsQuery);
-const alreadyIds = new Set<string>(todayRecordsSnapshot.docs.map(d => d.data()?.userId).filter(Boolean));
-
-// 5. プルダウン候補を確定
-const scheduledForToday = usersData
-  .filter(u => scheduledUserIds.has(u.id) && !alreadyIds.has(u.id))
-  .sort((a, b) => `${a.lastName}${a.firstName}`.localeCompare(`${b.lastName}${b.firstName}`, 'ja'));
-
-setTodaysScheduledUsers(scheduledForToday);
-
-// --- デバッグ出力（あとで消せます）
-console.debug("[events range check]", {
-  jstToday: todayDash,
-  startUTC: start.toISOString(),
-  endUTC: end.toISOString(),
-  eventsDocs: eventsSnapshot.docs.length,
-  scheduledIds: scheduledUserIds.size,
-  alreadyToday: alreadyIds.size,
-  result: scheduledForToday.length,
-});
-
-setDebugInfo({
-  jstToday: todayDash,
-  startUTC: start.toISOString(),
-  endUTC: end.toISOString(),
-  eventsDocs: eventsSnapshot.docs.length,
-  scheduledIds: scheduledUserIds.size,
-  alreadyToday: alreadyIds.size,
-  result: scheduledForToday.length,
-});
+    setTodaysScheduledUsers(scheduledForToday);
 
   }, [viewDate]);
 
@@ -280,32 +227,18 @@ const handleAddAbsence = async () => {
     return status;
   };
 
-  const [debugInfo, setDebugInfo] = useState<any>(null);
-
   return (
     <AppLayout pageTitle="出欠記録">
-      <div className="bg-white p-6 rounded-ios shadow-ios border border-ios-gray-200 mb-6">
-        <div className="flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-gray-800">{jstTodayDisplay()}</h2>
-          <div>
-            <button onClick={() => setScannerVisible(prev => !prev)} className="bg-ios-blue text-white font-bold py-2 px-4 rounded-lg mr-2 transition-opacity hover:opacity-80">
-              {isScannerVisible ? 'スキャナを閉じる' : 'QRスキャンで記録'}
-            </button>
-            <Link href="/attendance/manual" className="bg-green-500 text-white font-bold py-2 px-4 rounded-lg transition-opacity hover:opacity-80">
-              手動で記録
-            </Link>
-          </div>
-        </div>
-        
-        {isScannerVisible && (
-          <div className="mt-6 pt-6 border-t border-gray-200">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-1 space-y-8">
+          <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">QRコードスキャン (本日分)</h3>
             <p className="text-center text-gray-600 mb-4">利用者のQRコードをカメラにかざしてください。</p>
             <QrCodeScanner
-              onScanSuccess={handleScanSuccess}
-              onScanFailure={handleScanFailure}
+              onScanSuccess={handleScan}
             />
+            <p className="text-sm text-gray-500 mt-4 h-10">スキャン結果: <span className="font-semibold text-gray-700">{scanResult}</span></p>
           </div>
-        )}
         <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-gray-800">欠席者登録 (本日分)</h3>
