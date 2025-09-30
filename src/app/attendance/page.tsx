@@ -1,12 +1,15 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, memo, useRef } from 'react';
-import { Html5QrcodeScanner, Html5QrcodeScannerState ,Html5QrcodeScanType} from 'html5-qrcode';
+import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '@/lib/firebase/firebase';
 import { collection, addDoc, getDocs, query, where, updateDoc, doc } from 'firebase/firestore';
 import { AppLayout } from '@/components/Layout';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
+
+// ステップ1で作成した外部コンポーネントをインポートします
+import { QrCodeScanner } from '@/components/QrCodeScanner';
+
 
 // 型定義
 type User = { id: string; lastName: string; firstName: string; };
@@ -47,115 +50,6 @@ const jstStartEndOfToday = () => {
 
 // 既存：画面の「表示用」日付にはそのまま使ってOK（テーブルの viewDate など）
 const toDateString = (date: Date) => date.toISOString().split('T')[0];
-
-// 置き換え：安定化した QR スキャナ
-//import React, { memo, useEffect, useRef } from "react";
-
-const qrcodeRegionId = "html5-qrcode-scanner-region";
-
-export const QrCodeScanner = memo(
-  ({ onScanSuccess }: { onScanSuccess: (decodedText: string) => void }) => {
-    const scannerRef = useRef<any>(null);
-    const onScanSuccessRef = useRef(onScanSuccess);
-    useEffect(() => {
-      onScanSuccessRef.current = onScanSuccess;
-    }, [onScanSuccess]);
-
-    useEffect(() => {
-      let canceled = false;
-
-      const boot = async () => {
-        try {
-          // 1) クライアント側でのみライブラリ読込（SSR回避）
-          const mod = await import("html5-qrcode");
-          if (canceled) return;
-
-          // 2) 既存UIの残骸を掃除（重複描画防止）
-          const region = document.getElementById(qrcodeRegionId);
-          if (!region) return;
-          region.innerHTML = "";
-
-          // 3) スキャナ初期化
-          const scanner = new mod.Html5QrcodeScanner(
-            qrcodeRegionId,
-            {
-              fps: 8,
-              qrbox: { width: 260, height: 260 },
-              rememberLastUsedCamera: true,
-              supportedScanTypes: [mod.Html5QrcodeScanType.SCAN_TYPE_CAMERA],
-            },
-            /* verbose= */ false
-          );
-
-          const success = (decodedText: string) => {
-            onScanSuccessRef.current(decodedText);
-          };
-          const error = (_e: unknown) => {
-            // 認識失敗は頻発するのでログ出さない
-          };
-
-          // 4) レンダリング開始
-          scanner.render(success, error);
-          scannerRef.current = scanner;
-
-          // 5) 画面が非表示/ページ離脱なら確実に停止
-          const stop = async () => {
-            try {
-              if (!scannerRef.current) return;
-              await scannerRef.current.clear();
-            } catch {
-              /* noop */
-            } finally {
-              scannerRef.current = null;
-            }
-          };
-
-          const onVisibility = () => {
-            if (document.hidden) stop();
-          };
-          const onPageHide = () => stop();
-          document.addEventListener("visibilitychange", onVisibility);
-          window.addEventListener("pagehide", onPageHide);
-
-          // 6) アンマウント時の後片付け
-          return () => {
-            document.removeEventListener("visibilitychange", onVisibility);
-            window.removeEventListener("pagehide", onPageHide);
-            stop();
-          };
-        } catch (e) {
-          // コンソールにだけ出すと原因追跡しやすい
-          console.error("[QR] init failed:", e);
-        }
-      };
-
-      const cleanupPromise = boot();
-
-      return () => {
-        canceled = true;
-        // boot() 内で登録したクリーンアップがあれば実行
-        if (typeof (cleanupPromise as any) === "function") {
-          (cleanupPromise as any)();
-        }
-        // 念のため停止
-        if (scannerRef.current?.clear) {
-          scannerRef.current.clear().catch(() => {});
-          scannerRef.current = null;
-        }
-      };
-    }, []);
-
-    // 最低限の高さを確保（親のCSS都合で高さ0になるのを防ぐ）
-    return (
-      <div
-        id={qrcodeRegionId}
-        style={{ minHeight: 300 }}
-        className="w-full"
-      />
-    );
-  }
-);
-QrCodeScanner.displayName = "QrCodeScanner";
 
 export default function AttendancePage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -390,21 +284,28 @@ const handleAddAbsence = async () => {
 
   return (
     <AppLayout pageTitle="出欠記録">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-1 space-y-8">
-          <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">QRコードスキャン (本日分)</h3>
-            <div className="w-full">
-              <QrCodeScanner onScanSuccess={handleScan} />
-            </div>
-            <p className="text-sm text-gray-500 mt-4 h-10">スキャン結果: <span className="font-semibold text-gray-700">{scanResult}</span></p>
+      <div className="bg-white p-6 rounded-ios shadow-ios border border-ios-gray-200 mb-6">
+        <div className="flex justify-between items-center">
+          <h2 className="text-2xl font-bold text-gray-800">{jstTodayDisplay()}</h2>
+          <div>
+            <button onClick={() => setScannerVisible(prev => !prev)} className="bg-ios-blue text-white font-bold py-2 px-4 rounded-lg mr-2 transition-opacity hover:opacity-80">
+              {isScannerVisible ? 'スキャナを閉じる' : 'QRスキャンで記録'}
+            </button>
+            <Link href="/attendance/manual" className="bg-green-500 text-white font-bold py-2 px-4 rounded-lg transition-opacity hover:opacity-80">
+              手動で記録
+            </Link>
           </div>
-          <details className="mt-2 text-xs text-gray-500">
-  <summary>debug（クリックで展開）</summary>
-  <pre className="whitespace-pre-wrap break-words">
-    {debugInfo ? JSON.stringify(debugInfo, null, 2) : "no debug"}
-  </pre>
-</details>
+        </div>
+        
+        {isScannerVisible && (
+          <div className="mt-6 pt-6 border-t border-gray-200">
+            <p className="text-center text-gray-600 mb-4">利用者のQRコードをカメラにかざしてください。</p>
+            <QrCodeScanner
+              onScanSuccess={handleScanSuccess}
+              onScanFailure={handleScanFailure}
+            />
+          </div>
+        )}
         <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-gray-800">欠席者登録 (本日分)</h3>
