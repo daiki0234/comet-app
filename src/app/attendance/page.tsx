@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, memo, useRef } from 'react';
-import { Html5QrcodeScanner, Html5QrcodeScannerState ,Html5QrcodeScanType} from 'html5-qrcode';
+// Html5QrcodeScannerの直接インポートはQrCodeScanner.tsxに移動したため、この行は不要になります
+// import { Html5QrcodeScanner, Html5QrcodeScannerState ,Html5QrcodeScanType} from 'html5-qrcode';
 import { db } from '@/lib/firebase/firebase';
 import { collection, addDoc, getDocs, query, where, updateDoc, doc } from 'firebase/firestore';
 import { AppLayout } from '@/components/Layout';
 import toast from 'react-hot-toast';
-import Link from 'next/link';
-// QRコードスキャナコンポーネントを外部ファイルからインポートします
+
+// ▼▼▼【変更点】ここからQrCodeScannerの定義を削除し、代わりに下の1行を追加 ▼▼▼
 import { QrCodeScanner } from '@/components/QrCodeScanner';
 
 // 型定義
@@ -18,301 +19,254 @@ type AttendanceRecord = {
   arrivalTime?: string; departureTime?: string; notes?: string;
 };
 
-// --- JST 日付ユーティリティ（追加） ---
+// --- JST 日付ユーティリティ ---
 const pad = (n: number) => n.toString().padStart(2, "0");
 
-/** JSTの今日を "yyyy-MM-dd" で返す（保存/照合用） */
 const jstTodayDash = () => {
   const now = new Date();
-  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000); // UTC→JST
+  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   const y = jst.getUTCFullYear();
   const m = jst.getUTCMonth() + 1;
   const d = jst.getUTCDate();
-  return `${pad(m)}`.length ? `${y}-${pad(m)}-${pad(d)}` : `${y}-${m}-${d}`;
+  return `${y}-${pad(m)}-${pad(d)}`;
 };
-/** "yyyy/MM/dd" が必要なコレクション用 */
-const jstTodaySlash = () => jstTodayDash().replaceAll("-", "/");
-
-/** Firestore Timestamp 用：JST 今日 00:00:00〜23:59:59 を UTCの瞬間に変換 */
-const jstStartEndOfToday = () => {
-  const now = new Date();
-  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000); // JST “今日”の年月日を得る
-  const y = jst.getUTCFullYear();
-  const m = jst.getUTCMonth();
-  const d = jst.getUTCDate();
-
-  // ★ここが肝：JSTの 00:00 を UTC に直すには「-9時間」する
-  const startUtcMs = Date.UTC(y, m, d, 0, 0, 0) - 9 * 60 * 60 * 1000;         // 前日 15:00:00Z
-  const endUtcMs   = Date.UTC(y, m, d, 23, 59, 59, 999) - 9 * 60 * 60 * 1000; // 当日 14:59:59.999Z
-  return { start: new Date(startUtcMs), end: new Date(endUtcMs) };
+const jstNowTime = () => {
+    const now = new Date();
+    const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    const h = jst.getUTCHours();
+    const m = jst.getUTCMinutes();
+    return `${pad(h)}:${pad(m)}`;
+};
+const jstTodayDisplay = () => {
+  const today = new Date();
+  const month = today.getMonth() + 1;
+  const date = today.getDate();
+  const day = ["日", "月", "火", "水", "木", "金", "土"][today.getDay()];
+  return `${month}月${date}日 (${day})`;
 };
 
-// 既存：画面の「表示用」日付にはそのまま使ってOK（テーブルの viewDate など）
-const toDateString = (date: Date) => date.toISOString().split('T')[0];
-
-// 置き換え：安定化した QR スキャナ
-//import React, { memo, useEffect, useRef } from "react";
-
-const qrcodeRegionId = "html5-qrcode-scanner-region";
-
+// --- ここからがページの本体 ---
 export default function AttendancePage() {
   const [users, setUsers] = useState<User[]>([]);
-  const [viewDate, setViewDate] = useState(new Date());
+  const [unrecordedUsers, setUnrecordedUsers] = useState<User[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
-  const [todaysScheduledUsers, setTodaysScheduledUsers] = useState<User[]>([]);
-  const [scanResult, setScanResult] = useState('スキャン待機中...');
-  const [absentUserId, setAbsentUserId] = useState('');
-  const [absenceReason, setAbsenceReason] = useState('');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editingRecord, setEditingRecord] = useState<AttendanceRecord | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<Partial<AttendanceRecord>>({});
+  const [isScannerVisible, setScannerVisible] = useState(false);
+  const [absenceReason, setAbsenceReason] = useState('');
+  const [selectedAbsenceUser, setSelectedAbsenceUser] = useState<string>('');
 
-  // ★★★ データ取得ロジックを修正 ★★★
-  const fetchData = useCallback(async () => {
-    // 1. 全利用者リストを最初に取得
-    const usersSnapshot = await getDocs(collection(db, 'users'));
-    const usersData = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as User[];
-    setUsers(usersData);
+  const fetchUsersAndRecords = useCallback(async () => {
+    try {
+      const usersCollectionRef = collection(db, 'users');
+      const userSnapshot = await getDocs(usersCollectionRef);
+      const usersData = userSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as User[];
+      setUsers(usersData);
 
-    // 2. 表示中日付の出欠記録を取得
-    const dateStr = toDateString(viewDate);
-    const q = query(collection(db, "attendanceRecords"), where("date", "==", dateStr));
-    const attendanceSnapshot = await getDocs(q);
-    const records = attendanceSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as AttendanceRecord[];
-    records.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
-    setAttendanceRecords(records);
+      const today = jstTodayDash();
+      const recordsCollectionRef = collection(db, 'attendances');
+      const q = query(recordsCollectionRef, where("date", "==", today));
+      const recordSnapshot = await getDocs(q);
+      const recordsData = recordSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as AttendanceRecord[];
+      setAttendanceRecords(recordsData);
 
-    // 3. 今日の利用予定者リストを作成
-    const todayStr = toDateString(new Date());
-const eventsQuery = query(collection(db, "events"), where("date", "==", todayStr));
-const eventsSnapshot = await getDocs(eventsQuery);
-const scheduledUserIds = new Set(eventsSnapshot.docs.map(doc => doc.data().userId));
+      const recordedUserIds = new Set(recordsData.map(r => r.userId));
+      const unrecorded = usersData.filter(u => !recordedUserIds.has(u.id));
+      setUnrecordedUsers(unrecorded);
 
-    // 4. 今日の出欠記録も取得して、すでに来所済みのユーザーを把握
-    const todayRecordsQuery = query(collection(db, "attendanceRecords"), where("date", "==", todayStr));
-    const todayRecordsSnapshot = await getDocs(todayRecordsQuery);
-    const attendedUserIds = new Set(todayRecordsSnapshot.docs.map(doc => doc.data().userId));
-
-    // 5. 予定があり、かつ、まだ出欠記録がない利用者のみをプルダウン用に抽出
-    const scheduledForToday = usersData.filter(user => 
-      scheduledUserIds.has(user.id) && !attendedUserIds.has(user.id)
-    );
-    setTodaysScheduledUsers(scheduledForToday);
-
-  }, [viewDate]);
+    } catch (error) {
+      console.error("Error fetching data: ", error);
+      toast.error('データの取得に失敗しました。');
+    }
+  }, []);
 
   useEffect(() => {
-    fetchData();
-  }, [viewDate, fetchData]); // viewDateが変更されたら再実行
+    fetchUsersAndRecords();
+  }, [fetchUsersAndRecords]);
   
-  const handleScanSuccess = useCallback(async (result: string) => {
-    if (isProcessing) return;
-    setIsProcessing(true);
-    const loadingToast = toast.loading('QRコードを処理中です...');
-
+  const handleScanSuccess = useCallback(async (decodedText: string) => {
+    setScannerVisible(false);
+    toast.success(`QRコードを読み取りました: ${decodedText}`);
     try {
-      const url = new URL(result);
-      const params = new URLSearchParams(url.search);
-      const name = params.get('name');
-      const statusSymbol = params.get('status');
-      const type = params.get('type');
-      if (!name || !statusSymbol || !type) { throw new Error("無効なQRコードです"); }
-
-      const [lastName, firstName] = name.split(' ');
-      const q = query(collection(db, "users"), where("lastName", "==", lastName), where("firstName", "==", firstName));
-      const userSnapshot = await getDocs(q);
-      if (userSnapshot.empty) { throw new Error("該当する利用者が登録されていません"); }
-
-      const userDoc = userSnapshot.docs[0];
-      const userId = userDoc.id;
-      const userName = `${userDoc.data().lastName} ${userDoc.data().firstName}`;
-      const currentTime = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-      const usageStatus = statusSymbol === '◯' ? '放課後' : '休校日';
-      const todayStr = toDateString(new Date());
-      const monthStr = todayStr.substring(0, 7);
-      
-      setScanResult(`${userName}｜${type}｜${currentTime}`);
-      
-      const attendanceQuery = query(collection(db, "attendanceRecords"), where("userId", "==", userId), where("date", "==", todayStr));
-      const attendanceSnapshot = await getDocs(attendanceQuery);
-      
-      if (type === '来所') {
-        if (!attendanceSnapshot.empty) { throw new Error("既に来所済みです"); }
-        await addDoc(collection(db, "attendanceRecords"), { userId, userName, date: todayStr, month: monthStr, usageStatus, arrivalTime: currentTime });
-        toast.success(`${userName}さん、ようこそ！`, { id: loadingToast });
-      } else if (type === '帰所') {
-        if (attendanceSnapshot.empty) { throw new Error("来所記録がありません"); }
-        const recordDoc = attendanceSnapshot.docs[0];
-        await updateDoc(doc(db, "attendanceRecords", recordDoc.id), { departureTime: currentTime });
-        toast.success(`${userName}さん、お疲れ様でした！`, { id: loadingToast });
+      const today = jstTodayDash();
+      const currentTime = jstNowTime();
+      const user = users.find(u => u.id === decodedText);
+      if (!user) {
+        toast.error('該当する利用者が見つかりません。');
+        return;
       }
-      await fetchData();
-    } catch (error: any) {
-      toast.error(`エラー: ${error.message}`, { id: loadingToast });
-    } finally {
-      setTimeout(() => setIsProcessing(false), 2000); // 2秒のクールダウン
+      const userName = `${user.lastName} ${user.firstName}`;
+      const existingRecord = attendanceRecords.find(r => r.userId === decodedText);
+      if (existingRecord) {
+        if (existingRecord.arrivalTime && !existingRecord.departureTime) {
+          const recordRef = doc(db, 'attendances', existingRecord.id);
+          await updateDoc(recordRef, { departureTime: currentTime });
+          toast.success(`${userName}さんが退所しました。`);
+        } else {
+          toast('すでに来所・退所記録があります。');
+        }
+      } else {
+        await addDoc(collection(db, 'attendances'), {
+          userId: decodedText, userName, date: today, month: today.substring(0, 7),
+          usageStatus: '放課後', arrivalTime: currentTime,
+        });
+        toast.success(`${userName}さんが来所しました。`);
+      }
+      fetchUsersAndRecords();
+    } catch (error)
+      console.error("Error processing QR code: ", error);
+      toast.error('QRコードの処理中にエラーが発生しました。');
     }
-  }, [isProcessing, fetchData]);
+  }, [users, attendanceRecords, fetchUsersAndRecords]);
 
   const handleScanFailure = (error: string) => {
     // console.warn(`QR error = ${error}`);
   };
 
-const handleAddAbsence = async () => {
-    if (!absentUserId) { return toast.error('利用者を選択してください。'); }
-    const user = users.find(u => u.id === absentUserId);
-    if (!user) return;
-
-    const absenceDate = toDateString(new Date()); // 本日の日付で登録
-    
-    const loadingToast = toast.loading('欠席情報を登録中です...');
+  const handleAbsence = async () => {
+    if (!selectedAbsenceUser || !absenceReason) {
+      toast.error('利用者と欠席理由を選択してください。');
+      return;
+    }
     try {
-      const targetMonth = absenceDate.substring(0, 7);
-      const absenceQuery = query(collection(db, "attendanceRecords"), where("userId", "==", absentUserId), where("month", "==", targetMonth), where("usageStatus", "==", "欠席"));
-      const absenceSnapshot = await getDocs(absenceQuery);
-      const absenceCount = absenceSnapshot.size;
-
-      if (absenceCount >= 4) {
-        throw new Error(`${user.lastName} ${user.firstName}さんは、この月の欠席回数が上限の4回に達しています。`);
-      }
-
-      // このチェックはhandleScanと共通
-      const q = query(collection(db, "attendanceRecords"), where("userId", "==", absentUserId), where("date", "==", absenceDate));
-      const existingSnapshot = await getDocs(q);
-      if (!existingSnapshot.empty) {
-        throw new Error(`${absenceDate} に ${user.lastName} ${user.firstName} さんの記録は既にあります。`);
-      }
-
-      const newAbsenceCount = absenceCount + 1;
-      const notesWithCount = `[欠席(${newAbsenceCount})] ${absenceReason}`;
-      await addDoc(collection(db, "attendanceRecords"), {
-        userId: user.id,
-        userName: `${user.lastName} ${user.firstName}`,
-        date: absenceDate,
-        month: targetMonth,
-        usageStatus: '欠席',
-        notes: notesWithCount,
-      });
+      const today = jstTodayDash();
+      const user = users.find(u => u.id === selectedAbsenceUser);
+      if (!user) return;
       
-      toast.success(`${user.lastName} ${user.firstName} さんを欠席として登録しました。`, { id: loadingToast });
-      await fetchData(); // リストを再取得
-      setAbsentUserId('');
+      const userName = `${user.lastName} ${user.firstName}`;
+
+      await addDoc(collection(db, 'attendances'), {
+        userId: selectedAbsenceUser, userName, date: today, month: today.substring(0, 7),
+        usageStatus: '欠席', notes: absenceReason,
+      });
+      toast.success(`${userName}さんを欠席として記録しました。`);
+      setSelectedAbsenceUser('');
       setAbsenceReason('');
-    } catch (error: any) {
-      toast.error(error.message, { id: loadingToast });
+      fetchUsersAndRecords();
+
+    } catch (error) {
+      console.error("Error recording absence: ", error);
+      toast.error('欠席記録の登録に失敗しました。');
     }
   };
-
-
-  const handleOpenEditModal = (record: AttendanceRecord) => { setEditingRecord(record); setIsEditModalOpen(true); };
+  
+  const openEditModal = (record: AttendanceRecord) => {
+    setEditingRecord(record);
+    setIsEditModalOpen(true);
+  };
+  
   const handleUpdateRecord = async () => {
-    if (!editingRecord) return;
-    const loadingToast = toast.loading('記録を更新中です...');
+    if (!editingRecord.id) return;
     try {
-      const dataToUpdate = {
-        usageStatus: editingRecord.usageStatus,
-        arrivalTime: editingRecord.arrivalTime || '',
-        departureTime: editingRecord.departureTime || '',
-        notes: editingRecord.notes || '',
-      };
-      const recordRef = doc(db, 'attendanceRecords', editingRecord.id);
-      await updateDoc(recordRef, dataToUpdate);
-      toast.success('記録を正常に更新しました。', { id: loadingToast });
+      const recordRef = doc(db, 'attendances', editingRecord.id);
+      await updateDoc(recordRef, editingRecord);
+      toast.success('記録を更新しました。');
       setIsEditModalOpen(false);
-      await fetchData();
-    } catch(error) {
-      toast.error('記録の更新に失敗しました。', { id: loadingToast });
+      fetchUsersAndRecords();
+    } catch (error) {
+      console.error("Error updating record: ", error);
+      toast.error('記録の更新に失敗しました。');
     }
-  };
-
-  const getUsageStatusSymbol = (status: '放課後' | '休校日' | '欠席') => {
-    if (status === '放課後') return '◯';
-    if (status === '休校日') return '◎';
-    return status;
   };
 
   return (
     <AppLayout pageTitle="出欠記録">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-1 space-y-8">
-          <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">QRコードスキャン (本日分)</h3>
+      <div className="bg-white p-6 rounded-ios shadow-ios border border-ios-gray-200 mb-6">
+        <div className="flex justify-between items-center">
+          <h2 className="text-2xl font-bold text-gray-800">{jstTodayDisplay()}</h2>
+          <div>
+            <button onClick={() => setScannerVisible(prev => !prev)} className="bg-ios-blue text-white font-bold py-2 px-4 rounded-lg mr-2 transition-opacity hover:opacity-80">
+              {isScannerVisible ? 'スキャナを閉じる' : 'QRスキャンで記録'}
+            </button>
+          </div>
+        </div>
+        
+        {isScannerVisible && (
+          <div className="mt-6 pt-6 border-t border-gray-200">
             <p className="text-center text-gray-600 mb-4">利用者のQRコードをカメラにかざしてください。</p>
             <QrCodeScanner
               onScanSuccess={handleScanSuccess}
               onScanFailure={handleScanFailure}
             />
-            <p className="text-sm text-gray-500 mt-4 h-10">スキャン結果: <span className="font-semibold text-gray-700">{scanResult}</span></p>
           </div>
-        <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-gray-800">欠席者登録 (本日分)</h3>
-              <Link href="/attendance/register-absence" className="text-xs text-blue-600 hover:underline">別日の登録はこちら</Link>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">利用者</label>
-                <select value={absentUserId} onChange={(e) => setAbsentUserId(e.target.value)} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm">
-                  <option value="">利用予定者を選択</option>
-                  {todaysScheduledUsers.map(u =><option key={u.id} value={u.id}>{u.lastName} {u.firstName}</option>)}
-                </select>
-              </div>
-              <div><label className="block text-sm font-medium text-gray-700">欠席理由</label><input type="text" value={absenceReason} onChange={(e) => setAbsenceReason(e.target.value)} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm"/></div>
-              <button onClick={handleAddAbsence} className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">登録</button>
-            </div>
-          </div>
-        </div>
-        <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
-          <div className="flex items-center mb-4">
-            <label htmlFor="view-date" className="text-sm font-medium text-gray-700 mr-2">表示する日付: </label>
-            <input id="view-date" type="date" value={toDateString(viewDate)} onChange={(e) => setViewDate(new Date(e.target.value))} className="p-2 border border-gray-300 rounded-md shadow-sm"/>
-          </div>
-          <h3 className="text-lg font-bold text-gray-800 mb-4">{viewDate.toLocaleDateString()} の出欠状況</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left text-gray-500">
-              <thead className="text-xs text-gray-700 uppercase bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3">利用者名</th>
-                  <th className="px-6 py-3 text-center">利用状況</th>
-                  <th className="px-6 py-3">来所時間</th>
-                  <th className="px-6 py-3">退所時間</th>
-                  <th className="px-6 py-3">特記事項</th>
-                </tr>
-              </thead>
-              <tbody>
-                {attendanceRecords.map(rec => (
-                  <tr key={rec.id} className="bg-white border-b hover:bg-gray-50">
-                    <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
-                      <span onClick={() => handleOpenEditModal(rec)} className="flex items-center cursor-pointer group">
-                        {rec.userName}
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="ml-2 text-gray-400 group-hover:text-blue-600 transition-colors"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-center">{getUsageStatusSymbol(rec.usageStatus)}</td>
-                    <td className="px-6 py-4">{rec.arrivalTime}</td>
-                    <td className="px-6 py-4">{rec.departureTime}</td>
-                    <td className="px-6 py-4">{rec.notes}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        )}
+      </div>
+
+      <div className="bg-white p-6 rounded-ios shadow-ios border border-ios-gray-200 mb-6">
+        <h3 className="text-lg font-bold text-gray-800 mb-4">本日の未記録者</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+          <select value={selectedAbsenceUser} onChange={(e) => setSelectedAbsenceUser(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md shadow-sm">
+            <option value="">利用者を選択</option>
+            {unrecordedUsers.map(user => (
+              <option key={user.id} value={user.id}>{`${user.lastName} ${user.firstName}`}</option>
+            ))}
+          </select>
+          <select value={absenceReason} onChange={(e) => setAbsenceReason(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md shadow-sm">
+            <option value="">欠席理由を選択</option>
+            <option value="体調不良">体調不良</option>
+            <option value="学校行事">学校行事</option>
+            <option value="家庭の事情">家庭の事情</option>
+            <option value="自己都合">自己都合</option>
+            <option value="その他">その他</option>
+          </select>
+          <button onClick={handleAbsence} className="bg-red-500 text-white font-bold py-2 px-4 rounded-lg transition-opacity hover:opacity-80 w-full">
+            欠席として記録
+          </button>
         </div>
       </div>
 
-      {isEditModalOpen && editingRecord && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
-          <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-lg">
-            <h3 className="text-xl font-bold text-gray-800 mb-6">{editingRecord.userName} の記録を編集</h3>
-            <div className="space-y-4">
-              <div><label className="block text-sm font-medium text-gray-700">利用状況</label><select value={editingRecord.usageStatus} onChange={(e) => setEditingRecord({...editingRecord, usageStatus: e.target.value as '放課後' | '休校日' | '欠席'})} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm"><option value="放課後">放課後 (◯)</option><option value="休校日">休校日 (◎)</option><option value="欠席">欠席</option></select></div>
+
+      <div className="bg-white shadow-md rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">利用者名</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">利用状況</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">来所時間</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">退所時間</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {attendanceRecords.map(record => (
+              <tr key={record.id}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{record.userName}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{record.usageStatus}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{record.arrivalTime || '--:--'}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{record.departureTime || '--:--'}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                  <button onClick={() => openEditModal(record)} className="text-indigo-600 hover:text-indigo-900">編集</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {isEditModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-lg">
+            <h3 className="text-xl font-bold mb-6">記録を編集</h3>
+            <div className="grid grid-cols-1 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">利用状況</label>
+                <select 
+                  value={editingRecord.usageStatus || ''} 
+                  onChange={(e) => setEditingRecord({...editingRecord, usageStatus: e.target.value as any})}
+                  className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm"
+                >
+                  <option value="放課後">放課後 (◯)</option>
+                  <option value="休校日">休校日 (◎)</option>
+                  <option value="欠席">欠席</option>
+                </select>
+              </div>
               <div><label className="block text-sm font-medium text-gray-700">来所時間</label><input value={editingRecord.arrivalTime || ''} onChange={(e) => setEditingRecord({...editingRecord, arrivalTime: e.target.value})} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm" /></div>
               <div><label className="block text-sm font-medium text-gray-700">退所時間</label><input value={editingRecord.departureTime || ''} onChange={(e) => setEditingRecord({...editingRecord, departureTime: e.target.value})} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm" /></div>
               <div><label className="block text-sm font-medium text-gray-700">特記事項</label><textarea value={editingRecord.notes || ''} onChange={(e) => setEditingRecord({...editingRecord, notes: e.target.value})} rows={3} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm" /></div>
             </div>
             <div className="flex justify-end space-x-4 pt-6 mt-6 border-t">
               <button onClick={() => setIsEditModalOpen(false)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg">キャンセル</button>
-              <button onClick={handleUpdateRecord} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg">保存</button>
+              <button onClick={handleUpdateRecord} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg">更新</button>
             </div>
           </div>
         </div>
@@ -320,4 +274,3 @@ const handleAddAbsence = async () => {
     </AppLayout>
   );
 }
-
