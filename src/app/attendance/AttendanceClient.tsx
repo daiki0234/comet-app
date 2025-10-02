@@ -8,7 +8,9 @@ import Link from "next/link";
 import { db } from "@/lib/firebase/firebase";
 import { collection, addDoc, getDocs, query, where, updateDoc, doc } from "firebase/firestore";
 
+
 // ✅ ブラウザ依存のQRスキャナは ssr:false で動的ロード
+// 🚫 export しないこと！（const だけ）
 const QrCodeScanner = dynamic(
   () => import("@/components/QrCodeScanner").then(m => m.QrCodeScanner),
   { ssr: false, loading: () => <div className="p-4 text-sm text-gray-500">スキャナ初期化中…</div> }
@@ -57,7 +59,7 @@ const toDateString = (date: Date) => date.toISOString().split('T')[0];
 // 置き換え：安定化した QR スキャナ
 //import React, { memo, useEffect, useRef } from "react";
 
-const qrcodeRegionId = "html5-qrcode-scanner-region";
+//const qrcodeRegionId = "html5-qrcode-scanner-region";
 
 export default function AttendancePage() {
   const [users, setUsers] = useState<User[]>([]);
