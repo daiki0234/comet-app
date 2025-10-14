@@ -24,7 +24,7 @@ type EventData = {
   type: '放課後' | '休校日';
 };
 type Event = EventData & { userName: string; user: User; };
-type PseudoRecord = { userName: string; date: string; usageStatus: '放課後' | '休校日' | '欠席' | null; notes?: string; };
+type PseudoRecord = { userName: string; date: string; usageStatus: '放課後' | '休校日' | '欠席' ; notes?: string; };
 type GroupedUsers = { [serviceName: string]: Event[]; };
 
 // --- JSTユーティリティ（保存・照合兼用） ---
