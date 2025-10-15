@@ -146,6 +146,23 @@ const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date
     await fetchInitialData();
   };
 
+  // ServiceRecordSheet が受け取る record の“実際の型”を取り出す
+type ServiceRecordRecord = NonNullable<
+  React.ComponentProps<typeof ServiceRecordSheet>['record']
+>;
+
+// PseudoRecord | null を ServiceRecordRecord | null に変換
+const toRecordForSheet = (r: PseudoRecord | null): ServiceRecordRecord | null => {
+  if (!r || r.usageStatus == null) return null;
+  // 必要なプロパティだけを詰め替え（余分なフィールドは捨てる）
+  return {
+    userName: r.userName,
+    date: r.date,
+    usageStatus: r.usageStatus, // "放課後" | "休校日" | "欠席" のどれか（null は弾いている）
+    notes: r.notes ?? "",
+  };
+};
+
   const handlePrintAll = async () => {
     if (dailyScheduledUsers.length === 0) { return alert('印刷する利用予定者がいません。'); }
     if (!selectedDate) { return alert('日付が選択されていません。'); } // 安全対策
@@ -250,6 +267,8 @@ const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date
   }
   alert("dateKeyJst を補完しました");
 }
+
+
   
   return (
     <AppLayout pageTitle="カレンダー・予定管理">

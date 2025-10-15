@@ -97,23 +97,31 @@ export default function UserDetailPage({ params }: Props) {
   };
 
 const handlePostalCodeSearch = async () => {
-    if (!formData.postalCode) return toast.error('郵便番号を入力してください。'); // ★ エラー通知
-    try {
-      const response = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${formData.postalCode}`);
-      const data = await response.json();
-      if (data.status === 200 && data.results) {
-        const result = data.results[0];
-        const fullAddress = `${result.address1}${result.address2}${result.address3}`;
-        setFormData(prev => ({ ...prev, address: fullAddress }));
-        toast.success('住所を自動入力しました。'); // ★ 成功通知
-      } else {
-        toast.error('該当する住所が見つかりませんでした。'); // ★ エラー通知
-      }
-    } catch (error) {
-      console.error("住所検索エラー:", error);
-      toast.error('住所の検索に失敗しました。'); // ★ エラー通知
+ // ✅ formData 自体の null を先にガード
+  if (!formData || !formData.postalCode) {
+    toast.error('郵便番号を入力してください。');
+    return;
+  }
+  try {
+    const response = await fetch(
+      `https://zipcloud.ibsnet.co.jp/api/search?zipcode=${encodeURIComponent(formData.postalCode)}`
+    );
+    const data = await response.json();
+
+    if (data?.status === 200 && Array.isArray(data.results) && data.results.length > 0) {
+      const r = data.results[0];
+      const fullAddress = `${r.address1 ?? ''}${r.address2 ?? ''}${r.address3 ?? ''}`;
+      // ✅ prev が null の可能性も考慮して安全に更新
+      setFormData(prev => (prev ? { ...prev, address: fullAddress } : prev));
+      toast.success('住所を自動入力しました。');
+    } else {
+      toast.error('該当する住所が見つかりませんでした。');
     }
-  };
+  } catch (error) {
+    console.error('住所検索エラー:', error);
+    toast.error('住所の検索に失敗しました。');
+  }
+};
   
 
   const handleManagedByOfficeChange = (index: number, field: keyof ManagedByOffice, value: string) => {
@@ -166,7 +174,7 @@ const handlePostalCodeSearch = async () => {
         <div className="md:col-span-2"><label className={labelClass}>郵便番号</label><div className="flex items-center space-x-2 mt-1"><input type="text" name="postalCode" value={formData.postalCode} onChange={handleChange} placeholder="1234567" disabled={!isEditing} className={isEditing ? inputPost : disabledPostClass} /><button type="button" onClick={handlePostalCodeSearch} disabled={!isEditing} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg disabled:bg-gray-100 disabled:text-gray-400">住所検索</button></div></div>
         <div className="md:col-span-2"><label className={labelClass}>住所</label><input type="text" name="address" value={formData.address} onChange={handleChange} disabled={!isEditing} className={isEditing ? inputClass : disabledInputClass} /></div>
         <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-x-6"><div><label className={labelClass}>連絡先</label><input type="tel" name="contact" value={formData.contact} onChange={handleChange} disabled={!isEditing} className={isEditing ? inputClass : disabledInputClass} /></div><div><label className={labelClass}>続柄など</label><input type="text" name="contactPerson" value={formData.contactPerson} onChange={handleChange} placeholder="例：母" disabled={!isEditing} className={isEditing ? inputClass : disabledInputClass} /></div></div>
-        <div className="md:col-span-2"><label className={labelClass}>アレルギー・持病など</label><textarea name="allergies" value={formData.allergies} onChange={handleChange} rows={4} disabled={!isEditing} className={isEditing ? inputClass : disabledInputClass} /></div>
+        <div className="md:col-span-2"><label className={labelClass}>アレルギー・持病など</label><textarea name="allergies" value={formData.allergies} onChange={handleChange} rows={4} disabled={!isEditing} className={isEditing ? inputClass : disabledInputClass} ></textarea></div>
       </div>
     </div>
   );

@@ -3,7 +3,7 @@ import React from 'react';
 type RecordData = {
   userName: string;
   date: string;
-  usageStatus: '放課後' | '休校日' | '欠席' | null ;
+  usageStatus: '放課後' | '休校日' | '欠席' ;
   notes?: string;
 };
 
