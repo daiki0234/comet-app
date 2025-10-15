@@ -27,6 +27,23 @@ type Event = EventData & { userName: string; user: User; };
 type PseudoRecord = { userName: string; date: string; usageStatus: '放課後' | '休校日' | '欠席'; notes?: string; };
 type GroupedUsers = { [serviceName: string]: Event[]; };
 
+  // ServiceRecordSheet が受け取る record の“実際の型”を取り出す
+type ServiceRecordRecord = NonNullable<
+  React.ComponentProps<typeof ServiceRecordSheet>['record']
+>;
+
+// PseudoRecord | null を ServiceRecordRecord | null に変換
+const toRecordForSheet = (r: PseudoRecord | null): ServiceRecordRecord | null => {
+  if (!r || r.usageStatus == null) return null;
+  // 必要なプロパティだけを詰め替え（余分なフィールドは捨てる）
+  return {
+    userName: r.userName,
+    date: r.date,
+    usageStatus: r.usageStatus, // "放課後" | "休校日" | "欠席" のどれか（null は弾いている）
+    notes: r.notes ?? "",
+  };
+};
+
 // --- JSTユーティリティ（保存・照合兼用） ---
 const pad2 = (n: number) => n.toString().padStart(2, "0");
 
@@ -146,23 +163,6 @@ const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date
     await fetchInitialData();
   };
 
-  // ServiceRecordSheet が受け取る record の“実際の型”を取り出す
-type ServiceRecordRecord = NonNullable<
-  React.ComponentProps<typeof ServiceRecordSheet>['record']
->;
-
-// PseudoRecord | null を ServiceRecordRecord | null に変換
-const toRecordForSheet = (r: PseudoRecord | null): ServiceRecordRecord | null => {
-  if (!r || r.usageStatus == null) return null;
-  // 必要なプロパティだけを詰め替え（余分なフィールドは捨てる）
-  return {
-    userName: r.userName,
-    date: r.date,
-    usageStatus: r.usageStatus, // "放課後" | "休校日" | "欠席" のどれか（null は弾いている）
-    notes: r.notes ?? "",
-  };
-};
-
   const handlePrintAll = async () => {
     if (dailyScheduledUsers.length === 0) { return alert('印刷する利用予定者がいません。'); }
     if (!selectedDate) { return alert('日付が選択されていません。'); } // 安全対策
@@ -191,8 +191,8 @@ const toRecordForSheet = (r: PseudoRecord | null): ServiceRecordRecord | null =>
       const root = createRoot(tempDiv);
       root.render(
         <React.StrictMode>
-          <ServiceRecordSheet record={pair[0]} />
-          <ServiceRecordSheet record={pair[1]} />
+    <ServiceRecordSheet record={toRecordForSheet(pair[0])} />
+    <ServiceRecordSheet record={toRecordForSheet(pair[1])} />
         </React.StrictMode>
       );
       await new Promise(r => setTimeout(r, 500)); 
