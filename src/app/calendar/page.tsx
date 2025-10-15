@@ -27,19 +27,16 @@ type Event = EventData & { userName: string; user: User; };
 type PseudoRecord = { userName: string; date: string; usageStatus: '放課後' | '休校日' | '欠席'; notes?: string; };
 type GroupedUsers = { [serviceName: string]: Event[]; };
 
-  // ServiceRecordSheet が受け取る record の“実際の型”を取り出す
 type ServiceRecordRecord = NonNullable<
   React.ComponentProps<typeof ServiceRecordSheet>['record']
 >;
 
-// PseudoRecord | null を ServiceRecordRecord | null に変換
 const toRecordForSheet = (r: PseudoRecord | null): ServiceRecordRecord | null => {
   if (!r || r.usageStatus == null) return null;
-  // 必要なプロパティだけを詰め替え（余分なフィールドは捨てる）
   return {
     userName: r.userName,
     date: r.date,
-    usageStatus: r.usageStatus, // "放課後" | "休校日" | "欠席" のどれか（null は弾いている）
+    usageStatus: r.usageStatus,
     notes: r.notes ?? "",
   };
 };
@@ -189,12 +186,12 @@ const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date
       document.body.appendChild(tempDiv);
       
       const root = createRoot(tempDiv);
-      root.render(
-        <React.StrictMode>
+root.render(
+  <React.StrictMode>
     <ServiceRecordSheet record={toRecordForSheet(pair[0])} />
     <ServiceRecordSheet record={toRecordForSheet(pair[1])} />
-        </React.StrictMode>
-      );
+  </React.StrictMode>
+);
       await new Promise(r => setTimeout(r, 500)); 
 
       try {
