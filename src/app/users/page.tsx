@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { db } from '../../lib/firebase/firebase';
 import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { AppLayout } from '../../components/Layout';
-// ▼▼▼【変更点】タイポを 'paparse' から 'papaparse' に修正 ▼▼▼
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 
@@ -104,9 +103,12 @@ export default function UsersPage() {
           setCsvFile(null);
           return message;
         },
-        error: (err) {
+        // ▼▼▼【変更点】(err)の後に => を追加 ▼▼▼
+        error: (err) => {
           setIsUploading(false);
-          return err.message;
+          // errがErrorオブジェクトか確認し、messageプロパティを取得
+          const errorMessage = err instanceof Error ? err.message : '不明なエラーが発生しました。';
+          return errorMessage;
         },
       }
     );
