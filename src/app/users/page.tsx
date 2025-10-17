@@ -2,13 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { db } from '../../lib/firebase/firebase'; // パスは元のままでOK
+import { db } from '../../lib/firebase/firebase';
 import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
-import { AppLayout } from '../../components/Layout'; // パスは元のままでOK
-import Papa from 'papaparse';
-import toast from 'react-hot-toast'; // toartを追加
+import { AppLayout } from '../../components/Layout';
+import Papa from 'paparse';
+import toast from 'react-hot-toast';
 
-// 【変更点①】 Userタイプにサービス情報を追加
+// Userタイプにサービス情報を追加
 type User = {
   id: string;
   lastName: string;
@@ -57,7 +57,6 @@ export default function UsersPage() {
     }
   };
 
-  // 【変更点②】 CSVアップロード処理を修正
   const handleUpload = () => {
     if (!csvFile) {
       toast.error('CSVファイルを選択してください。');
@@ -65,7 +64,7 @@ export default function UsersPage() {
     }
     setIsUploading(true);
     toast.promise(
-      new Promise((resolve, reject) => {
+      new Promise<string>((resolve, reject) => { // Promiseがstringを返すことを明記
         Papa.parse(csvFile, {
           header: true,
           skipEmptyLines: true,
@@ -74,15 +73,12 @@ export default function UsersPage() {
               const batch = writeBatch(db);
               results.data.forEach((row: any) => {
                 const userRef = doc(collection(db, 'users'));
-                
-                // CSVの各行を、データベースに保存する形式に変換
                 const newUser = {
                   ...row,
                   serviceHoDay: row.serviceHoDay === '1',
                   serviceJihatsu: row.serviceJihatsu === '1',
                   serviceSoudan: row.serviceSoudan === '1',
                 };
-
                 batch.set(userRef, newUser);
               });
               await batch.commit();
@@ -100,12 +96,13 @@ export default function UsersPage() {
       }),
       {
         loading: 'CSVファイルをアップロード中...',
-        success: (message) => {
+        // ▼▼▼【変更点】messageの型をstringに指定 ▼▼▼
+        success: (message: string) => {
           fetchUsers(); // 成功したらリストを再読み込み
           setIsModalOpen(false);
           setIsUploading(false);
           setCsvFile(null);
-          return message;
+          return message; // toastに表示するメッセージを返す
         },
         error: (err) => {
           setIsUploading(false);
@@ -116,7 +113,6 @@ export default function UsersPage() {
   };
 
   const downloadTemplate = () => {
-    // CSVテンプレートのヘッダー
     const headers = "lastName,firstName,lastKana,firstKana,birthday,gender,schoolName,schoolGrade,guardianLastName,guardianFirstName,postalCode,address,contact,contactPerson,allergies,serviceHoDay,serviceJihatsu,serviceSoudan,jukyushaNo,issueDate,cityNo,cityName,daysSpecified,daysDeducted,decisionStartDate,decisionEndDate,upperLimitAmount,upperLimitStartDate,upperLimitEndDate,contractStartDate,contractEndDate,providerNoteNo,contractedAmount,individualSupportSurcharge,selfRelianceSurcharge,capManagementType,capOfficeNo,capOfficeName";
     const blob = new Blob([headers], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
@@ -159,7 +155,6 @@ export default function UsersPage() {
                 <tr key={user.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {`${user.lastName} ${user.firstName}`}
-                    {/* 【変更点③】 サービス利用状況をアイコンで表示 */}
                     <div className="flex items-center space-x-2 mt-1">
                       {user.serviceHoDay && <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-sky-600 bg-sky-200">放デイ</span>}
                       {user.serviceJihatsu && <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-emerald-600 bg-emerald-200">児発</span>}
@@ -179,7 +174,6 @@ export default function UsersPage() {
           </table>
         </div>
 
-        {/* --- モーダル部分 (省略) --- */}
         {isModalOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-lg">
