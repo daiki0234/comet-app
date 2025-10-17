@@ -27,19 +27,22 @@ type Event = EventData & { userName: string; user: User; };
 type PseudoRecord = { userName: string; date: string; usageStatus: '放課後' | '休校日' | '欠席'; notes?: string; };
 type GroupedUsers = { [serviceName: string]: Event[]; };
 
-type ServiceRecordRecord = NonNullable<
-  React.ComponentProps<typeof ServiceRecordSheet>['record']
->;
+// ServiceRecordSheet の record 型をそのまま拾う
+type SheetRecord = React.ComponentProps<typeof ServiceRecordSheet>['record'];
+type SheetRecordNonNull = NonNullable<SheetRecord>;
 
-const toRecordForSheet = (r: PseudoRecord | null): ServiceRecordRecord | null => {
-  if (!r || r.usageStatus == null) return null;
-  return {
+// PseudoRecord | null → RecordData | null に変換
+const toSheetRecord = (r: PseudoRecord | null): SheetRecord => {
+  if (!r || r.usageStatus == null) return null; // usageStatus が null なら空枠として渡す
+  const conv: SheetRecordNonNull = {
     userName: r.userName,
     date: r.date,
-    usageStatus: r.usageStatus,
+    usageStatus: r.usageStatus, // '放課後' | '休校日' | '欠席'
     notes: r.notes ?? "",
   };
+  return conv;
 };
+
 
 // --- JSTユーティリティ（保存・照合兼用） ---
 const pad2 = (n: number) => n.toString().padStart(2, "0");
@@ -188,10 +191,11 @@ const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date
       const root = createRoot(tempDiv);
 root.render(
   <React.StrictMode>
-    <ServiceRecordSheet record={toRecordForSheet(pair[0])} />
-    <ServiceRecordSheet record={toRecordForSheet(pair[1])} />
+    <ServiceRecordSheet record={toSheetRecord(pair[0])} />
+    <ServiceRecordSheet record={toSheetRecord(pair[1])} />
   </React.StrictMode>
 );
+
       await new Promise(r => setTimeout(r, 500)); 
 
       try {
