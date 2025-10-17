@@ -103,10 +103,8 @@ export default function UsersPage() {
           setCsvFile(null);
           return message;
         },
-        // ▼▼▼【変更点】(err)の後に => を追加 ▼▼▼
         error: (err) => {
           setIsUploading(false);
-          // errがErrorオブジェクトか確認し、messageプロパティを取得
           const errorMessage = err instanceof Error ? err.message : '不明なエラーが発生しました。';
           return errorMessage;
         },
@@ -128,7 +126,8 @@ export default function UsersPage() {
   };
 
   return (
-    <AppLayout>
+    // ▼▼▼【変更点】ここに pageTitle="利用者一覧" を追加 ▼▼▼
+    <AppLayout pageTitle="利用者一覧">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-gray-800">利用者一覧</h1>
