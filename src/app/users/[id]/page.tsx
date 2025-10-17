@@ -14,7 +14,7 @@ type UserData = {
   birthday: string; gender: string; schoolName: string; schoolGrade: string;
   guardianLastName: string; guardianFirstName: string; postalCode: string;
   address: string; contact: string; contactPerson: string; allergies: string;
-  serviceHoDay: string; serviceJihatsu: string; serviceSoudan: string;
+  serviceHoDay: ServiceStatus; serviceJihatsu: ServiceStatus; serviceSoudan: ServiceStatus;
   jukyushaNo: string; issueDate: string; cityNo: string; cityName: string;
   daysSpecified: string; daysDeducted: boolean; decisionStartDate: string; decisionEndDate: string;
   upperLimitAmount: string; upperLimitStartDate: string; upperLimitEndDate: string;
@@ -24,6 +24,17 @@ type UserData = {
   capManagementType: string; capOfficeNo: string; capOfficeName: string;
   managedByOffices: ManagedByOffice[];
 };
+
+type ServiceStatus = '契約なし' | '利用中' | '休止中' | '契約終了';
+
+// CSV/DB → 画面表示用
+const toServiceStatus = (v: unknown): ServiceStatus => {
+  // "1" / 1 / true は「利用中」とみなす。それ以外は「契約なし」へ寄せる
+  return v === '1' || v === 1 || v === true ? '利用中' : '契約なし';
+};
+
+// 画面表示用 → CSV/DB
+const toCsvFlag = (s: ServiceStatus): string => (s === '利用中' ? '1' : '');
 
 type Props = { params: { id: string; } };
 
@@ -49,6 +60,13 @@ export default function UserDetailPage({ params }: Props) {
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       const data = docSnap.data() as UserData;
+      const raw = docSnap.data() as any;
+      const data: UserData = {
+        ...raw,
+        serviceHoDay: toServiceStatus(raw.serviceHoDay),
+        serviceJihatsu: toServiceStatus(raw.serviceJihatsu),
+        serviceSoudan: toServiceStatus(raw.serviceSoudan),
+      };
       if (!data.managedByOffices) {
         data.managedByOffices = [];
       }
@@ -85,6 +103,13 @@ export default function UserDetailPage({ params }: Props) {
     const docRef = doc(db, "users", userId);
     try {
       await updateDoc(docRef, { ...formData });
+         const payload = {
+     ...formData,
+     serviceHoDay: toCsvFlag(formData.serviceHoDay),
+     serviceJihatsu: toCsvFlag(formData.serviceJihatsu),
+     serviceSoudan: toCsvFlag(formData.serviceSoudan),
+   };
+   await updateDoc(docRef, payload);
       toast.success('利用者情報を正常に更新しました。', { id: loadingToast }); // ★ 成功通知
       setIsEditing(false);
       setInitialFormData(formData);
