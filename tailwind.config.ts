@@ -1,9 +1,10 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
+  // contentの配列に、スタイルが使われている可能性のある全てのフォルダを指定します
   content: [
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
-    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/app/**/*.{js,ts,jsx,tsx,mdx}", // この行が login や dashboard などをカバーします
   ],
   theme: {
     extend: {
@@ -12,7 +13,6 @@ module.exports = {
         'ios-gray': {
           100: '#F2F2F7',
           200: '#E5E5EA',
-          // ... 他のグレーシェード
         },
       },
       borderRadius: {
