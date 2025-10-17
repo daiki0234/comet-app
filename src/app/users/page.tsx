@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { db } from '../../lib/firebase/firebase';
 import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { AppLayout } from '../../components/Layout';
-import Papa from 'paparse';
+// ▼▼▼【変更点】タイポを 'paparse' から 'papaparse' に修正 ▼▼▼
+import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 
 // Userタイプにサービス情報を追加
@@ -64,7 +65,7 @@ export default function UsersPage() {
     }
     setIsUploading(true);
     toast.promise(
-      new Promise<string>((resolve, reject) => { // Promiseがstringを返すことを明記
+      new Promise<string>((resolve, reject) => {
         Papa.parse(csvFile, {
           header: true,
           skipEmptyLines: true,
@@ -96,15 +97,14 @@ export default function UsersPage() {
       }),
       {
         loading: 'CSVファイルをアップロード中...',
-        // ▼▼▼【変更点】messageの型をstringに指定 ▼▼▼
         success: (message: string) => {
-          fetchUsers(); // 成功したらリストを再読み込み
+          fetchUsers();
           setIsModalOpen(false);
           setIsUploading(false);
           setCsvFile(null);
-          return message; // toastに表示するメッセージを返す
+          return message;
         },
-        error: (err) => {
+        error: (err) {
           setIsUploading(false);
           return err.message;
         },
