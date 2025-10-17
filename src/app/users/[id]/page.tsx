@@ -59,7 +59,7 @@ export default function UserDetailPage({ params }: Props) {
     const docRef = doc(db, "users", userId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-      const data = docSnap.data() as UserData;
+      //const data = docSnap.data() as UserData;
       const raw = docSnap.data() as any;
       const data: UserData = {
         ...raw,
@@ -102,7 +102,7 @@ export default function UserDetailPage({ params }: Props) {
     const loadingToast = toast.loading('情報を更新中です...'); // ★ ローディング通知
     const docRef = doc(db, "users", userId);
     try {
-      await updateDoc(docRef, { ...formData });
+      //await updateDoc(docRef, { ...formData });
          const payload = {
      ...formData,
      serviceHoDay: toCsvFlag(formData.serviceHoDay),
