@@ -259,10 +259,10 @@ root.render(
       if (!acc['■児童発達支援']) acc['■児童発達支援'] = [];
       acc['■児童発達支援'].push(event);
     }
-    if (user.serviceSoudan === '利用中') {
-      if (!acc['■相談支援']) acc['■相談支援'] = [];
-      acc['■相談支援'].push(event);
-    }
+    // if (user.serviceSoudan === '利用中') {
+    //   if (!acc['■相談支援']) acc['■相談支援'] = [];
+    //   acc['■相談支援'].push(event);
+    // }
     return acc;
   }, {} as GroupedUsers), [dailyScheduledUsers]);
 
