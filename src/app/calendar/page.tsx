@@ -27,6 +27,10 @@ type Event = EventData & { userName: string; user: User; };
 type PseudoRecord = { userName: string; date: string; usageStatus: '放課後' | '休校日' | '欠席'; notes?: string; };
 type GroupedUsers = { [serviceName: string]: Event[]; };
 
+type ServiceStatus = '契約なし' | '利用中' | '休止中' | '契約終了';
+const toServiceStatus = (v: unknown): ServiceStatus =>
+  v === '1' || v === 1 || v === true || v === '利用中' ? '利用中' : '契約なし';
+
 // ServiceRecordSheet の record 型をそのまま拾う
 type SheetRecord = React.ComponentProps<typeof ServiceRecordSheet>['record'];
 type SheetRecordNonNull = NonNullable<SheetRecord>;
@@ -84,9 +88,14 @@ export default function CalendarPage() {
 
   const fetchInitialData = useCallback(async () => {
     const usersSnapshot = await getDocs(collection(db, 'users'));
-    const usersData = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as User[];
+    const usersDataRaw = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+     const usersData = usersDataRaw.map(u => ({
+      ...u,
+      serviceHoDay: toServiceStatus(u.serviceHoDay),
+      serviceJihatsu: toServiceStatus(u.serviceJihatsu),
+      serviceSoudan: toServiceStatus(u.serviceSoudan),
+    })) as User[];
     setUsers(usersData);
-    
     const eventsSnapshot = await getDocs(collection(db, "events"));
     const eventsData = eventsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as EventData[];
     setAllEvents(eventsData);
@@ -170,7 +179,7 @@ const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date
 
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'b5' });
     const recordsToPrint: (PseudoRecord | null)[] = dailyScheduledUsers.map(event => ({
-      userName: event.userName, date: event.date, usageStatus: event.type as ('放課後' | '休校日'), notes: '',
+      userName: event.userName, date: (event.dateKeyJst ?? ''), usageStatus: event.type as ('放課後' | '休校日'), notes: '',
     }));
     if (recordsToPrint.length % 2 !== 0) {
       recordsToPrint.push(null);
@@ -215,7 +224,7 @@ root.render(
     }
 
     // ★★★ エラー箇所を修正 ★★★
-    pdf.save(`${toDateString(selectedDate)}_サービス提供記録.pdf`);
+    pdf.save(`${jstDateKey(selectedDate)}_サービス提供記録.pdf`);
     setIsPrinting(false);
   };
   
@@ -231,8 +240,8 @@ root.render(
 
   const tileContent = ({ date: d, view }: { date: Date; view: string }) => {
     if (view === 'month') {
-      const dateStr = toDateString(d);
-      const count = eventCounts[dateStr];
+      const dateKey = jstDateKey(d);
+      const count = eventCounts[dateKey] ?? 0;
       if (count > 0) {
         return <p className="text-xs text-gray-600 m-0 mt-1 text-center">{`予定:${count}人`}</p>;
       }
@@ -289,7 +298,7 @@ root.render(
               </select>
               <div className="mt-6 flex justify-end space-x-3">
                 <button onClick={() => setIsModalOpen(false)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded">キャンセル</button>
-                {userSchedule.some(e => e.date === selectedDateForModal.toISOString().split('T')[0]) && 
+                {userSchedule.some(e => (e.dateKeyJst ?? e.date) === jstDateKey(selectedDateForModal)) && 
                   <button onClick={handleDeleteEvent} className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">削除</button>
                 }
                 <button onClick={handleSaveEvent} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">保存</button>
