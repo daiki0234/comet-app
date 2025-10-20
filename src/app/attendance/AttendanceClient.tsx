@@ -6,8 +6,32 @@ import dynamic from "next/dynamic";
 import toast from "react-hot-toast";
 import Link from "next/link";
 import { db } from "@/lib/firebase/firebase";
-import { collection, addDoc, getDocs, query, where, updateDoc, doc } from "firebase/firestore";
+import {
+   collection,
+   addDoc,
+   getDocs,
+   query,
+   where,
+   updateDoc,
+   doc,
+   documentId,
+ } from "firebase/firestore";
 
+// JSTのyyyy-mm-ddキー
+const jstDateKey = (d: Date = new Date()) => {
+  const tzDate = new Date(d.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
+  const y = tzDate.getFullYear();
+  const m = String(tzDate.getMonth() + 1).padStart(2, "0");
+  const day = String(tzDate.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+// 10件ずつ分割（where(documentId(), 'in', ...) の Firestore 制限対策）
+const chunk = <T,>(arr: T[], size = 10) => {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+};
 
 // ✅ ブラウザ依存のQRスキャナは ssr:false で動的ロード
 // 🚫 export しないこと！（const だけ）
@@ -22,35 +46,6 @@ type AttendanceRecord = {
   id: string; userId: string; userName:string; date: string; month: string;
   usageStatus: '放課後' | '休校日' | '欠席';
   arrivalTime?: string; departureTime?: string; notes?: string;
-};
-
-// --- JST 日付ユーティリティ（追加） ---
-const pad = (n: number) => n.toString().padStart(2, "0");
-
-/** JSTの今日を "yyyy-MM-dd" で返す（保存/照合用） */
-const jstTodayDash = () => {
-  const now = new Date();
-  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000); // UTC→JST
-  const y = jst.getUTCFullYear();
-  const m = jst.getUTCMonth() + 1;
-  const d = jst.getUTCDate();
-  return `${pad(m)}`.length ? `${y}-${pad(m)}-${pad(d)}` : `${y}-${m}-${d}`;
-};
-/** "yyyy/MM/dd" が必要なコレクション用 */
-const jstTodaySlash = () => jstTodayDash().replaceAll("-", "/");
-
-/** Firestore Timestamp 用：JST 今日 00:00:00〜23:59:59 を UTCの瞬間に変換 */
-const jstStartEndOfToday = () => {
-  const now = new Date();
-  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000); // JST “今日”の年月日を得る
-  const y = jst.getUTCFullYear();
-  const m = jst.getUTCMonth();
-  const d = jst.getUTCDate();
-
-  // ★ここが肝：JSTの 00:00 を UTC に直すには「-9時間」する
-  const startUtcMs = Date.UTC(y, m, d, 0, 0, 0) - 9 * 60 * 60 * 1000;         // 前日 15:00:00Z
-  const endUtcMs   = Date.UTC(y, m, d, 23, 59, 59, 999) - 9 * 60 * 60 * 1000; // 当日 14:59:59.999Z
-  return { start: new Date(startUtcMs), end: new Date(endUtcMs) };
 };
 
 // 既存：画面の「表示用」日付にはそのまま使ってOK（テーブルの viewDate など）
@@ -107,9 +102,9 @@ const scheduledUserIds = new Set(eventsSnapshot.docs.map(doc => doc.data().userI
 
   }, [viewDate]);
 
-  useEffect(() => {
-    fetchData();
-  }, [viewDate, fetchData]); // viewDateが変更されたら再実行
+useEffect(() => {
+  loadTodaysScheduledUsers();
+}, []);
   
   const handleScanSuccess = useCallback(async (result: string) => {
     if (isProcessing) return;
@@ -236,6 +231,78 @@ const handleAddAbsence = async () => {
     if (status === '休校日') return '◎';
     return status;
   };
+
+  // 関数として追加：今日の予定から利用者を引く
+const loadTodaysScheduledUsers = async () => {
+  const today = jstDateKey(new Date());
+
+  // ① 今日の「利用予定」イベントを取得
+  // コレクション名はあなたの環境に合わせてください：
+  //   - "userSchedule" を使っているなら ↓ そのまま
+  //   - "events" / "schedules" を使っている場合は置き換え
+  const scheduleColNames = ["userSchedule", "schedules", "events"] as const;
+  let scheduledDocs: any[] = [];
+
+  for (const colName of scheduleColNames) {
+    try {
+      const qRef = query(
+        collection(db, colName),
+        where("dateKeyJst", "==", today)
+      );
+      const snap = await getDocs(qRef);
+      if (!snap.empty) {
+        scheduledDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        break; // 最初にヒットしたコレクションを採用
+      }
+    } catch (_e) {
+      // 存在しないコレクション名だとここに来ることがあるので握りつぶしOK
+    }
+  }
+
+  if (scheduledDocs.length === 0) {
+    setTodaysScheduledUsers([]);
+    return;
+  }
+
+  // ② 今日予定の userId をユニーク抽出
+  const userIds = Array.from(
+    new Set(
+      scheduledDocs
+        .map((e) => e.userId)
+        .filter((v) => typeof v === "string" && v.length > 0)
+    )
+  );
+
+  if (userIds.length === 0) {
+    setTodaysScheduledUsers([]);
+    return;
+  }
+
+  // ③ users コレクションから userId でまとめて取得（10件ずつ）
+  const usersCol = collection(db, "users");
+  const batches = chunk(userIds, 10);
+  const users: User[] = [];
+
+  for (const ids of batches) {
+    const qRef = query(usersCol, where(documentId(), "in", ids));
+    const snap = await getDocs(qRef);
+    snap.forEach((d) => {
+      const u = { id: d.id, ...(d.data() as any) };
+      users.push({
+        id: u.id,
+        lastName: u.lastName ?? "",
+        firstName: u.firstName ?? "",
+      } as User);
+    });
+  }
+
+  // 表示用に苗字→名前で並び替え（任意）
+  users.sort((a, b) =>
+    `${a.lastName}${a.firstName}`.localeCompare(`${b.lastName}${b.firstName}`, "ja")
+  );
+
+  setTodaysScheduledUsers(users);
+};
 
   return (
     <>
