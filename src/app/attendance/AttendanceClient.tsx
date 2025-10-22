@@ -49,7 +49,13 @@ type AttendanceRecord = {
 };
 
 // 既存：画面の「表示用」日付にはそのまま使ってOK（テーブルの viewDate など）
-const toDateString = (date: Date) => date.toISOString().split('T')[0];
+const toDateString = (date: Date) => {
+  const jst = new Date(date.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
+  const y = jst.getFullYear();
+  const m = String(jst.getMonth() + 1).padStart(2, "0");
+  const d = String(jst.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`; // ← Firestoreの形式 "2025-10-21" と一致
+};
 
 // 置き換え：安定化した QR スキャナ
 //import React, { memo, useEffect, useRef } from "react";
@@ -105,6 +111,10 @@ const scheduledUserIds = new Set(eventsSnapshot.docs.map(doc => doc.data().userI
 useEffect(() => {
   loadTodaysScheduledUsers();
 }, []);
+
+useEffect(() => {
+  fetchData();
+}, [fetchData, viewDate]);
   
   const handleScanSuccess = useCallback(async (result: string) => {
     if (isProcessing) return;
