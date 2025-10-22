@@ -36,7 +36,7 @@ const chunk = <T,>(arr: T[], size = 10) => {
 // ✅ ブラウザ依存のQRスキャナは ssr:false で動的ロード
 // 🚫 export しないこと！（const だけ）
 const QrCodeScanner = dynamic(
-  () => import("@/components/QrCodeScanner").then(m => m.QrCodeScanner),
+  () => import("@/components/QrCodeScanner").then(m => m.default),
   { ssr: false, loading: () => <div className="p-4 text-sm text-gray-500">スキャナ初期化中…</div> }
 );
 
