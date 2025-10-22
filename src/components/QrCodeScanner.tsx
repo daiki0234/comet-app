@@ -57,13 +57,13 @@ export default function QrCodeScanner({ onScanSuccess, onScanFailure, boxSize = 
     const scanner = new Html5Qrcode(regionIdRef.current, { verbose: false });
     qrRef.current = scanner;
 
-    const config: any = {
-      fps: 10,
-      // 小画面で潰れないよう動的 qrbox
-      qrbox: (vw: number, vh: number) => Math.min(vw, vh, boxSize),
-      aspectRatio: 1.0,
-      rememberLastUsedCamera: true,
-    };
+const config: any = {
+  fps: 10,
+  // 以前: qrbox: (vw, vh) => Math.min(vw, vh, boxSize),
+  qrbox: { width: boxSize, height: boxSize }, // ← こっちが安定
+  aspectRatio: 1.0,
+  rememberLastUsedCamera: true,
+};
 
     const onOk = (txt: string) => onScanSuccess(txt);
     const onNg = (err: string) => onScanFailure && onScanFailure(String(err));
@@ -117,16 +117,18 @@ export default function QrCodeScanner({ onScanSuccess, onScanFailure, boxSize = 
 
   return (
     <div className="w-full">
-      <div
-        ref={containerRef}
-        className="w-full grid place-items-center rounded-lg overflow-hidden border border-gray-200 bg-white"
-      />
-      <p className="mt-2 text-xs text-gray-600">
-        {status === 'starting' && 'カメラ起動中…（HTTPS必須・カメラ許可後は自動で開始）'}
-        {status === 'running' && 'スキャン待機中…'}
-        {status === 'stopped' && '停止中'}
-        {status === 'error' && `エラー: ${lastErrorRef.current ?? '起動に失敗しました'}`}
-      </p>
-    </div>
+    {/* ▼高さを明示（ここが重要） */}
+    <div
+      ref={containerRef}
+      className="w-full rounded-lg overflow-hidden border border-gray-200 bg-white"
+      style={{ width: '100%', maxWidth: 520, height: boxSize + 60 }} // ← ここで高さを与える
+    />
+    <p className="mt-2 text-xs text-gray-600">
+      {status === 'starting' && 'カメラ起動中…（HTTPS必須・カメラ許可後は自動で開始）'}
+      {status === 'running' && 'スキャン待機中…'}
+      {status === 'stopped' && '停止中'}
+      {status === 'error' && `エラー: ${lastErrorRef.current ?? '起動に失敗しました'}`}
+    </p>
+  </div>
   );
 }
