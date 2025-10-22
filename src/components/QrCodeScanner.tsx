@@ -9,141 +9,124 @@ type Props = {
   boxSize?: number;
 };
 
-function isiOS() {
-  const ua = navigator.userAgent;
-  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1);
-}
+const isIOS = () =>
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1);
 
 export default function QrCodeScanner({ onScanSuccess, onScanFailure, boxSize = 260 }: Props) {
-  const mountRef = useRef<HTMLDivElement | null>(null);
+  const regionIdRef = useRef('qr-reader-' + Math.random().toString(36).slice(2));
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const qrRef = useRef<Html5Qrcode | null>(null);
-  const [regionId] = useState(() => 'qr-reader-' + Math.random().toString(36).slice(2));
-  const [running, setRunning] = useState(false);
-  const [lastError, setLastError] = useState<string | null>(null);
-  const [cameraLabel, setCameraLabel] = useState<string>('');
+  const [status, setStatus] = useState<'idle'|'starting'|'running'|'stopped'|'error'>('idle');
+  const lastErrorRef = useRef<string | null>(null);
 
   const cleanup = useCallback(async () => {
-    try {
-      if (qrRef.current) {
-        if (running) {
-          await qrRef.current.stop();
-        }
-        await qrRef.current.clear();
-      }
-    } catch {
-      // ignore
-    } finally {
-      qrRef.current = null;
-      setRunning(false);
+  const inst = qrRef.current;
+  try {
+    if (inst) {
+      // start 済みでなくても stop は安全（Promise）
+      try { await inst.stop(); } catch { /* ignore */ }
+
+      // clear は型上 void 扱いなので await / .catch を付けない
+      try { inst.clear(); } catch { /* ignore */ }
     }
-  }, [running]);
+  } finally {
+    qrRef.current = null;
+    setStatus('stopped');
+    if (containerRef.current) containerRef.current.innerHTML = '';
+  }
+}, []);
 
-  // 初期DOMマウント
-  useEffect(() => {
-    if (!mountRef.current) return;
+  const ensureRegionMounted = useCallback(() => {
+    if (!containerRef.current) return;
+    // 二重作成防止
+    const existing = document.getElementById(regionIdRef.current);
+    if (existing) return;
     const el = document.createElement('div');
-    el.id = regionId;
-    mountRef.current.appendChild(el);
-    return () => {
-      cleanup();
-      if (mountRef.current) mountRef.current.innerHTML = '';
-    };
-  }, [regionId, cleanup]);
+    el.id = regionIdRef.current;
+    containerRef.current.appendChild(el);
+  }, []);
 
-  const startScan = useCallback(async () => {
-    setLastError(null);
+  const startScanner = useCallback(async () => {
+    setStatus('starting');
+    lastErrorRef.current = null;
 
-    // 一旦安全に後始末
-    await cleanup();
+    await cleanup();              // 前回の取りこぼしを確実に掃除
+    ensureRegionMounted();        // 表示領域を用意
 
-    const el = document.getElementById(regionId);
-    if (!el) return;
-
-    const scanner = new Html5Qrcode(regionId, { verbose: false });
+    const scanner = new Html5Qrcode(regionIdRef.current, { verbose: false });
     qrRef.current = scanner;
 
     const config: any = {
       fps: 10,
+      // 小画面で潰れないよう動的 qrbox
       qrbox: (vw: number, vh: number) => Math.min(vw, vh, boxSize),
       aspectRatio: 1.0,
       rememberLastUsedCamera: true,
     };
 
-    // iOS では facingMode を使わず、失敗時に enumerate → deviceId 指定へフォールバック
-    const primaryConstraints = isiOS() ? undefined : ({ facingMode: 'environment' } as any);
+    const onOk = (txt: string) => onScanSuccess(txt);
+    const onNg = (err: string) => onScanFailure && onScanFailure(String(err));
 
-    const onSuccess = (txt: string) => {
-      onScanSuccess(txt);
-    };
-    const onFailure = (err: string) => {
-      onScanFailure && onScanFailure(err);
-    };
+    // iOS は facingMode が失敗しがちなので undefined から試す
+    const primary = isIOS() ? undefined : ({ facingMode: 'environment' } as any);
 
     try {
-      await scanner.start(primaryConstraints as any, config, onSuccess, onFailure);
-      setRunning(true);
-      setCameraLabel('');
+      await scanner.start(primary as any, config, onOk, onNg);
+      setStatus('running');
+      return;
     } catch (e1: any) {
-      // フォールバック：カメラ列挙して“背面っぽい” or 先頭を exact 指定
+      // フォールバック：カメラ列挙 → 背面/先頭を exact 指定
       try {
-        const devices = await Html5Qrcode.getCameras();
-        if (!devices || devices.length === 0) {
-          throw new Error('カメラが見つかりません（ブラウザのカメラ許可を確認）');
-        }
-        const back = devices.find(d => /back|environment|rear/i.test(d.label)) ?? devices[0];
-        setCameraLabel(back.label || 'default camera');
-        await scanner.start({ deviceId: { exact: back.id } } as any, config, onSuccess, onFailure);
-        setRunning(true);
+        const cams = await Html5Qrcode.getCameras();
+        if (!cams || cams.length === 0) throw new Error('カメラが見つかりません（ブラウザ権限を確認）');
+        const back = cams.find(c => /back|environment|rear/i.test(c.label)) ?? cams[0];
+        await scanner.start({ deviceId: { exact: back.id } } as any, config, onOk, onNg);
+        setStatus('running');
+        return;
       } catch (e2: any) {
-        // Permission / NotAllowed / NotFound / Overconstrained を表示して再試行可能に
-        const msg = e2?.message || e1?.message || String(e2 || e1);
-        setLastError(msg);
+        const msg = (e2?.message || e1?.message || String(e2 || e1));
+        lastErrorRef.current = msg;
+        setStatus('error');
+        // 失敗後に中途半端にカメラが掴まれてると次回復帰しないので、必ず掃除
         await cleanup();
       }
     }
-  }, [boxSize, cleanup, onScanSuccess, onScanFailure, regionId]);
+  }, [boxSize, cleanup, ensureRegionMounted, onScanSuccess, onScanFailure]);
 
-  const stopScan = useCallback(async () => {
-    await cleanup();
-  }, [cleanup]);
+  // マウント時に自動起動、アンマウント時は確実に停止
+  useEffect(() => {
+    startScanner();
+    return () => { cleanup(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // タブが非表示になったら一時停止、復帰で自動再起動
+  useEffect(() => {
+    const onVis = async () => {
+      if (document.hidden) {
+        await cleanup();
+      } else {
+        // 権限済みなら自動で再起動
+        startScanner();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [cleanup, startScanner]);
 
   return (
     <div className="w-full">
-      <div ref={mountRef} className="w-full grid place-items-center rounded-lg overflow-hidden border border-gray-200 bg-white" />
-      <div className="mt-2 flex items-center gap-2">
-        {!running ? (
-          <button
-            onClick={startScan}
-            className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-3 py-2 rounded-lg"
-          >
-            カメラを起動
-          </button>
-        ) : (
-          <button
-            onClick={stopScan}
-            className="bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-medium px-3 py-2 rounded-lg"
-          >
-            停止
-          </button>
-        )}
-        {cameraLabel && <span className="text-xs text-gray-600">使用カメラ: {cameraLabel}</span>}
-      </div>
-
-      {lastError && (
-        <div className="mt-2 text-xs text-red-600">
-          エラー: {lastError}
-          <ul className="list-disc pl-4 mt-1 text-gray-600">
-            <li>Safari のアドレスバー「Aa」→ モバイル用Webサイトを表示</li>
-            <li>設定 &gt; Safari &gt; カメラ を「許可/確認」に</li>
-            <li>このページのカメラ権限を「許可」に（Webサイトの設定）</li>
-            <li>HTTPS でアクセス（http だとカメラ不可）</li>
-          </ul>
-        </div>
-      )}
-
-      {!running && !lastError && (
-        <p className="text-xs text-gray-500 mt-2">iPadは初回のみカメラ許可が必要です。「カメラを起動」をタップしてください。</p>
-      )}
+      <div
+        ref={containerRef}
+        className="w-full grid place-items-center rounded-lg overflow-hidden border border-gray-200 bg-white"
+      />
+      <p className="mt-2 text-xs text-gray-600">
+        {status === 'starting' && 'カメラ起動中…（HTTPS必須・カメラ許可後は自動で開始）'}
+        {status === 'running' && 'スキャン待機中…'}
+        {status === 'stopped' && '停止中'}
+        {status === 'error' && `エラー: ${lastErrorRef.current ?? '起動に失敗しました'}`}
+      </p>
     </div>
   );
 }
