@@ -13,7 +13,35 @@ import { AppLayout } from '@/components/Layout';
 import { ServiceRecordSheet } from '@/components/ServiceRecordSheet';
 import { createRoot } from 'react-dom/client';
 
+// ===== ここから追記（既存と重複しないように） =====
+type ScheduleStatus = '放課後' | '休校日' | 'キャンセル待ち' | '欠席' | '取り消し';
 
+const STATUS_TILE_CLASS: Partial<Record<ScheduleStatus, string>> = {
+  放課後: 'bg-green-200',
+  休校日: 'bg-orange-200',
+};
+
+const STATUS_LABEL: Partial<Record<ScheduleStatus, string>> = {
+  放課後: '放課後',
+  休校日: '休校日',
+};
+
+// 同日複数ある場合の優先度（休校日 > 放課後）
+const STATUS_PRIORITY: ScheduleStatus[] = ['休校日', '放課後', 'キャンセル待ち', '欠席', '取り消し'];
+
+// events配列を日付キーごとに集約（dateKeyJst / type / userId を使用）
+function buildEventsMap(
+  events: Array<{ dateKeyJst: string; type: ScheduleStatus; userId: string }>
+) {
+  const map = new Map<string, { date: string; items: { userId: string; status: ScheduleStatus }[] }>();
+  for (const ev of events) {
+    const key = ev.dateKeyJst;
+    if (!map.has(key)) map.set(key, { date: key, items: [] });
+    map.get(key)!.items.push({ userId: ev.userId, status: ev.type });
+  }
+  return map;
+}
+// ===== 追記ここまで =====
 
 // 型定義
 type User = { id: string; lastName: string; firstName: string; allergies?: string; serviceHoDay?: string; serviceJihatsu?: string; serviceSoudan?: string; };
@@ -86,6 +114,31 @@ export default function CalendarPage() {
   const [isPrinting, setIsPrinting] = useState(false);
   const [allergyModalUser, setAllergyModalUser] = useState<User | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+// ===== 既存のステートの近くに追記 =====
+const [events, setEvents] = useState<any[]>([]);
+
+useEffect(() => {
+  const fetchEvents = async () => {
+    const snap = await getDocs(collection(db, 'events'));
+    const data = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    setEvents(data);
+  };
+  fetchEvents();
+}, []);
+// ===== 追記ここまで =====
+
+// ===== 追記：日付ごとに集約した Map を作成 =====
+const eventsMap = useMemo(
+  () => buildEventsMap(
+    events.map(ev => ({
+      dateKeyJst: ev.dateKeyJst as string,      // ← フィールド名はスクショ通り
+      type: ev.type as ScheduleStatus,          // ← '放課後' 等が入っている
+      userId: ev.userId as string,
+    }))
+  ),
+  [events]
+);
+// ===== 追記ここまで =====
 
   const fetchInitialData = useCallback(async () => {
     const usersSnapshot = await getDocs(collection(db, 'users'));
@@ -293,7 +346,10 @@ root.render(
               <h3 className="text-lg font-semibold mb-4">{selectedDateForModal.toLocaleDateString()} の予定</h3>
               <select value={eventType} onChange={(e) => setEventType(e.target.value as '放課後' | '休校日')} className="p-2 border rounded w-full">
                 <option value="放課後">放課後</option>
-                <option value="休校日">休校日</option>
+  <option value="休校日">休校日</option>
+  <option value="キャンセル待ち">キャンセル待ち</option>
+  <option value="欠席">欠席</option>
+  <option value="取り消し">取り消し</option>
               </select>
               <div className="mt-6 flex justify-end space-x-3">
                 <button onClick={() => setIsModalOpen(false)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded">キャンセル</button>
@@ -321,7 +377,59 @@ root.render(
           {activeTab === 'management' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
               <div className="w-full">
-                <Calendar onChange={(value) => setSelectedDate(value as Date)} value={selectedDate} locale="ja-JP" tileContent={tileContent} />
+                <Calendar onChange={(value) => setSelectedDate(value as Date)} value={selectedDate} locale="ja-JP"
+                // ▼ 放課後=緑 / 休校日=オレンジ（文字は黒固定）
+  tileClassName={({ date, view }) => {
+    if (view !== 'month') return undefined;
+    const key = toDateString(date);
+    const day = eventsMap.get(key);
+    if (!day) return undefined;
+
+    const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
+    const cls = main ? STATUS_TILE_CLASS[main] : undefined;
+    return cls ? `!text-black ${cls}` : undefined;
+  }}
+
+  // ▼ ラベル＆人数内訳（予定：n人 + W/欠/取）
+  tileContent={({ date, view }) => {
+    if (view !== 'month') return null;
+    const key = toDateString(date);
+    const day = eventsMap.get(key);
+    if (!day) return null;
+
+    const counts: Record<ScheduleStatus, number> = {
+      放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0,
+    };
+    day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
+
+    const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
+    const mainLabel = main && STATUS_LABEL[main] ? (
+      <div className="mt-1 text-[10px] leading-[10px] font-semibold text-black">
+        {STATUS_LABEL[main]}
+      </div>
+    ) : null;
+
+    const totalYotei = counts['放課後'] + counts['休校日'];
+    const wait = counts['キャンセル待ち'];
+    const kesseki = counts['欠席'];
+    const torikeshi = counts['取り消し'];
+    const secondLineNeeded = wait + kesseki + torikeshi > 0;
+
+    return (
+      <div className="px-1 pb-1">
+        {mainLabel}
+        <div className="mt-0.5 text-[10px] leading-[10px] text-gray-700">
+          予定：{totalYotei}人
+        </div>
+        {secondLineNeeded && (
+          <div className="mt-0.5 text-[10px] leading-[10px] text-gray-600">
+            W:{wait} 欠:{kesseki} 取:{torikeshi}
+          </div>
+        )}
+      </div>
+    );
+  }}
+                  />
               </div>
               <div className="flex-1">
                 {selectedDate ? (
