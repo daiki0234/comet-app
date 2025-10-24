@@ -391,7 +391,7 @@ const loadTodaysScheduledUsers = async () => {
     {/* 欠席者登録 */}
     <section className="bg-white p-4 md:p-5 rounded-2xl shadow-ios border border-gray-200">
       <div className="flex justify-between items-center mb-3">
-        <h3 className="text-base md:text-lg font-bold text-gray-800">欠席者登録（本日）</h3>
+        <h3 className="text-base md:text-lg font-bold text-gray-800">欠席者登録</h3>
         <Link href="/attendance/register-absence" className="text-xs text-blue-600 hover:underline">別日はこちら</Link>
       </div>
 
