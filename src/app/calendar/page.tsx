@@ -101,7 +101,21 @@ const jstDateKey = (src?: string | Date): string => {
 };
 
 /** 既存の画面表示用（日付文字列） */
-const toDateString = (date: Date) => date.toISOString().split('T')[0];
+// 以前の toDateString は削除
+// ✅ 安全なJST固定の "YYYY-MM-DD" 生成関数
+const toDateString = (date: Date) => {
+  const parts = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const y = parts.find(p => p.type === 'year')!.value;
+  const m = parts.find(p => p.type === 'month')!.value;
+  const d = parts.find(p => p.type === 'day')!.value;
+  return `${y}-${m}-${d}`;
+};
 
 export default function CalendarPage() {
   const [activeTab, setActiveTab] = useState('management');
@@ -131,8 +145,8 @@ useEffect(() => {
 const eventsMap = useMemo(
   () => buildEventsMap(
     events.map(ev => ({
-      dateKeyJst: ev.dateKeyJst as string,      // ← フィールド名はスクショ通り
-      type: ev.type as ScheduleStatus,          // ← '放課後' 等が入っている
+      dateKeyJst: ev.dateKeyJst as string,
+      type: ev.type as ScheduleStatus,
       userId: ev.userId as string,
     }))
   ),
