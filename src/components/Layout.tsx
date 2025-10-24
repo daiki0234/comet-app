@@ -7,6 +7,7 @@ import { auth } from '@/lib/firebase/firebase';
 import { signOut } from 'firebase/auth';
 import { Breadcrumbs } from './Breadcrumbs';
 import { Toaster } from 'react-hot-toast';
+import AuthGuard from '@/components/AuthGuard';
 
 // --- アイコン（既存のまま） ---
 const HomeIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>;
@@ -149,9 +150,13 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
         <header className="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-10 px-4 md:px-6 h-14 flex items-center border-b">
           <h2 className="text-xl md:text-2xl font-bold text-gray-800 truncate">{pageTitle}</h2>
         </header>
-        <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-4xl px-4 md:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
           <Breadcrumbs />
+          <AuthGuard>
           {children}
+          </AuthGuard>
+          </div>
         </main>
       </div>
     </div>

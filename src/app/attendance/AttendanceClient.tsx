@@ -316,72 +316,120 @@ const loadTodaysScheduledUsers = async () => {
 
   return (
     <>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-1 space-y-8">
-          <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">QRコードスキャン (本日分)</h3>
-            <p className="text-center text-gray-600 mb-4">利用者のQRコードをカメラにかざしてください。</p>
-            <QrCodeScanner
-              onScanSuccess={handleScanSuccess}
-              onScanFailure={handleScanFailure}
-            />
-            <p className="text-sm text-gray-500 mt-4 h-10">スキャン結果: <span className="font-semibold text-gray-700">{scanResult}</span></p>
-          </div>
-        <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-gray-800">欠席者登録 (本日分)</h3>
-              <Link href="/attendance/register-absence" className="text-xs text-blue-600 hover:underline">別日の登録はこちら</Link>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">利用者</label>
-                <select value={absentUserId} onChange={(e) => setAbsentUserId(e.target.value)} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm">
-                  <option value="">利用予定者を選択</option>
-                  {todaysScheduledUsers.map(u =><option key={u.id} value={u.id}>{u.lastName} {u.firstName}</option>)}
-                </select>
-              </div>
-              <div><label className="block text-sm font-medium text-gray-700">欠席理由</label><input type="text" value={absenceReason} onChange={(e) => setAbsenceReason(e.target.value)} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm"/></div>
-              <button onClick={handleAddAbsence} className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">登録</button>
-            </div>
-          </div>
-        </div>
-        <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
-          <div className="flex items-center mb-4">
-            <label htmlFor="view-date" className="text-sm font-medium text-gray-700 mr-2">表示する日付: </label>
-            <input id="view-date" type="date" value={toDateString(viewDate)} onChange={(e) => setViewDate(new Date(e.target.value))} className="p-2 border border-gray-300 rounded-md shadow-sm"/>
-          </div>
-          <h3 className="text-lg font-bold text-gray-800 mb-4">{viewDate.toLocaleDateString()} の出欠状況</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left text-gray-500">
-              <thead className="text-xs text-gray-700 uppercase bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3">利用者名</th>
-                  <th className="px-6 py-3 text-center">利用状況</th>
-                  <th className="px-6 py-3">来所時間</th>
-                  <th className="px-6 py-3">退所時間</th>
-                  <th className="px-6 py-3">特記事項</th>
-                </tr>
-              </thead>
-              <tbody>
-                {attendanceRecords.map(rec => (
-                  <tr key={rec.id} className="bg-white border-b hover:bg-gray-50">
-                    <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
-                      <span onClick={() => handleOpenEditModal(rec)} className="flex items-center cursor-pointer group">
-                        {rec.userName}
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="ml-2 text-gray-400 group-hover:text-blue-600 transition-colors"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-center">{getUsageStatusSymbol(rec.usageStatus)}</td>
-                    <td className="px-6 py-4">{rec.arrivalTime}</td>
-                    <td className="px-6 py-4">{rec.departureTime}</td>
-                    <td className="px-6 py-4">{rec.notes}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      // ページ内のトップコンテナを置き換え
+<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+  {/* 左カラム（QR + 欠席） */}
+  <div className="lg:col-span-1 space-y-4 md:space-y-6">
+    {/* QRカード */}
+    <section className="bg-white p-4 md:p-5 rounded-2xl shadow-ios border border-gray-200">
+      <h3 className="text-base md:text-lg font-bold text-gray-800 mb-3">QRコードスキャン（本日）</h3>
+      <p className="text-sm text-gray-600 mb-3">利用者のQRコードをカメラにかざしてください。</p>
+      <QrCodeScanner
+        onScanSuccess={handleScanSuccess}
+        onScanFailure={handleScanFailure}
+      />
+      <p className="text-xs text-gray-500 mt-3 h-10">スキャン結果: <span className="font-semibold text-gray-700">{scanResult}</span></p>
+    </section>
+
+    {/* 欠席者登録 */}
+    <section className="bg-white p-4 md:p-5 rounded-2xl shadow-ios border border-gray-200">
+      <div className="flex justify-between items-center mb-3">
+        <h3 className="text-base md:text-lg font-bold text-gray-800">欠席者登録（本日）</h3>
+        <Link href="/attendance/register-absence" className="text-xs text-blue-600 hover:underline">別日はこちら</Link>
       </div>
+
+      <div className="space-y-3">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">利用者</label>
+          <select
+            value={absentUserId}
+            onChange={(e) => setAbsentUserId(e.target.value)}
+            className="w-full h-10 px-3 border border-gray-300 rounded-lg text-sm"
+          >
+            <option value="">利用予定者を選択</option>
+            {todaysScheduledUsers.map(u => (
+              <option key={u.id} value={u.id}>{u.lastName} {u.firstName}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">欠席理由</label>
+          <input
+            type="text"
+            value={absenceReason}
+            onChange={(e) => setAbsenceReason(e.target.value)}
+            className="w-full h-10 px-3 border border-gray-300 rounded-lg text-sm"
+          />
+        </div>
+
+        <button
+          onClick={handleAddAbsence}
+          className="w-full h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold"
+        >
+          登録
+        </button>
+      </div>
+    </section>
+  </div>
+
+  {/* 右カラム（一覧） */}
+  <section className="lg:col-span-2 bg-white p-4 md:p-5 rounded-2xl shadow-ios border border-gray-200">
+    <div className="flex flex-wrap items-center gap-3 mb-3">
+      <label htmlFor="view-date" className="text-sm font-medium text-gray-700">表示日</label>
+      <input
+        id="view-date"
+        type="date"
+        value={toDateString(viewDate)}
+        onChange={(e) => setViewDate(new Date(e.target.value))}
+        className="h-10 px-3 border border-gray-300 rounded-lg text-sm"
+      />
+    </div>
+
+    <h3 className="text-base md:text-lg font-bold text-gray-800 mb-3">
+      {viewDate.toLocaleDateString()} の出欠状況
+    </h3>
+
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm text-gray-700">
+        <thead className="text-xs text-gray-600 uppercase bg-gray-50">
+          <tr>
+            <th className="px-4 py-2 sticky left-0 bg-gray-50 z-10">利用者名</th>
+            <th className="px-4 py-2 text-center">利用状況</th>
+            <th className="px-4 py-2">来所</th>
+            <th className="px-4 py-2">退所</th>
+            <th className="px-4 py-2">特記事項</th>
+          </tr>
+        </thead>
+        <tbody>
+          {attendanceRecords.map(rec => (
+            <tr key={rec.id} className="border-b hover:bg-gray-50">
+              <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap sticky left-0 bg-white z-10">
+                <span
+                  onClick={() => handleOpenEditModal(rec)}
+                  className="flex items-center cursor-pointer group touch-manipulation"
+                >
+                  {rec.userName}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                    className="ml-2 text-gray-400 group-hover:text-blue-600 transition-colors">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                  </svg>
+                </span>
+              </td>
+              <td className="px-4 py-3 text-center">{getUsageStatusSymbol(rec.usageStatus)}</td>
+              <td className="px-4 py-3">{rec.arrivalTime}</td>
+              <td className="px-4 py-3">{rec.departureTime}</td>
+              <td className="px-4 py-3">{rec.notes}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
 
       {isEditModalOpen && editingRecord && (
   <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">

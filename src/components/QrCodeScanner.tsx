@@ -13,7 +13,7 @@ const isIOS = () =>
   /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1);
 
-export default function QrCodeScanner({ onScanSuccess, onScanFailure, boxSize = 260 }: Props) {
+export default function QrCodeScanner({ onScanSuccess, onScanFailure, boxSize = 280 }: Props) {
   const regionIdRef = useRef('qr-reader-' + Math.random().toString(36).slice(2));
   const containerRef = useRef<HTMLDivElement | null>(null);
   const qrRef = useRef<Html5Qrcode | null>(null);
@@ -119,10 +119,10 @@ const config: any = {
     <div className="w-full">
     {/* ▼高さを明示（ここが重要） */}
     <div
-      ref={containerRef}
-      className="w-full rounded-lg overflow-hidden border border-gray-200 bg-white"
-      style={{ width: '100%', maxWidth: 520, height: boxSize + 60 }} // ← ここで高さを与える
-    />
+  ref={containerRef}
+  className="w-full rounded-lg overflow-hidden border border-gray-200 bg-white"
+  style={{ width: '100%', maxWidth: 540, height: boxSize + 40 }} // iPadでちょうど良いサイズ感
+/>
     <p className="mt-2 text-xs text-gray-600">
       {status === 'starting' && 'カメラ起動中…（HTTPS必須・カメラ許可後は自動で開始）'}
       {status === 'running' && 'スキャン待機中…'}
