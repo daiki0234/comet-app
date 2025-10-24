@@ -16,6 +16,7 @@ import {
    doc,
    documentId,
  } from "firebase/firestore";
+ import { computeExtension, stripExtensionNote } from '@/lib/attendance/extension';
 
 // JSTのyyyy-mm-ddキー
 const jstDateKey = (d: Date = new Date()) => {
@@ -43,9 +44,21 @@ const QrCodeScanner = dynamic(
 // 型定義
 type User = { id: string; lastName: string; firstName: string; };
 type AttendanceRecord = {
-  id: string; userId: string; userName:string; date: string; month: string;
+  id: string;
+  userId: string;
+  userName: string;
+  date: string;
+  month: string;
   usageStatus: '放課後' | '休校日' | '欠席';
-  arrivalTime?: string; departureTime?: string; notes?: string;
+  arrivalTime?: string;
+  departureTime?: string;
+  notes?: string;
+  // ★ 追加：分類は別フィールドに保存
+  extension?: {
+    minutes: number;   // 例: 45, 120
+    class: 1 | 2 | 3;  // 1=30–59, 2=60–119, 3=120+
+    display: string;   // "45分（1）" など
+  } | null;
 };
 
 // 既存：画面の「表示用」日付にはそのまま使ってOK（テーブルの viewDate など）
@@ -152,11 +165,37 @@ useEffect(() => {
         await addDoc(collection(db, "attendanceRecords"), { userId, userName, date: todayStr, month: monthStr, usageStatus, arrivalTime: currentTime });
         toast.success(`${userName}さん、ようこそ！`, { id: loadingToast });
       } else if (type === '帰所') {
-        if (attendanceSnapshot.empty) { throw new Error("来所記録がありません"); }
-        const recordDoc = attendanceSnapshot.docs[0];
-        await updateDoc(doc(db, "attendanceRecords", recordDoc.id), { departureTime: currentTime });
-        toast.success(`${userName}さん、お疲れ様でした！`, { id: loadingToast });
-      }
+  if (attendanceSnapshot.empty) { throw new Error("来所記録がありません"); }
+
+  const recordDoc = attendanceSnapshot.docs[0];
+  const prev = recordDoc.data() as any;
+
+  // 今回の帰所時刻
+  const departureTime = currentTime;
+
+  // ★ 延長計算（欠席は自動でnull）
+  const ext = computeExtension(
+    (prev.usageStatus ?? usageStatus) as '放課後' | '休校日' | '欠席',
+    prev.arrivalTime,
+    departureTime
+  );
+
+  // ★ notes の末尾にある旧延長表記を除去して付け直し
+  let newNotes = stripExtensionNote(prev.notes);
+  if (ext) {
+    newNotes = newNotes ? `${newNotes} / ${ext.display}` : ext.display;
+  }
+
+  await updateDoc(doc(db, "attendanceRecords", recordDoc.id), {
+    departureTime,
+    // usageStatus はQRのステータスを信頼（来所時に入っている想定だがズレ対策）
+    usageStatus,
+    notes: newNotes,
+    extension: ext ?? null, // ★ 分類を保存
+  });
+
+  toast.success(`${userName}さん、お疲れ様でした！`, { id: loadingToast });
+}
       await fetchData();
     } catch (error: any) {
       toast.error(`エラー: ${error.message}`, { id: loadingToast });
@@ -216,26 +255,45 @@ const handleAddAbsence = async () => {
 
 
   const handleOpenEditModal = (record: AttendanceRecord) => { setEditingRecord(record); setIsEditModalOpen(true); };
-  const handleUpdateRecord = async () => {
-    if (!editingRecord) return;
-    const loadingToast = toast.loading('記録を更新中です...');
-    try {
-      const dataToUpdate = {
-        usageStatus: editingRecord.usageStatus,
-        arrivalTime: editingRecord.arrivalTime || '',
-        departureTime: editingRecord.departureTime || '',
-        notes: editingRecord.notes || '',
-      };
-      const recordRef = doc(db, 'attendanceRecords', editingRecord.id);
-      await updateDoc(recordRef, dataToUpdate);
-      toast.success('記録を正常に更新しました。', { id: loadingToast });
-      setIsEditModalOpen(false);
-      await fetchData();
-    } catch(error) {
-      toast.error('記録の更新に失敗しました。', { id: loadingToast });
-    }
-  };
+const handleUpdateRecord = async () => {
+  if (!editingRecord) return;
+  const loadingToast = toast.loading('記録を更新中です...');
 
+  try {
+    // （任意）未ログインガード
+    // if (!auth.currentUser) { toast.error('ログインが必要です。', { id: loadingToast }); return; }
+
+    // ★ 延長計算
+    const ext = computeExtension(
+      editingRecord.usageStatus,
+      editingRecord.arrivalTime,
+      editingRecord.departureTime
+    );
+
+    // ★ notes の末尾の旧延長表記を除去 → 新しい表示を付け直し
+    let newNotes = stripExtensionNote(editingRecord.notes);
+    if (ext) {
+      newNotes = newNotes ? `${newNotes} / ${ext.display}` : ext.display;
+    }
+
+    const dataToUpdate = {
+      usageStatus: editingRecord.usageStatus,
+      arrivalTime: editingRecord.arrivalTime || '',
+      departureTime: editingRecord.departureTime || '',
+      notes: newNotes,
+      extension: ext ?? null, // ★ 追加
+    };
+
+    const recordRef = doc(db, 'attendanceRecords', editingRecord.id);
+    await updateDoc(recordRef, dataToUpdate);
+
+    toast.success('記録を正常に更新しました。', { id: loadingToast });
+    setIsEditModalOpen(false);
+    await fetchData();
+  } catch (error) {
+    toast.error('記録の更新に失敗しました。', { id: loadingToast });
+  }
+};
   const getUsageStatusSymbol = (status: '放課後' | '休校日' | '欠席') => {
     if (status === '放課後') return '◯';
     if (status === '休校日') return '◎';
