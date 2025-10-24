@@ -316,7 +316,6 @@ const loadTodaysScheduledUsers = async () => {
 
   return (
     <>
-      // ページ内のトップコンテナを置き換え
 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
   {/* 左カラム（QR + 欠席） */}
   <div className="lg:col-span-1 space-y-4 md:space-y-6">
