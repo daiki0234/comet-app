@@ -375,7 +375,7 @@ root.render(
         )}
         <div className="mt-6">
           {activeTab === 'management' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+            <div className="grid grid-cols-1 gap-8 items-start">
               <div className="w-full">
                 <Calendar onChange={(value) => setSelectedDate(value as Date)} value={selectedDate} locale="ja-JP"
                 // ▼ 放課後=緑 / 休校日=オレンジ（文字は黒固定）
