@@ -1,10 +1,30 @@
 // src/app/api/ingest-attendance/single/route.ts
+export const runtime = 'nodejs';
+
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/server/firebaseAdmin'; // Admin SDK 初期化済み
+import { FieldValue } from 'firebase-admin/firestore';
+import { getDb } from '@/lib/server/firebaseAdmin';
 
 export const dynamic = 'force-dynamic';
 
+function normalizeSpaces(s = '') {
+  return s.replace(/\u3000/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// userId があれば date_userId、なければ date_名前スラッグ
+function makeId(date: string, userId?: string, userName?: string) {
+  if (userId) return `${date}_${userId}`;
+  const slug = (s = '') =>
+    s.normalize('NFKC').replace(/\s+/g, '').replace(/[^\p{L}\p{N}]/gu, '').slice(0, 40);
+  return `${date}_${slug(userName)}`;
+}
+
+export async function GET() {
+  return NextResponse.json({ ok: true, method: 'GET ready' });
+}
+
 export async function POST(req: NextRequest) {
+  // 認証
   const secret = req.headers.get('x-comet-secret');
   if (!secret || secret !== process.env.INGEST_SECRET) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -14,38 +34,64 @@ export async function POST(req: NextRequest) {
     req.headers.get('x-only-if-missing') === '1' ||
     req.nextUrl.searchParams.get('onlyIfMissing') === '1';
 
+  // 受信
   const body = await req.json();
-  const { date, userName } = body || {};
-  if (!date || !userName) {
+  let {
+    date,
+    month,
+    userName,
+    userId,
+    usageStatus,
+    arrivalTime = '',
+    departureTime = '',
+    notes = '',
+  } = body || {};
+
+  if (!date || !userName || !usageStatus) {
     return NextResponse.json({ error: 'bad request' }, { status: 400 });
   }
 
-  // 同一キー（date + userName）で存在チェック
-  const q = await db
-    .collection('attendanceRecords')
-    .where('date', '==', date)
-    .where('userName', '==', userName)
-    .limit(1)
-    .get();
+  const db = getDb();
 
-  if (!q.empty) {
-    if (onlyIfMissing) {
-      return NextResponse.json({ status: 'skipped' }); // 既存ならスキップ
+  // userId が無ければ氏名から解決（姓・名を空白で分割）
+  if (!userId) {
+    const nameKey = normalizeSpaces(String(userName));
+    const [lastName, firstName] = nameKey.split(' ');
+    if (lastName && firstName) {
+      const snap = await db
+        .collection('users')
+        .where('lastName', '==', lastName)
+        .where('firstName', '==', firstName)
+        .limit(1)
+        .get();
+      if (!snap.empty) userId = snap.docs[0].id;
     }
-    await q.docs[0].ref.set(
-      {
-        ...body,
-        month: body.month ?? String(date).slice(0, 7),
-      },
-      { merge: true }
-    );
-    return NextResponse.json({ status: 'updated' });
   }
 
-  // なければ新規追加
-  await db.collection('attendanceRecords').add({
-    ...body,
-    month: body.month ?? String(date).slice(0, 7),
-  });
-  return NextResponse.json({ status: 'inserted' });
+  // 冪等な docId を採用
+  const id = makeId(date, userId, userName);
+  const ref = db.collection('attendanceRecords').doc(id);
+
+  if (onlyIfMissing) {
+    const existed = (await ref.get()).exists;
+    if (existed) return NextResponse.json({ status: 'skipped' });
+  }
+
+  await ref.set(
+    {
+      userId: userId ?? null,
+      userName,
+      date,
+      month: month ?? String(date).slice(0, 7),
+      usageStatus,              // "放課後" | "休校日" | "欠席"
+      arrivalTime: arrivalTime ?? '',
+      departureTime: departureTime ?? '',
+      notes: notes ?? '',
+      source: 'sheet-diff',
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: !onlyIfMissing }
+  );
+
+  return NextResponse.json({ status: onlyIfMissing ? 'inserted' : 'upserted' });
 }
