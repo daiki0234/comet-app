@@ -278,7 +278,7 @@ const handleAddAbsence = async () => {
       }
 
       const newAbsenceCount = absenceCount + 1;
-      const notesWithCount = `[欠席(${newAbsenceCount})] ${absenceReason}`;
+      const notesWithCount = `欠席（${newAbsenceCount}）｜ ${absenceReason}`;
       await addDoc(collection(db, "attendanceRecords"), {
         userId: user.id,
         userName: `${user.lastName} ${user.firstName}`,
