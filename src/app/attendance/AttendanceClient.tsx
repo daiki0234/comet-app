@@ -15,6 +15,7 @@ import {
    updateDoc,
    doc,
    documentId,
+   deleteDoc, 
  } from "firebase/firestore";
  import { computeExtension, stripExtensionNote } from '@/lib/attendance/extension';
 
@@ -294,6 +295,28 @@ const handleUpdateRecord = async () => {
     toast.error('記録の更新に失敗しました。', { id: loadingToast });
   }
 };
+const handleDeleteRecord = async () => {
+  if (!editingRecord) return;
+
+  // 確認ダイアログ
+  const ok = window.confirm(
+    `${editingRecord.userName}（${editingRecord.date}）の記録を削除します。よろしいですか？`
+  );
+  if (!ok) return;
+
+  const loadingToast = toast.loading('記録を削除中です…');
+  try {
+    const ref = doc(db, 'attendanceRecords', editingRecord.id);
+    await deleteDoc(ref);
+    toast.success('記録を削除しました。', { id: loadingToast });
+    setIsEditModalOpen(false);
+    setEditingRecord(null);
+    await fetchData(); // 一覧を再読込
+  } catch (e) {
+    toast.error('削除に失敗しました。', { id: loadingToast });
+  }
+};
+
   const getUsageStatusSymbol = (status: '放課後' | '休校日' | '欠席') => {
     if (status === '放課後') return '◯';
     if (status === '休校日') return '◎';
@@ -551,20 +574,31 @@ const loadTodaysScheduledUsers = async () => {
         </div>
       </div>
 
-      <div className="flex justify-end space-x-4 pt-6 mt-6 border-t">
-        <button
-          onClick={() => setIsEditModalOpen(false)}
-          className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg"
-        >
-          キャンセル
-        </button>
-        <button
-          onClick={handleUpdateRecord}
-          className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg"
-        >
-          保存
-        </button>
-      </div>
+     <div className="flex items-center justify-between pt-6 mt-6 border-t">
+  {/* 左側：削除ボタン */}
+  <button
+    onClick={handleDeleteRecord}
+    className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg"
+  >
+    削除
+  </button>
+
+  {/* 右側：キャンセル／保存 */}
+  <div className="flex gap-3">
+    <button
+      onClick={() => setIsEditModalOpen(false)}
+      className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg"
+    >
+      キャンセル
+    </button>
+    <button
+      onClick={handleUpdateRecord}
+      className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg"
+    >
+      保存
+    </button>
+  </div>
+</div>
     </div>
   </div>
 )}
