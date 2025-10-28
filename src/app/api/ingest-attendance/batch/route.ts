@@ -1,3 +1,5 @@
+
+
 // src/app/api/ingest-attendance/batch/route.ts
 export const runtime = 'nodejs';
 
@@ -99,7 +101,13 @@ async function buildUserIdMap(db: FirebaseFirestore.Firestore) {
 export async function POST(req: NextRequest) {
   try {
     // 認証
-    const token = req.headers.get('x-sync-token');
+    // 先頭付近
+const token = req.headers.get('x-sync-token');
+console.log('x-sync-token length:', token?.length || 0, 'startsWith:', token?.slice(0,3) || '');
+console.log('env length:', (process.env.SHEETS_SYNC_TOKEN?.length || 0), 'startsWith:', process.env.SHEETS_SYNC_TOKEN?.slice(0,3) || '');
+if (!token || token !== process.env.SHEETS_SYNC_TOKEN) {
+  return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+}
     if (!token || token !== process.env.SHEETS_SYNC_TOKEN) {
       return NG('unauthorized', 401);
     }
