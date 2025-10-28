@@ -16,6 +16,7 @@ import {
    doc,
    documentId,
    deleteDoc, 
+   setDoc, getDoc
  } from "firebase/firestore";
  import { computeExtension, stripExtensionNote } from '@/lib/attendance/extension';
 
@@ -131,79 +132,121 @@ useEffect(() => {
 }, [fetchData, viewDate]);
   
   const handleScanSuccess = useCallback(async (result: string) => {
-    if (isProcessing) return;
-    setIsProcessing(true);
-    const loadingToast = toast.loading('QRコードを処理中です...');
+  if (isProcessing) return;
+  setIsProcessing(true);
+  const loadingToast = toast.loading('QRコードを処理中です...');
 
-    try {
-      const url = new URL(result);
-      const params = new URLSearchParams(url.search);
-      const name = params.get('name');
-      const statusSymbol = params.get('status');
-      const type = params.get('type');
-      if (!name || !statusSymbol || !type) { throw new Error("無効なQRコードです"); }
+  // ① ユーティリティ
+  const statusFromSymbol = (s: string): '放課後' | '休校日' => (s === '◯' ? '放課後' : '休校日');
+  const parseHHMM = (t?: string) => {
+    if (!t) return null;
+    const m = t.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    const hh = Number(m[1]), mm = Number(m[2]);
+    if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
+    return hh * 60 + mm;
+  };
+  const calcExtension = (
+    usage: '放課後' | '休校日' | '欠席',
+    arrival?: string,
+    departure?: string
+  ): { label: string; grade: '' | '1' | '2' | '3' } => {
+    if (usage === '欠席') return { label: '', grade: '' };
+    const a = parseHHMM(arrival), d = parseHHMM(departure);
+    if (a == null || d == null) return { label: '', grade: '' };
+    let span = d - a; if (span <= 0) return { label: '', grade: '' };
+    const base = usage === '放課後' ? 180 : 300; // 分
+    const over = span - base; if (over < 30) return { label: '', grade: '' };
+    let grade: '' | '1' | '2' | '3' = over >= 120 ? '3' : over >= 60 ? '2' : '1';
+    const hh = Math.floor(over / 60), mm = over % 60;
+    const hStr = hh > 0 ? `${hh}時間` : '';
+    const label = `${hStr}${mm}分（${grade}）`;
+    return { label, grade };
+  };
 
-      const [lastName, firstName] = name.split(' ');
-      const q = query(collection(db, "users"), where("lastName", "==", lastName), where("firstName", "==", firstName));
-      const userSnapshot = await getDocs(q);
-      if (userSnapshot.empty) { throw new Error("該当する利用者が登録されていません"); }
+  try {
+    // ② QRパラメータ取得
+    const url = new URL(result);
+    const params = new URLSearchParams(url.search);
+    const name = params.get('name');        // "姓 名"
+    const statusSymbol = params.get('status'); // "◯" or "◎"
+    const type = params.get('type');        // "来所" or "帰所"
+    if (!name || !statusSymbol || !type) throw new Error('無効なQRコードです');
 
-      const userDoc = userSnapshot.docs[0];
-      const userId = userDoc.id;
-      const userName = `${userDoc.data().lastName} ${userDoc.data().firstName}`;
-      const currentTime = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-      const usageStatus = statusSymbol === '◯' ? '放課後' : '休校日';
-      const todayStr = toDateString(new Date());
-      const monthStr = todayStr.substring(0, 7);
-      
-      setScanResult(`${userName}｜${type}｜${currentTime}`);
-      
-      const attendanceQuery = query(collection(db, "attendanceRecords"), where("userId", "==", userId), where("date", "==", todayStr));
-      const attendanceSnapshot = await getDocs(attendanceQuery);
-      
-      if (type === '来所') {
-        if (!attendanceSnapshot.empty) { throw new Error("既に来所済みです"); }
-        await addDoc(collection(db, "attendanceRecords"), { userId, userName, date: todayStr, month: monthStr, usageStatus, arrivalTime: currentTime });
-        toast.success(`${userName}さん、ようこそ！`, { id: loadingToast });
-      } else if (type === '帰所') {
-  if (attendanceSnapshot.empty) { throw new Error("来所記録がありません"); }
+    // ③ 利用者解決
+    const [lastName, firstName] = name.split(' ');
+    const uq = query(
+      collection(db, "users"),
+      where("lastName", "==", lastName),
+      where("firstName", "==", firstName)
+    );
+    const userSnapshot = await getDocs(uq);
+    if (userSnapshot.empty) throw new Error("該当する利用者が登録されていません");
+    const userDoc = userSnapshot.docs[0];
+    const userId = userDoc.id;
+    const userName = `${userDoc.data().lastName} ${userDoc.data().firstName}`;
 
-  const recordDoc = attendanceSnapshot.docs[0];
-  const prev = recordDoc.data() as any;
+    // ④ 日付・ID・現在時刻
+    const todayStr = toDateString(new Date());   // "YYYY-MM-DD"（JST）
+    const monthStr = todayStr.substring(0, 7);   // "YYYY-MM"
+    const currentTime = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }); // "hh:mm"
+    const usageStatus = statusFromSymbol(statusSymbol); // "放課後" or "休校日"
+    const docId = `${todayStr}_${userId}`;
+    const recordRef = doc(db, "attendanceRecords", docId);
 
-  // 今回の帰所時刻
-  const departureTime = currentTime;
+    setScanResult(`${userName}｜${type}｜${currentTime}`);
 
-  // ★ 延長計算（欠席は自動でnull）
-  const ext = computeExtension(
-    (prev.usageStatus ?? usageStatus) as '放課後' | '休校日' | '欠席',
-    prev.arrivalTime,
-    departureTime
-  );
+    // ⑤ 分岐：来所/帰所
+    if (type === '来所') {
+      // 既存チェック（来所済みの二重防止）
+      const existing = await getDoc(recordRef);
+      if (existing.exists() && (existing.data()?.arrivalTime || existing.data()?.usageStatus)) {
+        throw new Error("既に来所記録があります");
+      }
+      await setDoc(recordRef, {
+        userId,
+        userName,
+        date: todayStr,
+        month: monthStr,
+        usageStatus,
+        arrivalTime: currentTime,
+        source: "qr-scan",
+        updatedAt: new Date(),
+      }, { merge: true });
 
-  // ★ notes の末尾にある旧延長表記を除去して付け直し
-  let newNotes = stripExtensionNote(prev.notes);
-  if (ext) {
-    newNotes = newNotes ? `${newNotes} / ${ext.display}` : ext.display;
-  }
+      toast.success(`${userName}さん、ようこそ！`, { id: loadingToast });
+    } else if (type === '帰所') {
+      // 既存取得（来所が無いと帰所できない）
+      const snap = await getDoc(recordRef);
+      if (!snap.exists()) throw new Error("来所記録がありません");
+      const prev = snap.data() as any;
 
-  await updateDoc(doc(db, "attendanceRecords", recordDoc.id), {
-    departureTime,
-    // usageStatus はQRのステータスを信頼（来所時に入っている想定だがズレ対策）
-    usageStatus,
-    notes: newNotes,
-    extension: ext ?? null, // ★ 分類を保存
-  });
+      // 延長支援加算の算出（到着/退所/利用状況が揃っている場合のみ）
+      const prevUsage: '放課後' | '休校日' | '欠席' = prev?.usageStatus ?? usageStatus;
+      const ext = calcExtension(prevUsage, prev?.arrivalTime, currentTime);
 
-  toast.success(`${userName}さん、お疲れ様でした！`, { id: loadingToast });
-}
-      await fetchData();
-    } catch (error: any) {
-      toast.error(`エラー: ${error.message}`, { id: loadingToast });
-    } finally {
-      setTimeout(() => setIsProcessing(false), 2000); // 2秒のクールダウン
+      const update: any = {
+        departureTime: currentTime,
+        updatedAt: new Date(),
+      };
+      if (ext.label) {
+        update.notes = ext.label;     // "X時間Y分（n）"
+        update.extension = ext.grade; // '1'|'2'|'3'
+      }
+
+      await setDoc(recordRef, update, { merge: true });
+      toast.success(`${userName}さん、お疲れ様でした！`, { id: loadingToast });
+    } else {
+      throw new Error("不明なtypeです");
     }
-  }, [isProcessing, fetchData]);
+
+    await fetchData(); // 画面再取得
+  } catch (error: any) {
+    toast.error(`エラー: ${error.message ?? error}`, { id: loadingToast });
+  } finally {
+    setTimeout(() => setIsProcessing(false), 800);
+  }
+}, [isProcessing, fetchData]);
 
   const handleScanFailure = (error: string) => {
     // console.warn(`QR error = ${error}`);
