@@ -151,7 +151,7 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
           <h2 className="text-xl md:text-2xl font-bold text-gray-800 truncate">{pageTitle}</h2>
         </header>
         <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-4xl px-4 md:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
+          <div className="mx-auto w-full px-4 md:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
           <Breadcrumbs />
           <AuthGuard>
           {children}
