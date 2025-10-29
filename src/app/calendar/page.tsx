@@ -13,6 +13,18 @@ import { AppLayout } from '@/components/Layout';
 import { ServiceRecordSheet } from '@/components/ServiceRecordSheet';
 import { createRoot } from 'react-dom/client';
 
+// 祝日をGoogle Calendar APIから取得
+async function fetchJapaneseHolidays(year: number): Promise<string[]> {
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY; // .env.local に用意
+  const calendarId = 'ja.japanese%23holiday%40group.v.calendar.google.com';
+  const url = `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events` +
+              `?key=${apiKey}&timeMin=${year}-01-01T00:00:00Z&timeMax=${year}-12-31T23:59:59Z`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (!data.items) return [];
+  return data.items.map((item: any) => item.start.date); // "YYYY-MM-DD"
+}
+
 // ===== ここから追記（既存と重複しないように） =====
 type ScheduleStatus = '放課後' | '休校日' | 'キャンセル待ち' | '欠席' | '取り消し';
 
@@ -128,6 +140,7 @@ export default function CalendarPage() {
   const [isPrinting, setIsPrinting] = useState(false);
   const [allergyModalUser, setAllergyModalUser] = useState<User | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [holidays, setHolidays] = useState<Set<string>>(new Set());
 // ===== 既存のステートの近くに追記 =====
 const [events, setEvents] = useState<any[]>([]);
 
@@ -138,6 +151,10 @@ useEffect(() => {
     setEvents(data);
   };
   fetchEvents();
+}, []);
+useEffect(() => {
+  const y = new Date().getFullYear();
+  fetchJapaneseHolidays(y).then(list => setHolidays(new Set(list)));
 }, []);
 // ===== 追記ここまで =====
 
@@ -295,16 +312,33 @@ root.render(
     pdf.save(`${jstDateKey(selectedDate)}_サービス提供記録.pdf`);
     setIsPrinting(false);
   };
-  
-  const tileClassName = ({ date: d, view }: { date: Date; view: string }) => {
-    if (view === 'month') {
-      const dateKey = jstDateKey(d);
-      if (userSchedule.some(event => (event.dateKeyJst ?? event.date) === dateKey)) {
-        return 'scheduled-day';
-      }
-    }
-    return null;
-  };
+  const ymdJST = (d: Date) => {
+  const j = new Date(d.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
+  const y = j.getFullYear();
+  const m = String(j.getMonth() + 1).padStart(2, "0");
+  const day = String(j.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+const tileClassName = ({ date, view }: { date: Date; view: string }) => {
+  if (view !== 'month') return undefined;
+
+  const classes: string[] = ['comet-tile'];
+  const key = ymdJST(date);
+
+  // 祝日を赤文字＆太字
+  if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
+
+  // 日曜＝赤、土曜＝青（祝日があれば祝日優先でOK）
+  if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold'); // Sun
+  if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold'); // Sat
+
+  // 既存：放課後/休校日の背景（例）
+  // if (byDate.get(key)?.some(e => e.status === '休校日')) classes.push('bg-orange-200');
+  // if (byDate.get(key)?.some(e => e.status === '放課後')) classes.push('bg-green-200');
+
+  return classes.join(' ');
+};
 
   const tileContent = ({ date: d, view }: { date: Date; view: string }) => {
     if (view === 'month') {
