@@ -110,17 +110,12 @@ body {
 
 /* 週末色（数字のみ少し薄く） */
 .comet-cal .react-calendar__month-view__days__day--weekend abbr {
-  color: #6b7280; /* gray-500 */
-}
-
-/* 📅 土曜を青文字に */
-.comet-cal .react-calendar__month-view__days__day--weekend:nth-child(7n) abbr {
   color: #2563eb; /* blue-600 */
   font-weight: 600;
 }
 
 /* 📅 日曜を赤文字に */
-.comet-cal .react-calendar__month-view__days__day--weekend:nth-child(7n+1) abbr {
+.comet-cal .react-calendar__month-view__days__day--weekend:nth-child(7n) abbr {
   color: #dc2626; /* red-600 */
   font-weight: 600;
 }
