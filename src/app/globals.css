@@ -80,13 +80,13 @@ body {
 /* 曜日ヘッダ */
 .comet-cal .react-calendar__month-view__weekdays {
   text-transform: none;
-  font-size: 12px;
+  font-size: 14px;
   color: #6b7280; /* gray-500 */
 }
 
 /* 各日タイルの共通レイアウト */
 .comet-cal .react-calendar__tile {
-  height: 76px;            /* タイルの高さ */
+  height: 80px;            /* タイルの高さ */
   padding: 6px 8px 8px;
   position: relative;      /* 子の絶対配置に備える */
   overflow: hidden;
