@@ -452,7 +452,7 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
 
     const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
     const mainLabel = main && STATUS_LABEL[main] ? (
-      <div className="mt-1 text-[10px] leading-[10px] font-semibold text-black">
+      <div className="mt-1 text-[14px] leading-[14px] font-semibold text-black">
         {STATUS_LABEL[main]}
       </div>
     ) : null;
