@@ -91,7 +91,7 @@ body {
   position: relative;      /* 子の絶対配置に備える */
   overflow: hidden;
   border-radius: 10px;
-  font-size: 16px;
+  font-size: 24px;
 }
 
 /* クリック/フォーカス */
