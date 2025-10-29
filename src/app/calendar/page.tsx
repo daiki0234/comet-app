@@ -466,11 +466,11 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
     return (
       <div className="px-1 pb-1">
         {mainLabel}
-        <div className="mt-0.5 text-[14px] leading-[14px] text-gray-700">
+        <div className="mt-1 text-[14px] leading-[14px] text-gray-700">
           予定：{totalYotei}人
         </div>
         {secondLineNeeded && (
-          <div className="mt-0.5 text-[10px] leading-[10px] text-gray-600">
+          <div className="mt-1 text-[14px] leading-[14px] text-gray-600">
             W:{wait} 欠:{kesseki} 取:{torikeshi}
           </div>
         )}
