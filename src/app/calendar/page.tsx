@@ -391,7 +391,7 @@ root.render(
           {activeTab === 'management' && (
             <div className="grid grid-cols-1 gap-8 items-start">
               <div className="w-full">
-                <Calendar onChange={(value) => setSelectedDate(value as Date)} value={selectedDate} locale="ja-JP"
+                <Calendar className="comet-cal" onChange={(value) => setSelectedDate(value as Date)} value={selectedDate} locale="ja-JP"
                 // ▼ 放課後=緑 / 休校日=オレンジ（文字は黒固定）
   tileClassName={({ date, view }) => {
     if (view !== 'month') return undefined;
@@ -495,7 +495,7 @@ root.render(
                   {users.map(user => (<option key={user.id} value={user.id}>{user.lastName} {user.firstName}</option>))}
                 </select>
               </div>
-              {selectedUserId && <Calendar onClickDay={handleDateClickForScheduling} tileClassName={tileClassName} locale="ja-JP"/>}
+              {selectedUserId && <Calendar className="comet-cal" onClickDay={handleDateClickForScheduling} tileClassName={tileClassName} locale="ja-JP"/>}
             </div>
           )}
         </div>
