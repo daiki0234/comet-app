@@ -531,7 +531,7 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
         </div>
         
         {isModalOpen && selectedDateForModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-100">
             <div className="bg-white p-6 rounded-lg shadow-xl">
               <h3 className="text-lg font-semibold mb-4">{selectedDateForModal.toLocaleDateString()} の予定</h3>
               <select value={eventType} onChange={(e) => setEventType(e.target.value as ScheduleStatus)} className="p-2 border rounded w-full">
