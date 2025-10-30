@@ -648,12 +648,31 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
               {/* ★ 変更点①： {selectedUserId && ...} の制約を解除 */}
               <Calendar 
                 className="comet-cal" 
-                onChange={(value) => handleDateClickForScheduling(value as Date)} 
+                
+                // ★★★ 修正点①： onChange で2つの処理を呼ぶ ★★★
+                // tileContent があっても onChange は確実に発火します
+                onChange={(value) => {
+                  const newDate = value as Date;
+                  // 1. 日付を青く選択状態にする（「青くなる」動作はこれでOK）
+                  setSelectedDate(newDate); 
+                  // 2. モーダルを開く処理を "追加で" 呼び出す
+                  handleDateClickForScheduling(newDate); 
+                }} 
+                
+                // ★★★ 修正点②： value プロパティを（もし無ければ）追加 ★★★
+                // これが `setSelectedDate` と連動して「青く」します
+                value={selectedDate} 
+
                 locale="ja-JP"
-                // ★ 変更点③：利用者予定管理タブ専用のクラス関数を適用
                 tileClassName={scheduleTileClassName} 
-                // ★ 変更点②：利用管理タブと同じ日別合計人数を表示
-                tileContent={managementTileContent}
+                
+                // ★ 念のため、content層はクリック無効化
+                tileContent={(props) => (
+                  <div className="pointer-events-none relative z-0">
+                    {managementTileContent(props)}
+                  </div>
+                )}
+                // onClickDay={...} は削除（またはコメントアウト）します
               />
             </div>
           )}
