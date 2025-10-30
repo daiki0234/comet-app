@@ -447,7 +447,7 @@ root.render(
     const secondLineNeeded = wait + kesseki + torikeshi > 0;
 
     return (
-      <div className="px-1 pb-1">
+      <div className="px-1 pb-1 pointer-events-none">
         {mainLabel}
         <div className="mt-1 text-[14px] leading-[14px] text-gray-700">
           予定：{totalYotei}人
