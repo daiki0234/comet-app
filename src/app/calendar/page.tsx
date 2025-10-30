@@ -194,8 +194,26 @@ const eventsMap = useMemo(
     })) as User[];
     setUsers(usersData);
     const eventsSnapshot = await getDocs(collection(db, "events"));
-    const eventsData = eventsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as EventData[];
-    setAllEvents(eventsData);
+    // ★★★ 修正点： データ正規化ロジックを追加 ★★★
+    const eventsData = eventsSnapshot.docs.map(doc => {
+      const data = doc.data() as any;
+      let key = data.dateKeyJst;
+      
+      // もし dateKeyJst が無く、古い 'date' フィールド (Timestamp) がある場合
+      if (!key && data.date) {
+        // Timestamp を Date オブジェクトに変換
+        const dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date);
+        // toDateString で "YYYY-MM-DD" キーを生成
+        key = toDateString(dateObj); 
+      }
+      
+      return {
+        ...(data as EventData), // 1. データを展開
+        id: doc.id,            // 2. id をドキュメントIDで "上書き"
+        dateKeyJst: key,       // 3. dateKeyJst を "上書き"
+      };
+    });
+    // ★★★ 修正ここまで ★★★
   }, []);
 
   useEffect(() => {
@@ -237,7 +255,7 @@ const handleDateClickForScheduling = (clickedDate: Date) => {
     setSelectedDateForModal(clickedDate);
     
     // 3. 既存の予定があるかチェック
-    const dateKey = jstDateKey(clickedDate);
+    const dateKey = toDateString(clickedDate);
     const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date) === dateKey);
     
     // 4. モーダルに表示する「予定種別」をセット
@@ -250,7 +268,7 @@ const handleDateClickForScheduling = (clickedDate: Date) => {
 // ★★★ 変更点④：重複登録防止ロジック ★★★
   const handleSaveEvent = async () => {
     if (!selectedUserId || !selectedDateForModal) return;
-    const dateKey = jstDateKey(selectedDateForModal);
+    const dateKey = toDateString(selectedDateForModal);
 
     // 4. 重複防止: ドキュメントIDを "date_userId" 形式で固定
     const docId = `${dateKey}_${selectedUserId}`;
@@ -293,7 +311,7 @@ const handleDateClickForScheduling = (clickedDate: Date) => {
 // ★★★ 変更点④：削除ロジックもID形式を統一 ★★★
   const handleDeleteEvent = async () => {
     if (!selectedUserId || !selectedDateForModal) return;
-    const dateKey = jstDateKey(selectedDateForModal);
+    const dateKey = toDateString(selectedDateForModal);
 
     // 4. 保存ロジックと合わせ、"date_userId" 形式のIDで削除
     const docId = `${dateKey}_${selectedUserId}`;
