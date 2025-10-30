@@ -392,7 +392,8 @@ root.render(
   const scheduleTileClassName = ({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month') return undefined;
     const key = ymdJST(date); // 土日祝判定用のキー
-    const classes: string[] = ['comet-tile'];
+    // position: relative と z-index: 10 で、タイル自体を前面に持ってくる
+    const classes: string[] = ['comet-tile', 'relative', 'z-10'];
 
     // 1. 祝日を赤文字＆太字
     if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
@@ -447,7 +448,7 @@ root.render(
     const secondLineNeeded = wait + kesseki + torikeshi > 0;
 
     return (
-      <div className="px-1 pb-1 pointer-events-none">
+      <div className="px-1 pb-1 relative z-0 pointer-events-none">
         {mainLabel}
         <div className="mt-1 text-[14px] leading-[14px] text-gray-700">
           予定：{totalYotei}人
