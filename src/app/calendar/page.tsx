@@ -238,7 +238,7 @@ const eventsMap = useMemo(
 
   useEffect(() => {
     fetchInitialData();
-  }, [fetchInitialData]);
+  }, []);
 
   const dailyScheduledUsers = useMemo(() => {
     if (!selectedDate || users.length === 0) return [];
