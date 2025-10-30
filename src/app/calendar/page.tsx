@@ -157,14 +157,6 @@ export default function CalendarPage() {
 const [events, setEvents] = useState<any[]>([]);
 
 useEffect(() => {
-  const fetchEvents = async () => {
-    const snap = await getDocs(collection(db, 'events'));
-    const data = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-    setEvents(data);
-  };
-  fetchEvents();
-}, []);
-useEffect(() => {
   const y = new Date().getFullYear();
   fetchJapaneseHolidays(y).then(list => setHolidays(new Set(list)));
 }, []);
@@ -183,58 +175,60 @@ const eventsMap = useMemo(
 );
 // ===== 追記ここまで =====
 
-  const fetchInitialData = useCallback(async () => {
-    const usersSnapshot = await getDocs(collection(db, 'users'));
-    const usersDataRaw = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
-     const usersData = usersDataRaw.map(u => ({
-      ...u,
-      serviceHoDay: toServiceStatus(u.serviceHoDay),
-      serviceJihatsu: toServiceStatus(u.serviceJihatsu),
-      serviceSoudan: toServiceStatus(u.serviceSoudan),
-    })) as User[];
-    setUsers(usersData);
-    const eventsSnapshot = await getDocs(collection(db, "events"));
-    // ★★★ 修正点： データ正規化ロジックを追加 ★★★
-// ★★★ 修正点： 正規化ロジックを強化 ★★★
-    const eventsData = eventsSnapshot.docs.map(doc => {
-      const data = doc.data() as any;
-      const id = doc.id;
-      
-      let key = data.dateKeyJst; // 優先度1: "dateKeyJst" フィールド
+const fetchInitialData = useCallback(async () => {
+    try { // ★ try を追加
+      const usersSnapshot = await getDocs(collection(db, 'users'));
+      const usersDataRaw = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+      const usersData = usersDataRaw.map(u => ({
+        ...u,
+        serviceHoDay: toServiceStatus(u.serviceHoDay),
+        serviceJihatsu: toServiceStatus(u.serviceJihatsu),
+        serviceSoudan: toServiceStatus(u.serviceSoudan),
+      })) as User[];
+      setUsers(usersData);
+      const eventsSnapshot = await getDocs(collection(db, "events"));
 
-      // 優先度2: ドキュメントID ("YYYY-MM-DD_userId" 形式)
-      if (!key && id.includes('_')) {
-        const potentialKey = id.split('_')[0];
-        // "YYYY-MM-DD" (10文字) の形式か簡易チェック
-        if (potentialKey.length === 10 && potentialKey.charAt(4) === '-') {
-          key = potentialKey;
-        }
-      }
+      // ★★★ 正規化ロジック ★★★
+      const eventsData = eventsSnapshot.docs.map(doc => {
+        const data = doc.data() as any;
+        const id = doc.id;
+        
+        let key = data.dateKeyJst; // 優先度1
 
-      // 優先度3: 古い "date" (Timestamp) フィールド
-      if (!key && data.date) {
-        try {
-          // Timestamp を Date オブジェクトに変換
-          const dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date);
-          // toDateString で "YYYY-MM-DD" キーを生成
-          key = toDateString(dateObj);
-        } catch (e) {
-          console.error("古い日付の変換に失敗:", data.date, e);
-          // 変換失敗時は key は null/undefined のまま
+        // 優先度2: ドキュメントID
+        if (!key && id.includes('_')) {
+          const potentialKey = id.split('_')[0];
+          if (potentialKey.length === 10 && potentialKey.charAt(4) === '-') {
+            key = potentialKey;
+          }
         }
-      }
-      
-      return {
-        ...(data as EventData), // 1. データを展開
-        id: id,                // 2. id をドキュメントIDで "上書き"
-        dateKeyJst: key,       // 3. 強化した dateKeyJst を "上書き"
-      };
-    });
-    // ★★★ 修正ここまで ★★★
-    // ★★★ 修正点： 正規化したデータを state にセットする ★★★
-    setAllEvents(eventsData); // これが userSchedule (ハイライト用) に使われる
-    setEvents(eventsData);    // これが eventsMap (人数表示用) に使われる
-  }, []);
+
+        // 優先度3: 古い "date" (Timestamp)
+        if (!key && data.date) {
+          try {
+            const dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date);
+            key = toDateString(dateObj);
+          } catch (e) {
+            console.error("古い日付の変換に失敗:", data.date, e);
+          }
+        }
+        
+        return {
+          ...(data as EventData),
+          id: id,
+          dateKeyJst: key,
+        };
+      });
+      // ★★★ 正規化ここまで ★★★
+
+      setAllEvents(eventsData);
+      setEvents(eventsData);
+
+    } catch (error) { // ★ catch を追加
+      console.error("データの初期読み込みに失敗しました:", error);
+      alert("カレンダーデータの読み込みに失敗しました。ページをリロードしてください。");
+    }
+  }, []); // ← 依存配列は [] のまま
 
   useEffect(() => {
     fetchInitialData();
