@@ -231,6 +231,9 @@ const eventsMap = useMemo(
       };
     });
     // ★★★ 修正ここまで ★★★
+    // ★★★ 修正点： 正規化したデータを state にセットする ★★★
+    setAllEvents(eventsData); // これが userSchedule (ハイライト用) に使われる
+    setEvents(eventsData);    // これが eventsMap (人数表示用) に使われる
   }, []);
 
   useEffect(() => {
