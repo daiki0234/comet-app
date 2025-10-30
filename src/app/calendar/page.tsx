@@ -648,7 +648,7 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
               {/* ★ 変更点①： {selectedUserId && ...} の制約を解除 */}
               <Calendar 
                 className="comet-cal" 
-                onClickDay={handleDateClickForScheduling} 
+                onChange={(value) => handleDateClickForScheduling(value as Date)} 
                 locale="ja-JP"
                 // ★ 変更点③：利用者予定管理タブ専用のクラス関数を適用
                 tileClassName={scheduleTileClassName} 
