@@ -227,15 +227,23 @@ const eventsMap = useMemo(
   }, [allEvents]);
 
 const handleDateClickForScheduling = (clickedDate: Date) => {
+    // 1. 利用者が選択されているかチェック
     if (!selectedUserId) {
       alert('先に利用者を選択してください。');
       return;
     }
+
+    // 2. モーダルに渡す「選択された日付」をセット
     setSelectedDateForModal(clickedDate);
+    
+    // 3. 既存の予定があるかチェック
     const dateKey = jstDateKey(clickedDate);
     const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date) === dateKey);
-    // ★ 型を ScheduleStatus に変更
-    const [eventType, setEventType] = useState<ScheduleStatus>('放課後');
+    
+    // 4. モーダルに表示する「予定種別」をセット
+    setEventType(existingEvent ? existingEvent.type : '放課後');
+    
+    // 5. モーダルを開く
     setIsModalOpen(true);
   };
 
@@ -646,47 +654,39 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
                 </select>
               </div>
               {/* ★ 変更点①： {selectedUserId && ...} の制約を解除 */}
+              {/* ★★★ 修正箇所②： Calendar コンポーネント ★★★ */}
               <Calendar 
                 className="comet-cal" 
                 
-                // ★★★ 修正点： onChange で配列(value)を正しく処理する ★★★
                 onChange={(value) => {
-                  
                   let clickedDate: Date | null = null;
-
-                  // valueが配列かどうかを判定
+                  
+                  // value が配列か (range選択か) を判定
                   if (Array.isArray(value)) {
-                    // 配列の場合、最初の要素（クリックした日付）を取り出す
                     clickedDate = value[0] as Date; 
                   } else {
-                    // 配列でない場合（単一の日付）
                     clickedDate = value as Date;
                   }
 
-                  // もし日付がnullなら（ありえないが）処理を中断
                   if (!clickedDate) return; 
 
-                  // 1. 日付を青く選択状態にする
+                  // 1. 日付を青くする (Stateを更新)
                   setSelectedDate(clickedDate); 
-                  // 2. モーダルを開く処理を "正しい日付オブジェクト" で呼び出す
+                  // 2. ↑で定義した「安全な」関数を呼ぶ
                   handleDateClickForScheduling(clickedDate); 
                 }} 
                 
-                // valueプロパティで選択状態をカレンダーに反映
                 value={selectedDate} 
-
                 locale="ja-JP"
-                
-                // タイルクラス（z-index）は念のため残します
                 tileClassName={scheduleTileClassName} 
                 
-                // tileContentがクリックを妨害しないようにします
+                // tileContentがクリックを妨害しないように
                 tileContent={(props) => (
                   <div className="pointer-events-none relative z-0">
                     {managementTileContent(props)}
                   </div>
                 )}
-                // onClickDay は使いません
+                // onClickDay は使わない
               />
             </div>
           )}
