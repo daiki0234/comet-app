@@ -649,30 +649,44 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
               <Calendar 
                 className="comet-cal" 
                 
-                // ★★★ 修正点①： onChange で2つの処理を呼ぶ ★★★
-                // tileContent があっても onChange は確実に発火します
+                // ★★★ 修正点： onChange で配列(value)を正しく処理する ★★★
                 onChange={(value) => {
-                  const newDate = value as Date;
-                  // 1. 日付を青く選択状態にする（「青くなる」動作はこれでOK）
-                  setSelectedDate(newDate); 
-                  // 2. モーダルを開く処理を "追加で" 呼び出す
-                  handleDateClickForScheduling(newDate); 
+                  
+                  let clickedDate: Date | null = null;
+
+                  // valueが配列かどうかを判定
+                  if (Array.isArray(value)) {
+                    // 配列の場合、最初の要素（クリックした日付）を取り出す
+                    clickedDate = value[0] as Date; 
+                  } else {
+                    // 配列でない場合（単一の日付）
+                    clickedDate = value as Date;
+                  }
+
+                  // もし日付がnullなら（ありえないが）処理を中断
+                  if (!clickedDate) return; 
+
+                  // 1. 日付を青く選択状態にする
+                  setSelectedDate(clickedDate); 
+                  // 2. モーダルを開く処理を "正しい日付オブジェクト" で呼び出す
+                  handleDateClickForScheduling(clickedDate); 
                 }} 
                 
-                // ★★★ 修正点②： value プロパティを（もし無ければ）追加 ★★★
-                // これが `setSelectedDate` と連動して「青く」します
+                // valueプロパティで選択状態をカレンダーに反映
                 value={selectedDate} 
 
                 locale="ja-JP"
+                
+                // タイルクラス（z-index）は念のため残します
                 tileClassName={scheduleTileClassName} 
                 
-                // ★ 念のため、content層はクリック無効化
+                // tileContentがクリックを妨害しないようにします
                 tileContent={(props) => (
                   <div className="pointer-events-none relative z-0">
                     {managementTileContent(props)}
                   </div>
                 )}
-                // onClickDay={...} は削除（またはコメントアウト）します
+                // onClickDay は使いません
               />
             </div>
           )}
