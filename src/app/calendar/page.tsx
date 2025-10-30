@@ -430,7 +430,9 @@ root.render(
     // 3. 選択中ユーザーの予定を強調表示 (要望③)
     if (selectedUserId) {
       const dateKeyJst = toDateString(date); // ★ 堅牢な toDateString に変更
-      const event = userSchedule.find(e => (e.dateKeyJst ?? e.date) === dateKeyJst);
+      // ★★★ 修正点： 比較を e.dateKeyJst === dateKeyJst に単純化 ★★★
+      // これで、正規化された "YYYY-MM-DD" 同士が比較されます
+      const event = userSchedule.find(e => e.dateKeyJst === dateKeyJst);
       if (event) {
         const scheduleClass = USER_SCHEDULE_CLASS[event.type as ScheduleStatus];
         if (scheduleClass) {
