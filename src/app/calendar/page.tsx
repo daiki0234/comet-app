@@ -195,22 +195,39 @@ const eventsMap = useMemo(
     setUsers(usersData);
     const eventsSnapshot = await getDocs(collection(db, "events"));
     // ★★★ 修正点： データ正規化ロジックを追加 ★★★
+// ★★★ 修正点： 正規化ロジックを強化 ★★★
     const eventsData = eventsSnapshot.docs.map(doc => {
       const data = doc.data() as any;
-      let key = data.dateKeyJst;
+      const id = doc.id;
       
-      // もし dateKeyJst が無く、古い 'date' フィールド (Timestamp) がある場合
+      let key = data.dateKeyJst; // 優先度1: "dateKeyJst" フィールド
+
+      // 優先度2: ドキュメントID ("YYYY-MM-DD_userId" 形式)
+      if (!key && id.includes('_')) {
+        const potentialKey = id.split('_')[0];
+        // "YYYY-MM-DD" (10文字) の形式か簡易チェック
+        if (potentialKey.length === 10 && potentialKey.charAt(4) === '-') {
+          key = potentialKey;
+        }
+      }
+
+      // 優先度3: 古い "date" (Timestamp) フィールド
       if (!key && data.date) {
-        // Timestamp を Date オブジェクトに変換
-        const dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date);
-        // toDateString で "YYYY-MM-DD" キーを生成
-        key = toDateString(dateObj); 
+        try {
+          // Timestamp を Date オブジェクトに変換
+          const dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date);
+          // toDateString で "YYYY-MM-DD" キーを生成
+          key = toDateString(dateObj);
+        } catch (e) {
+          console.error("古い日付の変換に失敗:", data.date, e);
+          // 変換失敗時は key は null/undefined のまま
+        }
       }
       
       return {
         ...(data as EventData), // 1. データを展開
-        id: doc.id,            // 2. id をドキュメントIDで "上書き"
-        dateKeyJst: key,       // 3. dateKeyJst を "上書き"
+        id: id,                // 2. id をドキュメントIDで "上書き"
+        dateKeyJst: key,       // 3. 強化した dateKeyJst を "上書き"
       };
     });
     // ★★★ 修正ここまで ★★★
