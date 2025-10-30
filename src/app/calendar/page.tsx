@@ -401,7 +401,7 @@ root.render(
     if (view !== 'month') return undefined;
     const key = ymdJST(date); // 土日祝判定用のキー
     // position: relative と z-index: 10 で、タイル自体を前面に持ってくる
-    const classes: string[] = ['comet-tile', 'relative', 'z-10'];
+    const classes: string[] = ['comet-tile'];
 
     // 1. 祝日を赤文字＆太字
     if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
@@ -456,7 +456,7 @@ root.render(
     const secondLineNeeded = wait + kesseki + torikeshi > 0;
 
     return (
-      <div className="px-1 pb-1 relative z-0 pointer-events-none">
+      <div className="px-1 pb-1 pointer-events-none">
         {mainLabel}
         <div className="mt-1 text-[14px] leading-[14px] text-gray-700">
           予定：{totalYotei}人
@@ -539,8 +539,8 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
         </div>
         
         {isModalOpen && selectedDateForModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-100">
-            <div className="bg-white p-6 rounded-lg shadow-xl">
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-[200]">
+            <div className="relative z-[201] bg-white p-6 rounded-lg shadow-xl">
               <h3 className="text-lg font-semibold mb-4">{selectedDateForModal.toLocaleDateString()} の予定</h3>
               <select value={eventType} onChange={(e) => setEventType(e.target.value as ScheduleStatus)} className="p-2 border rounded w-full">
                 <option value="放課後">放課後</option>
