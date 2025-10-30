@@ -411,7 +411,7 @@ root.render(
 
     // 3. 選択中ユーザーの予定を強調表示 (要望③)
     if (selectedUserId) {
-      const dateKeyJst = jstDateKey(date); // 予定データ照合用のキー
+      const dateKeyJst = toDateString(date); // ★ 堅牢な toDateString に変更
       const event = userSchedule.find(e => (e.dateKeyJst ?? e.date) === dateKeyJst);
       if (event) {
         const scheduleClass = USER_SCHEDULE_CLASS[event.type as ScheduleStatus];
