@@ -5,6 +5,80 @@ import Link from 'next/link';
 import { AppLayout } from '@/components/Layout';
 import Chart from 'chart.js/auto';
 
+// ★★★ 変更点①：PDF生成とデータ取得に必要なライブラリをインポート ★★★
+import { db } from '@/lib/firebase/firebase';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
+import { createRoot } from 'react-dom/client';
+import { ServiceRecordSheet } from '@/components/ServiceRecordSheet';
+// ★★★ 変更点① ここまで ★★★
+
+// --- ▼▼▼ PDF印刷機能（カレンダーページから移植）▼▼▼ ---
+// これらの型定義や関数は、将来的に /lib/types.ts などに共通化すると管理しやすくなります。
+
+// 1. 型定義
+type ScheduleStatus = '放課後' | '休校日' | 'キャンセル待ち' | '欠席' | '取り消し';
+type ServiceStatus = '契約なし' | '利用中' | '休止中' | '契約終了';
+
+type User = {
+  id: string;
+  lastName: string;
+  firstName: string;
+  allergies?: string;
+  serviceHoDay?: ServiceStatus;
+  serviceJihatsu?: ServiceStatus;
+  serviceSoudan?: ServiceStatus;
+};
+
+type EventData = {
+  id: string;
+  userId: string;
+  dateKeyJst: string;
+  type: ScheduleStatus;
+  user?: User; // 印刷用にユーザー情報をマージする
+  userName?: string; // 印刷用にユーザー情報をマージする
+};
+
+type PseudoRecord = {
+  userName: string;
+  date: string;
+  usageStatus: '放課後' | '休校日' | '欠席';
+  notes?: string;
+};
+
+// ServiceRecordSheet の record 型
+type SheetRecord = React.ComponentProps<typeof ServiceRecordSheet>['record'];
+type SheetRecordNonNull = NonNullable<SheetRecord>;
+
+// 2. ユーティリティ関数
+const toServiceStatus = (v: unknown): ServiceStatus =>
+  v === '1' || v === 1 || v === true || v === '利用中' ? '利用中' : '契約なし';
+
+const pad2 = (n: number) => n.toString().padStart(2, "0");
+
+const jstDateKey = (src?: string | Date): string => {
+  let d: Date;
+  if (!src) d = new Date();
+  else if (src instanceof Date) d = src;
+  else d = new Date(src);
+  
+  const jst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  return `${jst.getUTCFullYear()}-${pad2(jst.getUTCMonth() + 1)}-${pad2(jst.getUTCDate())}`;
+};
+
+const toSheetRecord = (r: PseudoRecord | null): SheetRecord => {
+  if (!r || r.usageStatus == null) return null;
+  const conv: SheetRecordNonNull = {
+    userName: r.userName,
+    date: r.date,
+    usageStatus: r.usageStatus,
+    notes: r.notes ?? "",
+  };
+  return conv;
+};
+// --- ▲▲▲ PDF印刷機能（カレンダーページから移植）▲▲▲ ---
+
 // 各種チャートのインスタンスを保持するための型定義
 type ChartInstances = {
   overall?: Chart;
@@ -23,6 +97,9 @@ export default function DashboardPage() {
   // 日付フィルター用のstate
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+
+  // ★★★ 変更点②：印刷処理中のローディングstateを追加 ★★★
+  const [isPrinting, setIsPrinting] = useState(false);
 
   // Chart.jsのインスタンスを管理するためのref
   const chartRefs = useRef<ChartInstances>({});
@@ -81,6 +158,125 @@ export default function DashboardPage() {
     setError(null);
   };
 
+  // ★★★ 変更点③：「今日の提供記録を印刷」ボタンの処理関数 ★★★
+  const handlePrintToday = async () => {
+    setIsPrinting(true);
+    
+    // 1. 今日の日付キー (JST) を取得
+    const todayKey = jstDateKey(new Date());
+
+    try {
+      // 2. 全ユーザー情報を取得（Mapに変換）
+      const usersSnapshot = await getDocs(collection(db, 'users'));
+      const usersMap = new Map<string, User>();
+      usersSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        usersMap.set(doc.id, {
+          id: doc.id,
+          lastName: data.lastName,
+          firstName: data.firstName,
+          allergies: data.allergies,
+          serviceHoDay: toServiceStatus(data.serviceHoDay),
+          serviceJihatsu: toServiceStatus(data.serviceJihatsu),
+          serviceSoudan: toServiceStatus(data.serviceSoudan),
+        });
+      });
+
+      // 3. "今日" の "events" を取得
+      const eventsQuery = query(collection(db, 'events'), where('dateKeyJst', '==', todayKey));
+      const eventsSnapshot = await getDocs(eventsQuery);
+
+      // 4. "今日" の予定がある利用者データを作成
+      const todaysScheduledUsers: EventData[] = [];
+      eventsSnapshot.docs.forEach(doc => {
+        const event = doc.data() as Omit<EventData, 'id'>;
+        const user = usersMap.get(event.userId);
+        
+        // ユーザー情報があり、ステータスが「放課後」または「休校日」の場合のみ
+        // (※カレンダーページは全ステータスをリストアップしますが、提供記録は利用前提のため絞ります)
+        if (user && (event.type === '放課後' || event.type === '休校日')) {
+          todaysScheduledUsers.push({
+            id: doc.id,
+            ...event,
+            user: user,
+            userName: `${user.lastName} ${user.firstName}`,
+          });
+        }
+      });
+
+      if (todaysScheduledUsers.length === 0) {
+        alert('本日の利用予定者（放課後・休校日）はいません。');
+        return;
+      }
+
+      // 5. カレンダーページと同様のPDF生成ロジック
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'b5' });
+      
+      const recordsToPrint: (PseudoRecord | null)[] = todaysScheduledUsers.map(event => ({
+        userName: event.userName!,
+        date: event.dateKeyJst,
+        usageStatus: event.type as ('放課後' | '休校日'), // 絞り込み済み
+        notes: '', // ダッシュボードからはNotesは取得しない（または空）
+      }));
+      
+      // 奇数ならnullを追加
+      if (recordsToPrint.length % 2 !== 0) {
+        recordsToPrint.push(null);
+      }
+      
+      // 2人1組のペアにする
+      const userPairs: (PseudoRecord | null)[][] = [];
+      for (let i = 0; i < recordsToPrint.length; i += 2) {
+        userPairs.push([recordsToPrint[i], recordsToPrint[i + 1]]);
+      }
+
+      // 6. 1ページずつ（2人分）レンダリングしてPDFに追加
+      for (let i = 0; i < userPairs.length; i++) {
+        const pair = userPairs[i];
+        const tempDiv = document.createElement('div');
+        tempDiv.style.width = '182mm'; // B5
+        tempDiv.style.position = 'absolute';
+        tempDiv.style.left = '-2000px'; // 画面外
+        document.body.appendChild(tempDiv);
+        
+        const root = createRoot(tempDiv);
+        root.render(
+          <React.StrictMode>
+            <ServiceRecordSheet record={toSheetRecord(pair[0])} />
+            <ServiceRecordSheet record={toSheetRecord(pair[1])} />
+          </React.StrictMode>
+        );
+
+        await new Promise(r => setTimeout(r, 500)); // レンダリング待機
+
+        try {
+          const canvas = await html2canvas(tempDiv, { scale: 3 });
+          if (i > 0) pdf.addPage();
+          const imgData = canvas.toDataURL('image/png');
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = pdf.internal.pageSize.getHeight();
+          pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+        } catch (e) {
+          console.error("PDF生成中にエラー:", e);
+          alert("PDFの生成に失敗しました。");
+        }
+        
+        root.unmount();
+        document.body.removeChild(tempDiv);
+      }
+
+      pdf.save(`${todayKey}_サービス提供記録.pdf`);
+
+    } catch (e) {
+      console.error(e);
+      alert('データの取得またはPDFの生成に失敗しました。');
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+  // ★★★ 変更点③ ここまで ★★★
+
+
   // グラフ描画ロジック
   useEffect(() => {
     if (!analysisData) return;
@@ -116,13 +312,22 @@ export default function DashboardPage() {
           日々の業務を効率化し、利用者様と向き合う大切な時間を増やすために。
           Cometは、あなたの業務をシンプルで直感的なものに変えるお手伝いをします。
         </p>
-        <div className="mt-8">
+        {/* ★★★ 変更点④：ボタンエリアをflexコンテナに変更し、印刷ボタンを追加 ★★★ */}
+        <div className="mt-8 flex flex-wrap gap-4">
           <Link href="/attendance">
             <button className="bg-ios-blue hover:bg-blue-600 text-white font-bold py-3 px-5 rounded-ios shadow-sm hover:shadow-md transition-all transform hover:scale-105">
               今日の出欠記録を始める
             </button>
           </Link>
+          <button
+            onClick={handlePrintToday}
+            disabled={isPrinting}
+            className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-5 rounded-ios shadow-sm hover:shadow-md transition-all disabled:bg-gray-400"
+          >
+            {isPrinting ? 'PDF生成中...' : '今日の提供記録を印刷'}
+          </button>
         </div>
+        {/* ★★★ 変更点④ ここまで ★★★ */}
       </div>
       {/* --- ▲▲▲ 「ようこそ」セクションここまで ▲▲▲ --- */}
       

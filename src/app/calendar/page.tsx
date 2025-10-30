@@ -38,6 +38,18 @@ const STATUS_LABEL: Partial<Record<ScheduleStatus, string>> = {
   休校日: '休校日',
 };
 
+// ★★★ 変更点③ ★★★
+// 「利用者予定管理」タブで、選択中のユーザーの予定を強調表示する色
+// (枠線 + 薄い背景で、祝日や土日の文字色と共存させる)
+const USER_SCHEDULE_CLASS: Partial<Record<ScheduleStatus, string>> = {
+  '放課後': 'bg-blue-100 border-2 border-blue-500',
+  '休校日': 'bg-yellow-100 border-2 border-yellow-500',
+  'キャンセル待ち': 'bg-gray-200 border-2 border-gray-500',
+  '欠席': 'bg-red-100 border-2 border-red-500',
+  '取り消し': 'bg-pink-100 border-2 border-pink-500',
+};
+// ★★★ 変更点③ ここまで ★★★
+
 // 同日複数ある場合の優先度（休校日 > 放課後）
 const STATUS_PRIORITY: ScheduleStatus[] = ['休校日', '放課後', 'キャンセル待ち', '欠席', '取り消し'];
 
@@ -62,7 +74,7 @@ type EventData = {
   userId: string;
   date?: any;               // 既存互換（文字列 or Timestamp）
   dateKeyJst?: string;      // ★ 追加：JSTキー "yyyy-MM-dd"
-  type: '放課後' | '休校日';
+  type: ScheduleStatus; // ★ '放課後' | '休校日' | 'キャンセル待ち' | '欠席' | '取り消し'
 };
 type Event = EventData & { userName: string; user: User; };
 type PseudoRecord = { userName: string; date: string; usageStatus: '放課後' | '休校日' | '欠席'; notes?: string; };
@@ -136,7 +148,7 @@ export default function CalendarPage() {
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDateForModal, setSelectedDateForModal] = useState<Date | null>(null);
-  const [eventType, setEventType] = useState<'放課後' | '休校日'>('放課後');
+  const [eventType, setEventType] = useState<ScheduleStatus>('放課後');
   const [isPrinting, setIsPrinting] = useState(false);
   const [allergyModalUser, setAllergyModalUser] = useState<User | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
@@ -214,48 +226,104 @@ const eventsMap = useMemo(
     }, {} as { [date: string]: number });
   }, [allEvents]);
 
-  const handleDateClickForScheduling = (clickedDate: Date) => {
-    if (!selectedUserId) { alert('先に利用者を選択してください。'); return; }
+const handleDateClickForScheduling = (clickedDate: Date) => {
+    if (!selectedUserId) {
+      alert('先に利用者を選択してください。');
+      return;
+    }
     setSelectedDateForModal(clickedDate);
-const dateKey = jstDateKey(clickedDate);
-const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date) === dateKey);
-    setEventType(existingEvent ? existingEvent.type : '放課後');
+    const dateKey = jstDateKey(clickedDate);
+    const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date) === dateKey);
+    // ★ 型を ScheduleStatus に変更
+    const [eventType, setEventType] = useState<ScheduleStatus>('放課後');
     setIsModalOpen(true);
   };
 
+// ★★★ 変更点④：重複登録防止ロジック ★★★
   const handleSaveEvent = async () => {
     if (!selectedUserId || !selectedDateForModal) return;
     const dateKey = jstDateKey(selectedDateForModal);
-const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date) === dateKey);
 
-if (existingEvent) {
-  await setDoc(
-    doc(db, "events", existingEvent.id),
-    { type: eventType, dateKeyJst: dateKey },     // ★ JSTキーも補正保存
-    { merge: true }
-  );
-} else {
-  await addDoc(collection(db, 'events'), {
-    userId: selectedUserId,
-    dateKeyJst: dateKey,                          // ★ JSTキーで保存（本丸）
-    date: serverTimestamp(),                      // 実時刻も別フィールドで保持（任意）
-    type: eventType
-  });
-}
+    // 4. 重複防止: ドキュメントIDを "date_userId" 形式で固定
+    const docId = `${dateKey}_${selectedUserId}`;
+    const docRef = doc(db, "events", docId);
+
+    // ★★★ 追加ロジック (ここから) ★★★
+    // 保存する前に、古い形式 (auto-id) のドキュメントを探す
+    // (固定IDではない、かつ日付が一致するものを探す)
+    const legacyEvent = userSchedule.find(
+      event => (event.dateKeyJst ?? event.date) === dateKey && event.id !== docId
+    );
+    // ★★★ 追加ロジック (ここまで) ★★★
+
+    try {
+      // 1. 新しい「固定ID」でデータを保存（または上書き）
+      await setDoc(docRef, {
+        userId: selectedUserId,
+        dateKeyJst: dateKey,       // JSTキー
+        type: eventType,           // '放課後' | '休校日' | 'キャンセル待ち' ...
+        date: serverTimestamp(), // 互換性のために保持（実時刻）
+      }, { merge: true }); // 存在すれば更新、なければ作成 (Idempotent)
+
+      // ★★★ 追加ロジック (ここから) ★★★
+      // 2. もし古い「自動ID」のデータが見つかったら、それを削除する
+      // (これにより、古いデータが重複して残るのを防ぐ)
+      if (legacyEvent) {
+        await deleteDoc(doc(db, 'events', legacyEvent.id));
+      }
+      // ★★★ 追加ロジック (ここまで) ★★★
+
+    } catch (error) {
+      console.error("イベント保存エラー:", error);
+      alert("保存に失敗しました。");
+    }
+    
     setIsModalOpen(false);
-    await fetchInitialData();
+    await fetchInitialData(); // データを再取得してカレンダーに反映
   };
 
+// ★★★ 変更点④：削除ロジックもID形式を統一 ★★★
   const handleDeleteEvent = async () => {
     if (!selectedUserId || !selectedDateForModal) return;
     const dateKey = jstDateKey(selectedDateForModal);
-const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date) === dateKey);
-    if (existingEvent) {
-      await deleteDoc(doc(db, 'events', existingEvent.id));
+
+    // 4. 保存ロジックと合わせ、"date_userId" 形式のIDで削除
+    const docId = `${dateKey}_${selectedUserId}`;
+    const docRef = doc(db, "events", docId);
+    
+    // 互換性のため、古い (auto-id) のドキュメントも探す
+    const legacyEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date) === dateKey);
+    
+    try {
+      // 新しいID形式 ("date_userId") のドキュメントを削除
+      await deleteDoc(docRef);
+
+      // 念のため、古い形式のID (auto-id) があればそれも削除
+      if (legacyEvent && legacyEvent.id !== docId) {
+        await deleteDoc(doc(db, 'events', legacyEvent.id));
+      }
+
+    } catch (error) {
+      console.error("イベント削除エラー:", error);
+      // ドキュメントが存在しない場合のエラーは無視してもよいため、
+      // 致命的なエラー以外はアラートしない
+      
+      // ★ 型チェックを追加
+      let errorCode = null;
+      // error が null ではなく、'code' プロパティを持つオブジェクトか確認
+      if (typeof error === 'object' && error !== null && 'code' in error) {
+        errorCode = (error as { code: string }).code;
+      }
+
+      if (errorCode !== 'not-found') {
+        alert("削除に失敗しました。");
+      }
     }
+
     setIsModalOpen(false);
     await fetchInitialData();
   };
+  // ★★★ 変更点④ ここまで ★★★
 
   const handlePrintAll = async () => {
     if (dailyScheduledUsers.length === 0) { return alert('印刷する利用予定者がいません。'); }
@@ -319,6 +387,79 @@ root.render(
   const day = String(j.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 };
+
+// ★★★ 変更点③：「利用者予定管理」タブ用のタイルクラス関数 ★★★
+  const scheduleTileClassName = ({ date, view }: { date: Date; view: string }) => {
+    if (view !== 'month') return undefined;
+    const key = ymdJST(date); // 土日祝判定用のキー
+    const classes: string[] = ['comet-tile'];
+
+    // 1. 祝日を赤文字＆太字
+    if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
+    // 2. 日曜＝赤、土曜＝青
+    if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold'); // Sun
+    if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold'); // Sat
+
+    // 3. 選択中ユーザーの予定を強調表示 (要望③)
+    if (selectedUserId) {
+      const dateKeyJst = jstDateKey(date); // 予定データ照合用のキー
+      const event = userSchedule.find(e => (e.dateKeyJst ?? e.date) === dateKeyJst);
+      if (event) {
+        const scheduleClass = USER_SCHEDULE_CLASS[event.type as ScheduleStatus];
+        if (scheduleClass) {
+          // !text-black を除外 (土日祝の色を優先するため)
+          // classes.push(scheduleClass); 
+          
+          // 土日祝の色を保持しつつ、背景と枠線を追加
+          const [bg, border1, border2] = scheduleClass.split(' ');
+          classes.push(bg, border1, border2);
+        }
+      }
+    }
+    return classes.join(' ');
+  };
+  // ★★★ 変更点③ ここまで ★★★
+
+  // 「利用管理」タブ用のタイルコンテンツ（日別合計人数）
+  // ★★★ 変更点②：この関数を「利用者予定管理」タブでも使用する ★★★
+  const managementTileContent = ({ date, view }: { date: Date; view: string }) => {
+    if (view !== 'month') return null;
+    const key = toDateString(date);
+    const day = eventsMap.get(key);
+    if (!day) return null;
+
+    const counts: Record<ScheduleStatus, number> = {
+      放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0,
+    };
+    day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
+
+    const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
+    const mainLabel = main && STATUS_LABEL[main] ? (
+      <div className="mt-1 text-[14px] leading-[14px] font-semibold text-black">
+        {STATUS_LABEL[main]}
+      </div>
+    ) : null;
+
+    const totalYotei = counts['放課後'] + counts['休校日'];
+    const wait = counts['キャンセル待ち'];
+    const kesseki = counts['欠席'];
+    const torikeshi = counts['取り消し'];
+    const secondLineNeeded = wait + kesseki + torikeshi > 0;
+
+    return (
+      <div className="px-1 pb-1">
+        {mainLabel}
+        <div className="mt-1 text-[14px] leading-[14px] text-gray-700">
+          予定：{totalYotei}人
+        </div>
+        {secondLineNeeded && (
+          <div className="mt-1 text-[14px] leading-[14px] text-gray-600">
+            W:{wait} 欠:{kesseki} 取:{torikeshi}
+          </div>
+        )}
+      </div>
+    );
+  };
 
 const tileClassName = ({ date, view }: { date: Date; view: string }) => {
   if (view !== 'month') return undefined;
@@ -392,15 +533,16 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
             <div className="bg-white p-6 rounded-lg shadow-xl">
               <h3 className="text-lg font-semibold mb-4">{selectedDateForModal.toLocaleDateString()} の予定</h3>
-              <select value={eventType} onChange={(e) => setEventType(e.target.value as '放課後' | '休校日')} className="p-2 border rounded w-full">
+              <select value={eventType} onChange={(e) => setEventType(e.target.value as ScheduleStatus)} className="p-2 border rounded w-full">
                 <option value="放課後">放課後</option>
-  <option value="休校日">休校日</option>
-  <option value="キャンセル待ち">キャンセル待ち</option>
-  <option value="欠席">欠席</option>
-  <option value="取り消し">取り消し</option>
+                <option value="休校日">休校日</option>
+                <option value="キャンセル待ち">キャンセル待ち</option>
+                <option value="欠席">欠席</option>
+                <option value="取り消し">取り消し</option>
               </select>
               <div className="mt-6 flex justify-end space-x-3">
                 <button onClick={() => setIsModalOpen(false)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded">キャンセル</button>
+                {/* ★ 変更点④：削除ボタンの表示判定を `userSchedule` 基準に変更 */}
                 {userSchedule.some(e => (e.dateKeyJst ?? e.date) === jstDateKey(selectedDateForModal)) && 
                   <button onClick={handleDeleteEvent} className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">削除</button>
                 }
@@ -426,58 +568,31 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
             <div className="grid grid-cols-1 gap-8 items-start">
               <div className="w-full">
                 <Calendar className="comet-cal" onChange={(value) => setSelectedDate(value as Date)} value={selectedDate} locale="ja-JP"
-                // ▼ 放課後=緑 / 休校日=オレンジ（文字は黒固定）
-  tileClassName={({ date, view }) => {
-    if (view !== 'month') return undefined;
-    const key = toDateString(date);
-    const day = eventsMap.get(key);
-    if (!day) return undefined;
+                  // ▼ 「利用管理」タブのタイルクラス（背景色）
+                  tileClassName={({ date, view }) => {
+                    if (view !== 'month') return undefined;
+                    // ★ 変更点③：土日祝のクラスも適用
+                    const key = ymdJST(date);
+                    const classes: string[] = ['comet-tile'];
+                    if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
+                    if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold');
+                    if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold');
 
-    const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
-    const cls = main ? STATUS_TILE_CLASS[main] : undefined;
-    return cls ? `!text-black ${cls}` : undefined;
-  }}
-
-  // ▼ ラベル＆人数内訳（予定：n人 + W/欠/取）
-  tileContent={({ date, view }) => {
-    if (view !== 'month') return null;
-    const key = toDateString(date);
-    const day = eventsMap.get(key);
-    if (!day) return null;
-
-    const counts: Record<ScheduleStatus, number> = {
-      放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0,
-    };
-    day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
-
-    const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
-    const mainLabel = main && STATUS_LABEL[main] ? (
-      <div className="mt-1 text-[14px] leading-[14px] font-semibold text-black">
-        {STATUS_LABEL[main]}
-      </div>
-    ) : null;
-
-    const totalYotei = counts['放課後'] + counts['休校日'];
-    const wait = counts['キャンセル待ち'];
-    const kesseki = counts['欠席'];
-    const torikeshi = counts['取り消し'];
-    const secondLineNeeded = wait + kesseki + torikeshi > 0;
-
-    return (
-      <div className="px-1 pb-1">
-        {mainLabel}
-        <div className="mt-1 text-[14px] leading-[14px] text-gray-700">
-          予定：{totalYotei}人
-        </div>
-        {secondLineNeeded && (
-          <div className="mt-1 text-[14px] leading-[14px] text-gray-600">
-            W:{wait} 欠:{kesseki} 取:{torikeshi}
-          </div>
-        )}
-      </div>
-    );
-  }}
-                  />
+                    // 予定に基づく背景色
+                    const dateKey = toDateString(date);
+                    const day = eventsMap.get(dateKey);
+                    if (day) {
+                      const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
+                      const cls = main ? STATUS_TILE_CLASS[main] : undefined;
+                      // 背景色がある場合は文字色を黒に
+                      if (cls) classes.push(`!text-black ${cls}`);
+                    }
+                    return classes.join(' ');
+                  }}
+                  
+                  // ▼ 「利用管理」タブのタイルコンテンツ（日別合計人数）
+                  tileContent={managementTileContent} // ★ 関数を共通化
+                />
               </div>
               <div className="flex-1">
                 {selectedDate ? (
@@ -529,7 +644,16 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
                   {users.map(user => (<option key={user.id} value={user.id}>{user.lastName} {user.firstName}</option>))}
                 </select>
               </div>
-              {selectedUserId && <Calendar className="comet-cal" onClickDay={handleDateClickForScheduling} tileClassName={tileClassName} locale="ja-JP"/>}
+              {/* ★ 変更点①： {selectedUserId && ...} の制約を解除 */}
+              <Calendar 
+                className="comet-cal" 
+                onClickDay={handleDateClickForScheduling} 
+                locale="ja-JP"
+                // ★ 変更点③：利用者予定管理タブ専用のクラス関数を適用
+                tileClassName={scheduleTileClassName} 
+                // ★ 変更点②：利用管理タブと同じ日別合計人数を表示
+                tileContent={managementTileContent}
+              />
             </div>
           )}
         </div>
