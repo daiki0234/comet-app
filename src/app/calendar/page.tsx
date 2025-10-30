@@ -434,11 +434,11 @@ root.render(
   return `${y}-${m}-${day}`;
 };
 
-// ★★★ 変更点③：「利用者予定管理」タブ用のタイルクラス関数 ★★★
-  const scheduleTileClassName = ({ date, view }: { date: Date; view: string }) => {
+// ★★★ 修正点： 関数全体を useCallback でメモ化する ★★★
+  const scheduleTileClassName = useCallback(({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month') return undefined;
     const key = ymdJST(date); // 土日祝判定用のキー
-    // position: relative と z-index: 10 で、タイル自体を前面に持ってくる
+    
     const classes: string[] = ['comet-tile'];
 
     // 1. 祝日を赤文字＆太字
@@ -449,25 +449,23 @@ root.render(
 
     // 3. 選択中ユーザーの予定を強調表示 (要望③)
     if (selectedUserId) {
-      const dateKeyJst = toDateString(date); // ★ 堅牢な toDateString に変更
-      // ★★★ 修正点： 比較を e.dateKeyJst === dateKeyJst に単純化 ★★★
-      // これで、正規化された "YYYY-MM-DD" 同士が比較されます
+      // (例: "2025-10-30")
+      const dateKeyJst = toDateString(date); 
+      
+      // ★ この userSchedule が最新の状態になる
       const event = userSchedule.find(e => e.dateKeyJst === dateKeyJst);
+      
       if (event) {
         const scheduleClass = USER_SCHEDULE_CLASS[event.type as ScheduleStatus];
         if (scheduleClass) {
-          // !text-black を除外 (土日祝の色を優先するため)
-          // classes.push(scheduleClass); 
-          
-          // 土日祝の色を保持しつつ、背景と枠線を追加
           const [bg, border1, border2] = scheduleClass.split(' ');
           classes.push(bg, border1, border2);
         }
       }
     }
     return classes.join(' ');
-  };
-  // ★★★ 変更点③ ここまで ★★★
+  }, [userSchedule, selectedUserId, holidays]);
+// ★★★ 依存配列に userSchedule, selectedUserId, holidays を指定 ★★★
 
   // 「利用管理」タブ用のタイルコンテンツ（日別合計人数）
   // ★★★ 変更点②：この関数を「利用者予定管理」タブでも使用する ★★★
