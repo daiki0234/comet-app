@@ -472,42 +472,48 @@ root.render(
 // ★★★ 依存配列に userSchedule, selectedUserId, holidays を指定 ★★★
 
   // 「利用管理」タブ用のタイルコンテンツ（日別合計人数）
-  // ★★★ 変更点②：この関数を「利用者予定管理」タブでも使用する ★★★
+  // ★★★ ご要望（11/12）に基づき、内訳表示に修正 ★★★
   const managementTileContent = ({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month') return null;
     const key = toDateString(date);
     const day = eventsMap.get(key);
-    if (!day) return null;
+    if (!day) return null; // 予定がなければ何も表示しない
 
     const counts: Record<ScheduleStatus, number> = {
       放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0,
     };
     day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
 
-    const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
-    const mainLabel = main && STATUS_LABEL[main] ? (
-      <div className="mt-1 text-[14px] leading-[14px] font-semibold text-black">
-        {STATUS_LABEL[main]}
-      </div>
-    ) : null;
+    const houkagoCount = counts['放課後'];
+    const kyukouCount = counts['休校日'];
+    const waitCount = counts['キャンセル待ち'];
+    const kessekiCount = counts['欠席'];
+    const torikeshiCount = counts['取り消し'];
 
-    const totalYotei = counts['放課後'] + counts['休校日'];
-    const wait = counts['キャンセル待ち'];
-    const kesseki = counts['欠席'];
-    const torikeshi = counts['取り消し'];
-    const secondLineNeeded = wait + kesseki + torikeshi > 0;
+    // 0人の項目は表示しない
+    const itemsToShow = [
+      { label: '放課後', count: houkagoCount, class: 'text-green-700' },
+      { label: '休校日', count: kyukouCount, class: 'text-orange-700' },
+      { label: 'ｷｬﾝｾﾙ', count: waitCount, class: 'text-gray-600' },
+    ];
+
+    // 欠席と取り消し（横並び）
+    const kessekiTorikeshi = (kessekiCount > 0 || torikeshiCount > 0) 
+      ? <div className="text-red-600">欠:{kessekiCount} 取:{torikeshiCount}</div>
+      : null;
 
     return (
-      <div className="px-1 pb-1 pointer-events-none">
-        {mainLabel}
-        <div className="mt-1 text-[14px] leading-[14px] text-gray-700">
-          予定：{totalYotei}人
-        </div>
-        {secondLineNeeded && (
-          <div className="mt-1 text-[14px] leading-[14px] text-gray-600">
-            W:{wait} 欠:{kesseki} 取:{torikeshi}
-          </div>
-        )}
+      // pointer-events-none は「利用管理」タブでは必須ではないですが、
+      // クリック イベントには影響しないため、そのまま残します。
+      <div className="px-1 pb-1 pointer-events-none text-[12px] leading-tight font-medium">
+        {itemsToShow.map(item => (
+          item.count > 0 ? (
+            <div key={item.label} className={item.class}>
+              {item.label}: {item.count}人
+            </div>
+          ) : null
+        ))}
+        {kessekiTorikeshi}
       </div>
     );
   };
