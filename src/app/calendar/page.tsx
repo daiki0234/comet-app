@@ -494,7 +494,7 @@ root.render(
     const itemsToShow = [
       { label: '放課後', count: houkagoCount, class: 'text-green-700' },
       { label: '休校日', count: kyukouCount, class: 'text-orange-700' },
-      { label: 'ｷｬﾝｾﾙ', count: waitCount, class: 'text-gray-600' },
+      { label: 'ｷｬﾝｾﾙ待ち', count: waitCount, class: 'text-gray-600' },
     ];
 
     // 欠席と取り消し（横並び）
