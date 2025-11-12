@@ -678,7 +678,6 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
                 <Calendar className="comet-cal" onChange={(value) => setSelectedDate(value as Date)} value={selectedDate} locale="ja-JP"
                 calendarType="hebrew"
                   // ▼ 「利用管理」タブのタイルクラス（背景色）
-                  // ▼ 「利用管理」タブのタイルクラス（背景色）
                   tileClassName={({ date, view }) => {
                     if (view !== 'month') return undefined;
                     
