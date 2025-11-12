@@ -676,6 +676,7 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
             <div className="grid grid-cols-1 gap-8 items-start">
               <div className="w-full">
                 <Calendar className="comet-cal" onChange={(value) => setSelectedDate(value as Date)} value={selectedDate} locale="ja-JP"
+                calendarType="hebrew"
                   // ▼ 「利用管理」タブのタイルクラス（背景色）
                   tileClassName={({ date, view }) => {
                     if (view !== 'month') return undefined;
@@ -777,6 +778,7 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
                 
                 value={selectedDate} 
                 locale="ja-JP"
+                calendarType="hebrew"
                 tileClassName={scheduleTileClassName} 
                 
                 // tileContentがクリックを妨害しないように
