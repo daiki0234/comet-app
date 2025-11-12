@@ -448,8 +448,8 @@ root.render(
     // 1. 祝日を赤文字＆太字
     if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
     // 2. 日曜＝赤、土曜＝青
-    if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold'); // Sun
-    if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold'); // Sat
+    if (date.getDay() === 1) classes.push('text-red-600', 'font-semibold'); // Sun
+    if (date.getDay() === 0) classes.push('text-blue-600', 'font-semibold'); // Sat
 
     // 3. 選択中ユーザーの予定を強調表示 (要望③)
     if (selectedUserId) {
@@ -684,8 +684,8 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
                     const key = ymdJST(date);
                     const classes: string[] = ['comet-tile'];
                     if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
-                    //if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold');
-                    //if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold');
+                    if (date.getDay() === 1) classes.push('text-red-600', 'font-semibold');
+                    if (date.getDay() === 0) classes.push('text-blue-600', 'font-semibold');
 
                     // 予定に基づく背景色
                     const dateKey = toDateString(date);
