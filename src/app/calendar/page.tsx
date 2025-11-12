@@ -50,6 +50,16 @@ const USER_SCHEDULE_CLASS: Partial<Record<ScheduleStatus, string>> = {
 };
 // ★★★ 変更点③ ここまで ★★★
 
+// 利用者個人の予定（下段）に表示するテキスト色
+const USER_SCHEDULE_TEXT_CLASS: Partial<Record<ScheduleStatus, string>> = {
+  '放課後': 'text-blue-700',
+  '休校日': 'text-yellow-700',
+  'キャンセル待ち': 'text-gray-600',
+  '欠席': 'text-red-600',
+  '取り消し': 'text-pink-600',
+};
+// ★★★ 追記ここまで ★★★
+
 // 同日複数ある場合の優先度（休校日 > 放課後）
 const STATUS_PRIORITY: ScheduleStatus[] = ['休校日', '放課後', 'キャンセル待ち', '欠席', '取り消し'];
 
@@ -502,6 +512,57 @@ root.render(
     );
   };
 
+  // ★★★ 以下を追記 ★★★
+// 「利用者予定管理」タブ専用のタイルコンテンツ関数
+const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
+  if (view !== 'month') return null;
+  const key = toDateString(date);
+  const day = eventsMap.get(key);
+
+  // --- 1. 日ごとの全体集計（上段）---
+  let totalCountsContent = null;
+  if (day) {
+    const counts: Record<ScheduleStatus, number> = {
+      放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0,
+    };
+    day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
+
+    const houkagoCount = counts['放課後'];
+    const kyukouCount = counts['休校日'];
+    const waitCount = counts['キャンセル待ち'];
+
+    totalCountsContent = (
+      <div className="text-[12px] leading-tight text-gray-700">
+        {houkagoCount > 0 && <div>放課後: {houkagoCount}人</div>}
+        {kyukouCount > 0 && <div>休校日: {kyukouCount}人</div>}
+        {waitCount > 0 && <div>ｷｬﾝｾﾙ: {waitCount}人</div>}
+      </div>
+    );
+  }
+
+  // --- 2. 選択中利用者の予定（下段）---
+  let userStatusContent = null;
+  if (selectedUserId) {
+    const event = userSchedule.find(e => e.dateKeyJst === key);
+    if (event) {
+      const textColor = USER_SCHEDULE_TEXT_CLASS[event.type] || 'text-black';
+      userStatusContent = (
+        <div className={`mt-1 text-[14px] font-bold ${textColor}`}>
+          {event.type}
+        </div>
+      );
+    }
+  }
+
+  return (
+    <div className="px-1 pb-1">
+      {totalCountsContent}
+      {userStatusContent}
+    </div>
+  );
+};
+// ★★★ 追記ここまで ★★★
+
 const tileClassName = ({ date, view }: { date: Date; view: string }) => {
   if (view !== 'month') return undefined;
 
@@ -715,7 +776,7 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
                 // tileContentがクリックを妨害しないように
                 tileContent={(props) => (
                   <div className="pointer-events-none relative z-0">
-                    {managementTileContent(props)}
+                    {scheduleTileContent(props)}
                   </div>
                 )}
                 // onClickDay は使わない
