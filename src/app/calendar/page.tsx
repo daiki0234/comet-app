@@ -441,15 +441,27 @@ root.render(
 // ★★★ 修正点： 関数全体を useCallback でメモ化する ★★★
   const scheduleTileClassName = useCallback(({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month') return undefined;
-    const key = ymdJST(date); // 土日祝判定用のキー
+    // ★★★ 修正点： JSTの曜日を取得 ★★★
+    const jstDate = new Date(date.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
+    const key = ymdJST(date); // 祝日判定用
+    const jstDay = jstDate.getDay(); // JSTの曜日 (0=日曜, 6=土曜)
     
     const classes: string[] = ['comet-tile'];
 
-    // 1. 祝日を赤文字＆太字
-    if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
-    // 2. 日曜＝赤、土曜＝青
-    if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold'); // Sun
-    if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold'); // Sat
+    // --- ★★★ 修正点： JSTの曜日で判定 ★★★ ---
+    // 1. 祝日
+    if (holidays.has(key)) {
+      classes.push('text-red-600', 'font-semibold');
+    } 
+    // 2. 日曜日 (祝日でなければ)
+    else if (jstDay === 0) { // ★ jstDay で判定
+      classes.push('text-red-600', 'font-semibold');
+    } 
+    // 3. 土曜日 (祝日でなければ)
+    else if (jstDay === 6) { // ★ jstDay で判定
+      classes.push('text-blue-600', 'font-semibold');
+    }
+    // --- ★★★ 修正ここまで ★★★ ---
 
     // 3. 選択中ユーザーの予定を強調表示 (要望③)
     if (selectedUserId) {
@@ -680,13 +692,25 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
                   // ▼ 「利用管理」タブのタイルクラス（背景色）
                   tileClassName={({ date, view }) => {
                     if (view !== 'month') return undefined;
-                    // ★ 変更点③：土日祝のクラスも適用
-                    const key = ymdJST(date);
-                    const classes: string[] = ['comet-tile'];
-                    if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
-                    //if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold');
-                    //if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold');
+                    const jstDate = new Date(date.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
+                    const key = ymdJST(date); // 祝日判定用 (これは元々安全)
+                    const jstDay = jstDate.getDay(); // JSTの曜日 (0=日曜, 6=土曜)
 
+                    const classes: string[] = ['comet-tile'];
+
+                    // 1. 祝日
+                    if (holidays.has(key)) {
+                      classes.push('text-red-600', 'font-semibold');
+                    } 
+                    // 2. 日曜日 (祝日でなければ)
+                    else if (jstDay === 0) { // ★ jstDay で判定
+                      classes.push('text-red-600', 'font-semibold');
+                    } 
+                    // 3. 土曜日 (祝日でなければ)
+                    else if (jstDay === 6) { // ★ jstDay で判定
+                      classes.push('text-blue-600', 'font-semibold');
+                    }
+                    // ---
                     // 予定に基づく背景色
                     const dateKey = toDateString(date);
                     const day = eventsMap.get(dateKey);
