@@ -448,8 +448,8 @@ root.render(
     // 1. 祝日を赤文字＆太字
     if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
     // 2. 日曜＝赤、土曜＝青
-    //if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold'); // Sun
-    //if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold'); // Sat
+    if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold'); // Sun
+    if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold'); // Sat
 
     // 3. 選択中ユーザーの予定を強調表示 (要望③)
     if (selectedUserId) {
@@ -569,25 +569,25 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
 };
 // ★★★ 追記ここまで ★★★
 
-const tileClassName = ({ date, view }: { date: Date; view: string }) => {
-  if (view !== 'month') return undefined;
+// const tileClassName = ({ date, view }: { date: Date; view: string }) => {
+//   if (view !== 'month') return undefined;
 
-  const classes: string[] = ['comet-tile'];
-  const key = ymdJST(date);
+//   const classes: string[] = ['comet-tile'];
+//   const key = ymdJST(date);
 
-  // 祝日を赤文字＆太字
-  if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
+//   // 祝日を赤文字＆太字
+//   if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
 
-  // 日曜＝赤、土曜＝青（祝日があれば祝日優先でOK）
-  if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold'); // Sun
-  if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold'); // Sat
+//   // 日曜＝赤、土曜＝青（祝日があれば祝日優先でOK）
+//   if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold'); // Sun
+//   if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold'); // Sat
 
-  // 既存：放課後/休校日の背景（例）
-  // if (byDate.get(key)?.some(e => e.status === '休校日')) classes.push('bg-orange-200');
-  // if (byDate.get(key)?.some(e => e.status === '放課後')) classes.push('bg-green-200');
+//   // 既存：放課後/休校日の背景（例）
+//   // if (byDate.get(key)?.some(e => e.status === '休校日')) classes.push('bg-orange-200');
+//   // if (byDate.get(key)?.some(e => e.status === '放課後')) classes.push('bg-green-200');
 
-  return classes.join(' ');
-};
+//   return classes.join(' ');
+// };
 
   const tileContent = ({ date: d, view }: { date: Date; view: string }) => {
     if (view === 'month') {
