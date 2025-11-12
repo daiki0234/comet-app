@@ -678,14 +678,27 @@ const tileClassName = ({ date, view }: { date: Date; view: string }) => {
                 <Calendar className="comet-cal" onChange={(value) => setSelectedDate(value as Date)} value={selectedDate} locale="ja-JP"
                 calendarType="hebrew"
                   // ▼ 「利用管理」タブのタイルクラス（背景色）
+                  // ▼ 「利用管理」タブのタイルクラス（背景色）
                   tileClassName={({ date, view }) => {
                     if (view !== 'month') return undefined;
-                    // ★ 変更点③：土日祝のクラスも適用
+                    
                     const key = ymdJST(date);
                     const classes: string[] = ['comet-tile'];
-                    if (holidays.has(key)) classes.push('text-red-600', 'font-semibold');
-                    if (date.getDay() === 0) classes.push('text-red-600', 'font-semibold');
-                    if (date.getDay() === 6) classes.push('text-blue-600', 'font-semibold');
+
+                    // --- 土日祝の文字色を正しく設定 ---
+                    // 1. 祝日
+                    if (holidays.has(key)) {
+                      classes.push('text-red-600', 'font-semibold');
+                    } 
+                    // 2. 日曜日 (祝日でなければ)
+                    else if (date.getDay() === 0) { // 0 = Sunday
+                      classes.push('text-red-600', 'font-semibold');
+                    } 
+                    // 3. 土曜日 (祝日でなければ)
+                    else if (date.getDay() === 6) { // 6 = Saturday
+                      classes.push('text-blue-600', 'font-semibold');
+                    }
+                    // ---
 
                     // 予定に基づく背景色
                     const dateKey = toDateString(date);
