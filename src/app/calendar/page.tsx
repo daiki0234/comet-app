@@ -160,6 +160,7 @@ export default function CalendarPage() {
   const [selectedDateForModal, setSelectedDateForModal] = useState<Date | null>(null);
   const [eventType, setEventType] = useState<ScheduleStatus>('放課後');
   const [isPrinting, setIsPrinting] = useState(false);
+  const [isPrintingSingle, setIsPrintingSingle] = useState(false); // ★ この行を追記
   const [allergyModalUser, setAllergyModalUser] = useState<User | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [holidays, setHolidays] = useState<Set<string>>(new Set());
@@ -386,6 +387,78 @@ const handleDateClickForScheduling = (clickedDate: Date) => {
     await fetchInitialData();
   };
   // ★★★ 変更点④ ここまで ★★★
+
+  // ★★★ 以下を丸ごと追記 (個別の提供記録を作成する関数) ★★★
+  const handlePrintSingleRecord = async () => {
+    if (!selectedUserId || !selectedDateForModal) return;
+
+    // 1. 印刷対象のステータスか確認
+    if (eventType !== '放課後' && eventType !== '休校日') {
+      alert('「放課後」または「休校日」の予定のみ印刷できます。');
+      return;
+    }
+
+    setIsPrintingSingle(true);
+    const dateKey = toDateString(selectedDateForModal);
+    const user = users.find(u => u.id === selectedUserId);
+
+    if (!user) {
+      alert('利用者の情報が見つかりません。');
+      setIsPrintingSingle(false);
+      return;
+    }
+
+    try {
+      // 2. 印刷するレコード（1人分）を作成
+      const recordToPrint: PseudoRecord = {
+        userName: `${user.lastName} ${user.firstName}`,
+        date: dateKey,
+        usageStatus: eventType,
+        notes: '', // 個別印刷時はNotesなし
+      };
+
+      // 3. handlePrintAll と同じロジックでPDFを生成
+      // ServiceRecordSheet はB5の半分の前提なので、[レコード, null] のペアで渡す
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'b5' });
+      const pair: (PseudoRecord | null)[] = [recordToPrint, null]; // [印刷する人, 空白]
+
+      const tempDiv = document.createElement('div');
+      tempDiv.style.width = '182mm';
+      tempDiv.style.position = 'absolute';
+      tempDiv.style.left = '-2000px';
+      document.body.appendChild(tempDiv);
+      
+      const root = createRoot(tempDiv);
+      root.render(
+        <React.StrictMode>
+          <ServiceRecordSheet record={toSheetRecord(pair[0])} />
+          <ServiceRecordSheet record={toSheetRecord(pair[1])} />
+        </React.StrictMode>
+      );
+
+      await new Promise(r => setTimeout(r, 500)); 
+
+      const canvas = await html2canvas(tempDiv, { scale: 3 });
+      const imgData = canvas.toDataURL('image/png');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+
+      root.unmount();
+      document.body.removeChild(tempDiv);
+
+      // 4. PDFをダウンロード
+      pdf.save(`${dateKey}_${user.lastName}${user.firstName}_サービス提供記録.pdf`);
+
+    } catch (e) {
+      console.error("個別PDF生成中にエラーが発生しました:", e);
+      alert("PDFの生成に失敗しました。");
+    } finally {
+      setIsPrintingSingle(false);
+      setIsModalOpen(false); // 完了したらモーダルを閉じる
+    }
+  };
+  // ★★★ 追記ここまで ★★★
 
   const handlePrintAll = async () => {
     if (dailyScheduledUsers.length === 0) { return alert('印刷する利用予定者がいません。'); }
@@ -673,13 +746,40 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
                 <option value="欠席">欠席</option>
                 <option value="取り消し">取り消し</option>
               </select>
-              <div className="mt-6 flex justify-end space-x-3">
+              {/* ★★★ 修正点： ボタンエリアを flex-wrap にして、印刷ボタンを追加 ★★★ */}
+              <div className="mt-6 flex flex-wrap justify-end gap-3">
+                
+                {/* --- 印刷ボタン (左側に配置) --- */}
+                {(eventType === '放課後' || eventType === '休校日') && (
+                  <button 
+                    onClick={handlePrintSingleRecord} 
+                    disabled={isPrintingSingle}
+                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded disabled:bg-gray-400 mr-auto"
+                  >
+                    {isPrintingSingle ? '作成中...' : '提供記録作成'}
+                  </button>
+                )}
+
+                {/* --- 既存のボタン (右側に配置) --- */}
                 <button onClick={() => setIsModalOpen(false)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded">キャンセル</button>
-                {/* ★ 変更点④：削除ボタンの表示判定を `userSchedule` 基準に変更 */}
-                {userSchedule.some(e => (e.dateKeyJst ?? e.date) === jstDateKey(selectedDateForModal)) && 
-                  <button onClick={handleDeleteEvent} className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">削除</button>
+                
+                {userSchedule.some(e => e.dateKeyJst === toDateString(selectedDateForModal)) && 
+                  <button 
+                    onClick={handleDeleteEvent} 
+                    className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded"
+                    disabled={isPrintingSingle} // 印刷中は削除も不可に
+                  >
+                    削除
+                  </button>
                 }
-                <button onClick={handleSaveEvent} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">保存</button>
+                
+                <button 
+                  onClick={handleSaveEvent} 
+                  className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
+                  disabled={isPrintingSingle} // 印刷中は保存も不可に
+                >
+                  保存
+                </button>
               </div>
             </div>
           </div>
