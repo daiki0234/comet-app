@@ -7,7 +7,7 @@ import { AppLayout } from '@/components/Layout';
 // コンポーネントのインポート（MunicipalityManagerのみ）
 import MunicipalityManager from '@/components/masters/MunicipalityManager';
 import FacilityManager from '@/components/masters/FacilityManager'; // ← ステップ3で有効化
-// import SchoolManager from '@/components/masters/SchoolManager';
+import SchoolManager from '@/components/masters/SchoolManager';
 // import AdditionManager from '@/components/masters/AdditionManager';
 
 // ★ 1. 型に 'additions' を追加
@@ -57,8 +57,7 @@ export default function MastersPage() {
              <FacilityManager /> 
           )}
           {activeTab === 'schools' && (
-            // <SchoolManager />
-            <p>（学校マスタは現在開発中です）</p>
+             <SchoolManager />
           )}
           {/* ★ 3. 「加算マスタ」の中身を追加 */}
           {activeTab === 'additions' && (
