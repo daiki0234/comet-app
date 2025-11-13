@@ -549,6 +549,24 @@ root.render(
     }
     // --- ★★★ 修正ここまで ★★★ ---
 
+    // --- ★★★ 修正点： 15人超の警告ロジック ★★★ ---
+    const dateKey = toDateString(date);
+    const day = eventsMap.get(dateKey); // eventsMap を参照
+    
+    if (day) {
+      // 1. 合計人数を計算
+      const counts: Record<ScheduleStatus, number> = { '放課後': 0, '休校日': 0, 'キャンセル待ち': 0, '欠席': 0, '取り消し': 0 };
+      day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
+      const totalYotei = counts['放課後'] + counts['休校日'];
+
+      // 2. 15人を超えたか (16人以上か) チェック
+      if (totalYotei > 15) {
+        // 警告色を強制的に適用 (文字も赤く)
+        classes.push('!bg-yellow-300', '!text-red-700', 'font-bold');
+      }
+    }
+    // --- ★★★ 修正ここまで ★★★ ---
+
     // 3. 選択中ユーザーの予定を強調表示 (要望③)
     if (selectedUserId) {
       // (例: "2025-10-30")
@@ -826,15 +844,29 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
                       classes.push('!text-black', 'font-normal'); // 強制的に黒
                     }
                     // --- ★★★ 修正ここまで ★★★ ---
-                    // 予定に基づく背景色
+                    // --- ★★★ 修正点： 15人超の警告ロジック ★★★ ---
                     const dateKey = toDateString(date);
                     const day = eventsMap.get(dateKey);
+                    
                     if (day) {
-                      const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
-                      const cls = main ? STATUS_TILE_CLASS[main] : undefined;
-                      // 背景色がある場合は文字色を黒に
-                      if (cls) classes.push(`!text-black ${cls}`);
+                      // 1. 合計人数を計算
+                      const counts: Record<ScheduleStatus, number> = { '放課後': 0, '休校日': 0, 'キャンセル待ち': 0, '欠席': 0, '取り消し': 0 };
+                      day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
+                      const totalYotei = counts['放課後'] + counts['休校日'];
+
+                      // 2. 15人を超えたか (16人以上か) チェック
+                      if (totalYotei > 15) {
+                        // 警告色を強制的に適用 (文字も赤く)
+                        classes.push('!bg-yellow-300', '!text-red-700', 'font-bold');
+                      } else {
+                        // 15人以下なら、元の緑/オレンジ背景を適用
+                        const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
+                        const cls = main ? STATUS_TILE_CLASS[main] : undefined;
+                        // 背景色がある場合は !text-black が優先される
+                        if (cls) classes.push(`!text-black ${cls}`);
+                      }
                     }
+
                     return classes.join(' ');
                   }}
                   
@@ -872,7 +904,7 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
                                     ({event.type})
                                   </span>
                                   {/* ★★★ 修正ここまで ★★★ */}
-                                  
+
                                 </li>
                               ))}
                             </ul>
