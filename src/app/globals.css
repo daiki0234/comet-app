@@ -101,7 +101,7 @@ body {
 
 .comet-cal .react-calendar__tile--active {
   outline: 2px solid #2563eb; /* blue-600 */
-  background: #eff6ff;        /* blue-50 */
+  /* background: #eff6ff;        blue-50 */
 }
 
 /* 今日の枠線 */
