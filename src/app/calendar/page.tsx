@@ -167,9 +167,21 @@ export default function CalendarPage() {
 const [events, setEvents] = useState<any[]>([]);
 
 useEffect(() => {
-  const y = new Date().getFullYear();
-  fetchJapaneseHolidays(y).then(list => setHolidays(new Set(list)));
-}, []);
+    const y = new Date().getFullYear();
+    fetchJapaneseHolidays(y)
+      .then(list => {
+        if (list.length > 0) {
+          setHolidays(new Set(list));
+          console.log("祝日データを正常に取得しました:", list.length, "件");
+        } else {
+          console.warn("祝日データが0件でした。APIキーか設定を確認してください。");
+        }
+      })
+      .catch(err => {
+        console.error("★★★ 祝日データの取得に失敗しました ★★★:", err);
+        alert("祝日データの取得に失敗しました。APIキーの設定かHTTPリファラー制限を確認してください。");
+      });
+  }, []);
 // ===== 追記ここまで =====
 
 // ===== 追記：日付ごとに集約した Map を作成 =====
