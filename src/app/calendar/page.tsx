@@ -442,22 +442,23 @@ root.render(
   const scheduleTileClassName = useCallback(({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month') return undefined;
     // ★★★ 修正点： JSTの曜日を取得 ★★★
-// JST変換ロジックは "削除" します
+    const jstDate = new Date(date.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
     const key = ymdJST(date); // 祝日判定用
+    const jstDay = jstDate.getDay(); // JSTの曜日 (0=日曜, 6=土曜)
     
     const classes: string[] = ['comet-tile'];
 
-// --- ★★★ 修正点 ★★★ ---
+    // --- ★★★ 修正点： JSTの曜日で判定 ★★★ ---
     // 1. 祝日
     if (holidays.has(key)) {
       classes.push('text-red-600', 'font-semibold');
     } 
     // 2. 日曜日 (祝日でなければ)
-    else if (date.getDay() === 0) { // 0 = Sunday
+    else if (jstDay === 0) { // ★ jstDay で判定
       classes.push('text-red-600', 'font-semibold');
     } 
     // 3. 土曜日 (祝日でなければ)
-    else if (date.getDay() === 6) { // 6 = Saturday
+    else if (jstDay === 6) { // ★ jstDay で判定
       classes.push('text-blue-600', 'font-semibold');
     }
     // --- ★★★ 修正ここまで ★★★ ---
@@ -691,9 +692,9 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
                   // ▼ 「利用管理」タブのタイルクラス（背景色）
                   tileClassName={({ date, view }) => {
                     if (view !== 'month') return undefined;
-
-                    // JST変換ロジックは "削除" します
-                    const key = ymdJST(date); // 祝日判定用
+                    const jstDate = new Date(date.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
+                    const key = ymdJST(date); // 祝日判定用 (これは元々安全)
+                    const jstDay = jstDate.getDay(); // JSTの曜日 (0=日曜, 6=土曜)
 
                     const classes: string[] = ['comet-tile'];
 
@@ -701,16 +702,15 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
                     if (holidays.has(key)) {
                       classes.push('text-red-600', 'font-semibold');
                     } 
-                    // ★★★ 修正点 ★★★
                     // 2. 日曜日 (祝日でなければ)
-                    else if (date.getDay() === 0) { // 0 = Sunday
+                    else if (jstDay === 0) { // ★ jstDay で判定
                       classes.push('text-red-600', 'font-semibold');
                     } 
                     // 3. 土曜日 (祝日でなければ)
-                    else if (date.getDay() === 6) { // 6 = Saturday
+                    else if (jstDay === 6) { // ★ jstDay で判定
                       classes.push('text-blue-600', 'font-semibold');
                     }
-                    // ★★★ 修正ここまで ★★★
+                    // ---
                     // 予定に基づく背景色
                     const dateKey = toDateString(date);
                     const day = eventsMap.get(dateKey);
