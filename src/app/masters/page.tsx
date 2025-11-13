@@ -3,42 +3,28 @@
 "use client";
 import React, { useState } from 'react';
 import { AppLayout } from '@/components/Layout';
-// ステップ3で作成するコンポーネント
-import MunicipalityManager from '@/components/masters/MunicipalityManager';
-// import FacilityManager from '@/components/masters/FacilityManager';
-// import SchoolManager from '@/components/masters/SchoolManager';
 
-// どのタブが選択されているかを管理する型
-type MasterTab = 'municipalities' | 'facilities' | 'schools';
+import MunicipalityManager from '@/components/masters/MunicipalityManager';
+// ★ 1. FacilityManager をインポート
+import FacilityManager from '@/components/masters/FacilityManager';
+// import SchoolManager from '@/components/masters/SchoolManager';
+// import AdditionManager from '@/components/masters/AdditionManager';
+
+type MasterTab = 'municipalities' | 'facilities' | 'schools' | 'additions';
 
 export default function MastersPage() {
   const [activeTab, setActiveTab] = useState<MasterTab>('municipalities');
 
   return (
     <AppLayout pageTitle="マスタ設定">
-      {/* 白いカード */}
       <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
         
-        {/* ★★★ タブ切り替えボタン (このUIに修正) ★★★ */}
+        {/* タブボタン (ステップ1で修正済み) */}
         <div className="flex border-b border-gray-200">
-          <button 
-            onClick={() => setActiveTab('municipalities')} 
-            className={`py-3 px-4 text-sm font-medium ${activeTab === 'municipalities' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            支給市町村マスタ
-          </button>
-          <button 
-            onClick={() => setActiveTab('facilities')} 
-            className={`py-3 px-4 text-sm font-medium ${activeTab === 'facilities' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            事業所マスタ
-          </button>
-          <button 
-            onClick={() => setActiveTab('schools')} 
-            className={`py-3 px-4 text-sm font-medium ${activeTab === 'schools' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            学校マスタ
-          </button>
+          <button onClick={() => setActiveTab('municipalities')} className={`...`}>支給市町村マスタ</button>
+          <button onClick={() => setActiveTab('facilities')} className={`...`}>事業所マスタ</button>
+          <button onClick={() => setActiveTab('schools')} className={`...`}>学校マスタ</button>
+          <button onClick={() => setActiveTab('additions')} className={`...`}>加算マスタ</button>
         </div>
         
         {/* タブの中身 */}
@@ -46,13 +32,15 @@ export default function MastersPage() {
           {activeTab === 'municipalities' && (
             <MunicipalityManager />
           )}
+          {/* ★ 2. 'facilities' タブの中身を差し替え */}
           {activeTab === 'facilities' && (
-            // <FacilityManager /> 
-            <p>（事業所マスタは現在開発中です）</p>
+            <FacilityManager /> 
           )}
           {activeTab === 'schools' && (
-            // <SchoolManager />
             <p>（学校マスタは現在開発中です）</p>
+          )}
+          {activeTab === 'additions' && (
+            <p>（加算マスタは現在開発中です）</p>
           )}
         </div>
 
