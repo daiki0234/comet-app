@@ -562,7 +562,7 @@ root.render(
       // 2. 15人を超えたか (16人以上か) チェック
       if (totalYotei > 15) {
         // 警告色を強制的に適用 (文字も赤く)
-        classes.push('!bg-yellow-300', '!text-red-700', 'font-bold');
+        classes.push('!bg-orange-300', 'font-bold');
       }
     }
     // --- ★★★ 修正ここまで ★★★ ---
@@ -857,7 +857,7 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
                       // 2. 15人を超えたか (16人以上か) チェック
                       if (totalYotei > 15) {
                         // 警告色を強制的に適用 (文字も赤く)
-                        classes.push('!bg-yellow-300', '!text-red-700', 'font-bold');
+                        classes.push('!bg-orange-300', 'font-bold');
                       } else {
                         // 15人以下なら、元の緑/オレンジ背景を適用
                         const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
