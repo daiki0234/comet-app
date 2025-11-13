@@ -863,6 +863,16 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
                                   {event.user.allergies && (
                                     <button onClick={() => setAllergyModalUser(event.user)} className="ml-2 text-red-500 font-bold text-lg hover:text-red-700 leading-none align-middle">＊</button>
                                   )}
+                                  
+                                  {/* ★★★ 修正点： 利用ステータスを追加 ★★★ */}
+                                  <span className={`
+                                    ml-3 font-semibold
+                                    ${USER_SCHEDULE_TEXT_CLASS[event.type as ScheduleStatus] || 'text-gray-700'}
+                                  `}>
+                                    ({event.type})
+                                  </span>
+                                  {/* ★★★ 修正ここまで ★★★ */}
+                                  
                                 </li>
                               ))}
                             </ul>
