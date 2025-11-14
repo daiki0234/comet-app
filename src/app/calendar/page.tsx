@@ -560,9 +560,9 @@ root.render(
       const totalYotei = counts['放課後'] + counts['休校日'];
 
       // 2. 15人を超えたか (16人以上か) チェック
-      if (totalYotei > 15) {
+      if (totalYotei > 14) {
         // 警告色を強制的に適用 (文字も赤く)
-        classes.push('!bg-orange-300', 'font-bold');
+        classes.push('!bg-orange-100', 'font-bold');
       }
     }
     // --- ★★★ 修正ここまで ★★★ ---
