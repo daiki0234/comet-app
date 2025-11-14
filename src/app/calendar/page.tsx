@@ -855,9 +855,9 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
                       const totalYotei = counts['放課後'] + counts['休校日'];
 
                       // 2. 15人を超えたか (16人以上か) チェック
-                      if (totalYotei > 15) {
+                      if (totalYotei > 14) {
                         // 警告色を強制的に適用 (文字も赤く)
-                        classes.push('!bg-orange-300', 'font-bold');
+                        classes.push('!bg-orange-100', 'font-bold');
                       } else {
                         // 15人以下なら、元の緑/オレンジ背景を適用
                         const main = STATUS_PRIORITY.find(s => day.items.some(it => it.status === s));
