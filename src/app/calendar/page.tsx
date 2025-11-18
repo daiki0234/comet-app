@@ -598,7 +598,22 @@ root.render(
     const counts: Record<ScheduleStatus, number> = {
       放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0,
     };
-    day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
+    //day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
+
+    // ★ 児発利用者が含まれているかチェックするフラグ
+    let hasJihatsu = false;
+
+    day.items.forEach(it => { 
+      counts[it.status] = (counts[it.status] ?? 0) + 1; 
+
+      // ★ 予定（放課後 or 休校日）の人の中に、児発利用者がいるか確認
+      if (it.status === '放課後' || it.status === '休校日') {
+        const u = users.find(user => user.id === it.userId);
+        if (u && u.serviceJihatsu === '利用中') {
+          hasJihatsu = true;
+        }
+      }
+    });
 
     const houkagoCount = counts['放課後'];
     const kyukouCount = counts['休校日'];
@@ -624,8 +639,15 @@ root.render(
       <div className="px-1 pb-1 pointer-events-none text-[12px] leading-tight font-medium">
         {itemsToShow.map(item => (
           item.count > 0 ? (
-            <div key={item.label} className={item.class}>
-              {item.label}: {item.count}人
+            <div key={item.label} className={`${item.class} flex flex-wrap items-center`}>
+              <span>{item.label}: {item.count}人</span>
+
+              {/* ★ 放課後 または 休校日 の行で、かつ児発利用者がいる場合に表示 */}
+              {(item.label === '放課後' || item.label === '休校日') && hasJihatsu && (
+                <span className="ml-1 text-[10px] text-blue-600 font-bold border border-blue-400 rounded px-[2px] bg-white leading-none">
+                  児発含
+                </span>
+              )}
             </div>
           ) : null
         ))}
@@ -647,19 +669,49 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
     const counts: Record<ScheduleStatus, number> = {
       放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0,
     };
-    day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
+    //day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
+
+    // ★ 児発利用者が含まれているかチェック
+      let hasJihatsu = false;
+
+      day.items.forEach(it => { 
+        counts[it.status] = (counts[it.status] ?? 0) + 1; 
+        
+        // ★ チェックロジック
+        if (it.status === '放課後' || it.status === '休校日') {
+          const u = users.find(user => user.id === it.userId);
+          if (u && u.serviceJihatsu === '利用中') {
+            hasJihatsu = true;
+          }
+        }
+      });
 
     const houkagoCount = counts['放課後'];
     const kyukouCount = counts['休校日'];
     const waitCount = counts['キャンセル待ち'];
 
+    // ★ 児発マーク (共通パーツ)
+      const jihatsuBadge = hasJihatsu ? (
+        <span className="ml-1 text-[9px] text-blue-600 font-bold border border-blue-400 rounded px-[1px] bg-white">
+          児発含
+        </span>
+      ) : null;
+
     totalCountsContent = (
-      <div className="text-[12px] leading-tight text-gray-700">
-        {houkagoCount > 0 && <div>放課後: {houkagoCount}人</div>}
-        {kyukouCount > 0 && <div>休校日: {kyukouCount}人</div>}
-        {waitCount > 0 && <div>ｷｬﾝｾﾙ: {waitCount}人</div>}
-      </div>
-    );
+        <div className="text-[12px] leading-tight text-gray-700">
+          {houkagoCount > 0 && (
+            <div className="flex items-center flex-wrap">
+              放課後: {houkagoCount}人 {jihatsuBadge}
+            </div>
+          )}
+          {kyukouCount > 0 && (
+            <div className="flex items-center flex-wrap">
+              休校日: {kyukouCount}人 {(!houkagoCount && jihatsuBadge) /* 放課後がない場合はここに表示 */}
+            </div>
+          )}
+          {waitCount > 0 && <div>ｷｬﾝｾﾙ: {waitCount}人</div>}
+        </div>
+      );
   }
 
   // --- 2. 選択中利用者の予定（下段）---
