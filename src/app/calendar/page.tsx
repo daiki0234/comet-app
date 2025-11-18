@@ -600,17 +600,21 @@ root.render(
     };
     //day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
 
-    // ★ 児発利用者が含まれているかチェックするフラグ
-    let hasJihatsu = false;
+// ★ 修正点： ステータスごとに児発フラグを分ける
+    let houkagoHasJihatsu = false;
+    let kyukouHasJihatsu = false;
 
     day.items.forEach(it => { 
       counts[it.status] = (counts[it.status] ?? 0) + 1; 
 
-      // ★ 予定（放課後 or 休校日）の人の中に、児発利用者がいるか確認
-      if (it.status === '放課後' || it.status === '休校日') {
-        const u = users.find(user => user.id === it.userId);
-        if (u && u.serviceJihatsu === '利用中') {
-          hasJihatsu = true;
+      // ユーザー情報を取得
+      const u = users.find(user => user.id === it.userId);
+      // 児発利用者なら、ステータスに応じてフラグを立てる
+      if (u && u.serviceJihatsu === '利用中') {
+        if (it.status === '放課後') {
+          houkagoHasJihatsu = true;
+        } else if (it.status === '休校日') {
+          kyukouHasJihatsu = true;
         }
       }
     });
@@ -642,8 +646,9 @@ root.render(
             <div key={item.label} className={`${item.class} flex flex-wrap items-center`}>
               <span>{item.label}: {item.count}人</span>
 
-              {/* ★ 放課後 または 休校日 の行で、かつ児発利用者がいる場合に表示 */}
-              {(item.label === '放課後' || item.label === '休校日') && hasJihatsu && (
+              {/* ★ 修正点： 対応するフラグが立っている場合のみ表示 */}
+              {((item.label === '放課後' && houkagoHasJihatsu) || 
+                (item.label === '休校日' && kyukouHasJihatsu)) && (
                 <span className="ml-1 text-[10px] text-blue-600 font-bold border border-blue-400 rounded px-[2px] bg-white leading-none">
                   児発含
                 </span>
@@ -671,17 +676,19 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
     };
     //day.items.forEach(it => { counts[it.status] = (counts[it.status] ?? 0) + 1; });
 
-    // ★ 児発利用者が含まれているかチェック
-      let hasJihatsu = false;
+// ★ 修正点： ステータスごとに児発フラグを分ける
+      let houkagoHasJihatsu = false;
+      let kyukouHasJihatsu = false;
 
       day.items.forEach(it => { 
         counts[it.status] = (counts[it.status] ?? 0) + 1; 
         
-        // ★ チェックロジック
-        if (it.status === '放課後' || it.status === '休校日') {
-          const u = users.find(user => user.id === it.userId);
-          if (u && u.serviceJihatsu === '利用中') {
-            hasJihatsu = true;
+        const u = users.find(user => user.id === it.userId);
+        if (u && u.serviceJihatsu === '利用中') {
+          if (it.status === '放課後') {
+            houkagoHasJihatsu = true;
+          } else if (it.status === '休校日') {
+            kyukouHasJihatsu = true;
           }
         }
       });
@@ -690,23 +697,27 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
     const kyukouCount = counts['休校日'];
     const waitCount = counts['キャンセル待ち'];
 
-    // ★ 児発マーク (共通パーツ)
-      const jihatsuBadge = hasJihatsu ? (
+   // ★ 共通のバッジパーツ
+      const Badge = () => (
         <span className="ml-1 text-[9px] text-blue-600 font-bold border border-blue-400 rounded px-[1px] bg-white">
           児発含
         </span>
-      ) : null;
+      );
 
-    totalCountsContent = (
+      totalCountsContent = (
         <div className="text-[12px] leading-tight text-gray-700">
           {houkagoCount > 0 && (
             <div className="flex items-center flex-wrap">
-              放課後: {houkagoCount}人 {jihatsuBadge}
+              放課後: {houkagoCount}人 
+              {/* 放課後に児発がいれば表示 */}
+              {houkagoHasJihatsu && <Badge />}
             </div>
           )}
           {kyukouCount > 0 && (
             <div className="flex items-center flex-wrap">
-              休校日: {kyukouCount}人 {(!houkagoCount && jihatsuBadge) /* 放課後がない場合はここに表示 */}
+              休校日: {kyukouCount}人 
+              {/* 休校日に児発がいれば表示 */}
+              {kyukouHasJihatsu && <Badge />}
             </div>
           )}
           {waitCount > 0 && <div>ｷｬﾝｾﾙ: {waitCount}人</div>}
