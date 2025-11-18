@@ -173,16 +173,36 @@ useEffect(() => {
     const type = params.get('type');        // "来所" or "帰所"
     if (!name || !statusSymbol || !type) throw new Error('無効なQRコードです');
 
-    // ③ 利用者解決
-    const [lastName, firstName] = name.split(' ');
-    const uq = query(
-      collection(db, "users"),
-      where("lastName", "==", lastName),
-      where("firstName", "==", firstName)
-    );
-    const userSnapshot = await getDocs(uq);
-    if (userSnapshot.empty) throw new Error("該当する利用者が登録されていません");
-    const userDoc = userSnapshot.docs[0];
+    // ③ 利用者解決 (修正版)
+    
+    // 1. QRコードの名前から、全ての空白（全角・半角）を取り除く
+    // 例: "洪 咲里" -> "洪咲里"
+    const targetName = name.replace(/[\s\u3000]+/g, ''); 
+
+    // 2. Firestoreから全ユーザーを取得して、柔軟に探す
+    // (split検索だとスペースの揺らぎで失敗するため、全件取得してJSで比較します)
+    const usersRef = collection(db, "users");
+    const userSnapshot = await getDocs(usersRef);
+
+    let userDoc = null;
+
+    // 3. DB内のユーザー名も結合して比較する
+    for (const doc of userSnapshot.docs) {
+      const data = doc.data();
+      // DBの姓と名を結合して、空白を除去
+      const dbName = `${data.lastName}${data.firstName}`;
+      const dbNameClean = dbName.replace(/[\s\u3000]+/g, ''); 
+
+      if (dbNameClean === targetName) {
+        userDoc = doc;
+        break; // 見つかったらループ終了
+      }
+    }
+
+    if (!userDoc) {
+      throw new Error(`該当する利用者が登録されていません (受信データ: ${name})`);
+    }
+
     const userId = userDoc.id;
     const userName = `${userDoc.data().lastName} ${userDoc.data().firstName}`;
 
