@@ -373,7 +373,26 @@ export default function DashboardPage() {
                <div className="lg:col-span-1 bg-white p-6 rounded-ios shadow-ios border border-ios-gray-200 flex flex-col"><h3 className="text-lg font-bold text-gray-700 mb-4 border-b pb-2">曜日別 欠席率トレンド</h3><div className="flex-grow relative h-64"><canvas id="weeklyAbsenceRateChart"></canvas></div></div>
                <div className="lg:col-span-2 bg-white p-6 rounded-ios shadow-ios border border-ios-gray-200 flex flex-col"><h3 className="text-lg font-bold text-gray-700 mb-4 border-b pb-2">月別 活動実績推移</h3><div className="flex-grow relative h-64"><canvas id="monthlyTrendChart"></canvas></div></div>
                <div className="lg:col-span-1 bg-white p-6 rounded-ios shadow-ios border border-ios-gray-200 flex flex-col"><h3 className="text-lg font-bold text-gray-700 mb-4 border-b pb-2">欠席理由の内訳</h3><div className="flex-grow relative h-64"><canvas id="absenceReasonChart"></canvas></div></div>
-               <div className="lg:col-span-2 bg-white p-6 rounded-ios shadow-ios border border-ios-gray-200"><h3 className="text-lg font-bold text-gray-700 mb-4 border-b pb-2">AIからの改善提案</h3><ul className="space-y-3">{analysisData.aiSuggestions.map((suggestion:string, i:number) => (<li key={i} className="flex items-start"><span className="flex-shrink-0 h-6 w-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-bold mr-3">{i + 1}</span><p className="text-gray-700 text-sm leading-relaxed">{suggestion}</p></li>))}</ul></div>
+               <div className="lg:col-span-2 bg-white p-6 rounded-ios shadow-ios border border-ios-gray-200">
+                 <h3 className="text-lg font-bold text-gray-700 mb-4 border-b pb-2">AIからの改善提案</h3>
+                 <ul className="space-y-3">
+                   {/* ★★★ 修正点：名前を aiInsights に変更し、データの存在チェックを追加 ★★★ */}
+                   {analysisData.aiInsights && Array.isArray(analysisData.aiInsights) ? (
+                     analysisData.aiInsights.map((insight: any, i: number) => (
+                       <li key={i} className="flex items-start">
+                         <span className="flex-shrink-0 h-6 w-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-bold mr-3 mt-1">{i + 1}</span>
+                         <div>
+                           {/* タイトルと詳細を表示 */}
+                           <p className="font-bold text-gray-800 text-sm mb-1">{insight.title}</p>
+                           <p className="text-gray-600 text-sm leading-relaxed">{insight.description}</p>
+                         </div>
+                       </li>
+                     ))
+                   ) : (
+                     <p className="text-gray-500 text-sm">改善提案はありません。</p>
+                   )}
+                 </ul>
+               </div>
             </main>
         )}
       </div>
