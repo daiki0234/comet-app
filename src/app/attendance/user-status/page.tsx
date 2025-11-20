@@ -42,6 +42,8 @@ export default function UserAttendanceListPage() {
   const [currentMonth, setCurrentMonth] = useState(now.getMonth() + 1);
   
   const [editingId, setEditingId] = useState<string | null>(null);
+  // ★★★ 修正点1: 検索用のStateを追加 ★★★
+  const [userSearchQuery, setUserSearchQuery] = useState('');
   const [editData, setEditData] = useState<Partial<AttendanceRecord> | null>(null);
 
   // ★ 修正点2: 検索が実行されたかどうかの状態
@@ -50,6 +52,25 @@ export default function UserAttendanceListPage() {
   // 年月日のプルダウンリスト生成
   const years = useMemo(() => Array.from({ length: 5 }, (_, i) => now.getFullYear() - i), []);
   const months = useMemo(() => Array.from({ length: 12 }, (_, i) => i + 1), []);
+
+  // ★★★ 修正点2: 検索ロジック (useMemo) ★★★
+  // userSearchQuery または allUsers が変更されるたびに、候補を絞り込む
+  const searchMatchedUsers = useMemo(() => {
+    const queryText = userSearchQuery.trim();
+    if (!queryText) {
+      // 検索クエリがない場合、選択中のユーザーを1人だけ表示（リストを短く保つため）
+      const selectedUser = allUsers.find(u => u.id === selectedUserId);
+      return selectedUser ? [selectedUser] : [];
+    }
+
+    const lowerQuery = queryText.toLowerCase();
+
+    return allUsers.filter(user => {
+      // 氏名で検索
+      const fullName = `${user.lastName || ''}${user.firstName || ''}`;
+      return fullName.toLowerCase().includes(lowerQuery);
+    });
+  }, [userSearchQuery, allUsers, selectedUserId]); // 依存配列に allUsers と selectedUserId を追加
 
   // --- データ取得ロジック ---
   const fetchRecords = useCallback(async () => {
@@ -166,24 +187,45 @@ export default function UserAttendanceListPage() {
       <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
         <h2 className="text-xl font-bold mb-4">出欠記録の確認と編集</h2>
 
-        {/* フィルターエリア */}
+       {/* フィルターエリア (130行目あたり) */}
         <div className="flex flex-wrap gap-4 items-center mb-6 p-4 bg-gray-50 rounded-lg border">
-          {/* 利用者選択 */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 relative">
             <label className="font-medium text-gray-700">利用者:</label>
-            <select 
-              value={selectedUserId} 
-              onChange={(e) => setSelectedUserId(e.target.value)}
-              className="p-2 border rounded-md bg-white"
-            >
-              {/* ★ 修正点4: デフォルトの「利用者を選択」オプションを追加 */}
-              <option value="" disabled>利用者を選択</option> 
-              {allUsers.map(user => (
-                <option key={user.id} value={user.id}>
-                  {user.lastName} {user.firstName}
-                </option>
-              ))}
-            </select>
+            
+            {/* ★★★ 修正点3: 検索入力欄 ★★★ */}
+            <input
+              type="text"
+              value={userSearchQuery}
+              onChange={(e) => setUserSearchQuery(e.target.value)}
+              placeholder={allUsers.length > 0 ? "氏名を入力して検索..." : "利用者なし"}
+              disabled={allUsers.length === 0}
+              className="p-2 border border-gray-300 rounded-md w-48"
+            />
+            
+            {/* ★★★ 修正点4: 検索結果リスト (ドロップダウン) ★★★ */}
+            {userSearchQuery && searchMatchedUsers.length > 0 && (
+              <ul className="absolute top-full left-0 z-10 w-full max-h-60 overflow-y-auto bg-white border border-blue-400 rounded-md shadow-lg mt-1">
+                {searchMatchedUsers.map(user => (
+                  <li 
+                    key={user.id} 
+                    onClick={() => {
+                      setSelectedUserId(user.id); // IDをセット
+                      setUserSearchQuery(''); // 検索窓をクリア
+                    }}
+                    className="p-2 cursor-pointer hover:bg-blue-100 text-sm border-b last:border-b-0"
+                  >
+                    {user.lastName} {user.firstName}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/* ★★★ 修正点5: 選択中の利用者表示 (Inputの下) ★★★ */}
+            {selectedUserId && (
+              <span className="text-sm text-blue-600 font-semibold absolute top-[-10px] right-0 bg-white px-1 border border-blue-300 rounded-md">
+                選択中: {allUsers.find(u => u.id === selectedUserId)?.lastName} {allUsers.find(u => u.id === selectedUserId)?.firstName}
+              </span>
+            )}
           </div>
 
           {/* 年月選択 */}
