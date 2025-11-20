@@ -92,20 +92,24 @@ export default function UserAttendanceListPage() {
     }
   }, [selectedUserId, currentYear, currentMonth]);
 
-  // 全ユーザーリスト取得 (初回マウント時のみ実行)
+// 全ユーザーリスト取得 (初回マウント時のみ実行)
   useEffect(() => {
     const fetchUsers = async () => {
-      const usersSnap = await getDocs(query(collection(db, 'users'), orderBy('lastName')));
-      const usersData = usersSnap.docs.map(doc => ({ 
-        id: doc.id, 
-        lastName: doc.data().lastName, 
-        firstName: doc.data().firstName 
-      })) as User[];
-      setAllUsers(usersData);
-      
-      // ★ 初回はユーザーを自動選択しない
-      if (usersData.length === 0) {
-        setLoading(false);
+      try {
+        const usersSnap = await getDocs(query(collection(db, 'users'), orderBy('lastName')));
+        const usersData = usersSnap.docs.map(doc => ({ 
+          id: doc.id, 
+          lastName: doc.data().lastName, 
+          firstName: doc.data().firstName 
+        })) as User[];
+        setAllUsers(usersData);
+        
+        // ★ 修正点: usersData.length のチェックを削除し、finally で確実に setLoading(false) を呼ぶ
+      } catch (error) {
+        console.error("利用者データの初期取得に失敗:", error);
+        toast.error("利用者データの初期取得に失敗しました。");
+      } finally {
+        setLoading(false); // ★ 確実にローディングを解除
       }
     };
     fetchUsers();
