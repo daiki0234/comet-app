@@ -55,6 +55,7 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
       icon: <CheckSquareIcon />,
       subMenu: [
         { href: '/attendance/register-absence', label: '別日の欠席登録' },
+        { href: '/attendance/user-status', label: '利用者別の出欠状況' },
       ]
     },
     { href: '/users', label: '利用者管理', icon: <UsersIcon /> },
