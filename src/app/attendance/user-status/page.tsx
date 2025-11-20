@@ -1,431 +1,269 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
-import { 
-  collection, 
-  getDocs, 
-  query, 
-  where, 
-  orderBy, 
-  doc, 
-  updateDoc, 
-  deleteDoc, 
-  Timestamp 
-} from 'firebase/firestore';
-import toast, { Toaster } from 'react-hot-toast';
+import { collection, getDocs, query, where, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import toast from 'react-hot-toast';
 
 // --- 型定義 ---
-type User = { id: string; lastName: string; firstName: string; };
-type UsageStatus = '放課後' | '休校日' | '欠席';
-// 延長支援加算分類
-type Extension = 1 | 2 | 3 | null; 
-
+type RecordStatus = '放課後' | '休校日' | '欠席' | 'キャンセル待ち' | '取り消し';
+interface User { id: string; lastName: string; firstName: string; }
 interface AttendanceRecord {
   id: string;
   userId: string;
-  userName: string;
   date: string; // YYYY-MM-DD
-  usageStatus: UsageStatus;
-  arrivalTime: string;
-  departureTime: string;
-  notes: string;
-  extension: Extension;
-  // FirestoreのTimestamp
-  dateTimestamp: Timestamp; 
+  usageStatus: RecordStatus;
+  arrivalTime?: string; // HH:MM
+  departureTime?: string; // HH:MM
+  notes?: string; // 特記事項 (欠席理由や延長支援加算の記録)
+  userName: string; // 表示用 (DBにuserNameも保存されていると仮定)
 }
 
-// 編集モーダル用の型
-interface EditRecord extends AttendanceRecord {
-  // 編集可能なフィールド
-}
-
-// --- ユーティリティ関数 ---
-
-// ★ 1. 利用時間から延長加算を計算するロジック (プロジェクト概要から移植)
-const calculateExtension = (
-  arrivalTime: string, 
-  departureTime: string, 
-  status: UsageStatus
-): { notesExtension: string; extension: Extension } => {
-  if (!arrivalTime || !departureTime) {
-    return { notesExtension: '', extension: null };
-  }
-
-  const arrival = new Date(`2000/01/01 ${arrivalTime}`);
-  const departure = new Date(`2000/01/01 ${departureTime}`);
-  if (departure <= arrival) return { notesExtension: '', extension: null };
-
-  const durationMs = departure.getTime() - arrival.getTime();
-  const durationMinutes = durationMs / (1000 * 60);
-
-  // 加算対象となる基準時間（分）
-  const thresholdMinutes = status === '放課後' ? 180 : // 3時間 = 180分
-                           status === '休校日' ? 300 : // 5時間 = 300分
-                           0; 
-
-  const extensionMinutes = durationMinutes - thresholdMinutes;
-
-  if (extensionMinutes <= 0) {
-    return { notesExtension: '', extension: null };
-  }
-
-  const hours = Math.floor(extensionMinutes / 60);
-  const minutes = Math.floor(extensionMinutes % 60);
-  const durationStr = `${hours}時間${minutes}分`;
-
-  let extensionCode: Extension = null;
-  if (extensionMinutes >= 120) { // 2時間以上
-    extensionCode = 3;
-  } else if (extensionMinutes >= 60) { // 1時間〜2時間未満
-    extensionCode = 2;
-  } else if (extensionMinutes >= 30) { // 30分〜1時間未満
-    extensionCode = 1;
-  }
-
-  if (extensionCode) {
-    return { 
-      notesExtension: `${durationStr}（分類${extensionCode}）`, 
-      extension: extensionCode 
-    };
-  }
-  
-  // 30分未満の延長は加算対象外だが、notesには記録しておくかはお好み
-  // 今回は加算対象外の記録は省略
-  return { notesExtension: '', extension: null };
+// Helper関数
+const pad2 = (n: number) => n.toString().padStart(2, "0");
+const formatDisplayDate = (dateStr: string) => {
+  const [y, m, d] = dateStr.split('-');
+  return `${y}/${m}/${d}`;
 };
 
-
-export default function UserAttendanceStatusPage() {
-  const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth() + 1;
-
-  // ★ 2. State の定義
-  const [users, setUsers] = useState<User[]>([]);
+export default function UserAttendanceListPage() {
+  const now = new Date();
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   
-  const [selectedUserId, setSelectedUserId] = useState('');
-  const [selectedYear, setSelectedYear] = useState(currentYear);
-  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [currentYear, setCurrentYear] = useState(now.getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(now.getMonth() + 1);
+  
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editData, setEditData] = useState<Partial<AttendanceRecord> | null>(null);
 
-  // 編集モーダル
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editingRecord, setEditingRecord] = useState<EditRecord | null>(null);
+  // ★ 修正点1: 検索が実行されたかどうかの状態
+  const [hasSearched, setHasSearched] = useState(false);
 
-  // 年の選択肢 (過去2年〜未来1年)
-  const years = useMemo(() => {
-    return Array.from({ length: 4 }, (_, i) => currentYear - 2 + i);
-  }, [currentYear]);
-  // 月の選択肢
-  const months = useMemo(() => {
-    return Array.from({ length: 12 }, (_, i) => i + 1);
-  }, []);
+  // 年月日のプルダウンリスト生成
+  const years = useMemo(() => Array.from({ length: 5 }, (_, i) => now.getFullYear() - i), []);
+  const months = useMemo(() => Array.from({ length: 12 }, (_, i) => i + 1), []);
 
-  // ユーザーリストの取得
-  useEffect(() => {
-    const fetchUsers = async () => {
-      const usersSnap = await getDocs(query(collection(db, 'users'), orderBy('lastName')));
-      const usersData = usersSnap.docs.map(d => ({ 
-        id: d.id, 
-        lastName: d.data().lastName, 
-        firstName: d.data().firstName 
-      })) as User[];
-      setUsers(usersData);
-      // 利用者がいれば、最初のユーザーをデフォルトで選択
-      if (usersData.length > 0) {
-        setSelectedUserId(usersData[0].id);
-      }
-    };
-    fetchUsers();
-  }, []);
-
-  // ★ 3. データのフィルタリングと取得
+  // --- データ取得ロジック (useCallback の依存配列から年月を削除) ---
   const fetchRecords = useCallback(async () => {
     if (!selectedUserId) {
       setRecords([]);
+      setLoading(false);
       return;
     }
 
     setLoading(true);
     try {
-      const startOfMonth = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
-      
-      // 次の月の1日 (フィルタリング用)
-      const nextMonth = selectedMonth === 12 ? 1 : selectedMonth + 1;
-      const nextYear = selectedMonth === 12 ? selectedYear + 1 : selectedYear;
-      const endOfMonthExclusive = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+      const dateMin = `${currentYear}-${pad2(currentMonth)}-01`;
+      const dateMax = `${currentYear}-${pad2(currentMonth)}-31`;
 
-
-      const recordsRef = collection(db, 'attendanceRecords');
-      // ★ クエリの構築: userId + 年月で絞り込み
-      const q = query(recordsRef,
-        where('userId', '==', selectedUserId),
-        where('date', '>=', startOfMonth),
-        where('date', '<', endOfMonthExclusive), // 月の範囲でフィルタ
-        orderBy('date', 'desc') // 日付の降順
+      const recordsRef = collection(db, "attendanceRecords");
+      // ★ ここでFirestoreのインデックスエラーが発生しています
+      const q = query(
+        recordsRef,
+        where("userId", "==", selectedUserId),
+        where("date", ">=", dateMin),
+        where("date", "<=", dateMax)
       );
 
       const snapshot = await getDocs(q);
-      const data = snapshot.docs.map(d => ({ 
-        id: d.id, 
-        dateTimestamp: d.data().dateTimestamp,
-        ...(d.data() as Omit<AttendanceRecord, 'id' | 'dateTimestamp'>) 
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as Omit<AttendanceRecord, 'id'>),
       })) as AttendanceRecord[];
-
-      setRecords(data);
+      
+      setRecords(data.sort((a, b) => b.date.localeCompare(a.date)));
     } catch (error) {
       console.error("出欠記録の取得に失敗:", error);
-      toast.error("出欠記録の取得に失敗しました。");
+      toast.error("出欠記録の取得に失敗しました。"); // ★ エラー通知
     } finally {
       setLoading(false);
     }
-  }, [selectedUserId, selectedYear, selectedMonth]);
+  }, [selectedUserId, currentYear, currentMonth]); // 依存配列は維持
 
+  // 全ユーザーリスト取得 (初回マウント時のみ実行)
   useEffect(() => {
+    const fetchUsers = async () => {
+      const usersSnap = await getDocs(query(collection(db, 'users')));
+      const usersData = usersSnap.docs.map(doc => ({ 
+        id: doc.id, 
+        lastName: doc.data().lastName, 
+        firstName: doc.data().firstName 
+      })) as User[];
+      setAllUsers(usersData);
+      if (usersData.length > 0) {
+        setSelectedUserId(usersData[0].id);
+      } else {
+        setLoading(false);
+      }
+    };
+    fetchUsers();
+  }, []);
+
+  // ★ 修正点2: ボタンクリックで実行されるハンドラ
+  const handleDisplayClick = () => {
+    setHasSearched(true);
     fetchRecords();
-  }, [fetchRecords]);
-
-
-  // --- 編集・更新・削除ロジック ---
-
-  // ★ 4. 編集モーダルを開く
-  const handleEdit = (record: AttendanceRecord) => {
-    setEditingRecord({ ...record });
-    setIsEditModalOpen(true);
   };
 
-  // ★ 5. 更新処理
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingRecord) return;
-    
-    // 欠席の場合は時間入力をリセット
-    const { arrivalTime, departureTime, usageStatus, id } = editingRecord;
-    
-    if (usageStatus === '欠席') {
-      editingRecord.arrivalTime = '';
-      editingRecord.departureTime = '';
-    }
+  // --- CRUD 操作 --- (変更なし)
 
-    // 延長加算の再計算 (放課後/休校日の場合)
-    if (usageStatus === '放課後' || usageStatus === '休校日') {
-      const { notesExtension, extension } = calculateExtension(
-        arrivalTime, 
-        departureTime, 
-        usageStatus
-      );
-      // 特記事項に延長情報を追記
-      editingRecord.notes = `${editingRecord.notes.split('（分類')[0].trim()} ${notesExtension}`.trim();
-      editingRecord.extension = extension;
-    } else {
-      // 欠席やその他の場合は延長をリセット
-      editingRecord.notes = editingRecord.notes.split('（分類')[0].trim();
-      editingRecord.extension = null;
-    }
-
-    const docRef = doc(db, 'attendanceRecords', id);
+  const handleEdit = (record: AttendanceRecord) => { setEditingId(record.id); setEditData({ ...record }); };
+  const handleEditChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target; setEditData(prev => prev ? { ...prev, [name]: value } : null);
+  };
+  const handleUpdate = async () => {
+    if (!editData || !editingId) return;
+    const loadingToast = toast.loading('更新を保存中...');
     try {
-      await updateDoc(docRef, { ...editingRecord });
-      toast.success('出欠記録を更新しました');
-      setIsEditModalOpen(false);
-      await fetchRecords(); // リストを再取得
+      const { id, userName, ...updatePayload } = editData;
+      await updateDoc(doc(db, "attendanceRecords", editingId), updatePayload);
+      toast.success('記録を更新しました。', { id: loadingToast });
+      setEditingId(null); setEditData(null);
+      fetchRecords();
     } catch (error) {
-      console.error("更新エラー:", error);
-      toast.error('更新に失敗しました');
+      console.error("更新エラー:", error); toast.error('更新に失敗しました。', { id: loadingToast });
     }
   };
-
-  // ★ 6. 削除処理
   const handleDelete = async (id: string) => {
     if (!confirm('この出欠記録を本当に削除しますか？')) return;
+    const loadingToast = toast.loading('削除処理中...');
     try {
-      await deleteDoc(doc(db, 'attendanceRecords', id));
-      toast.success('出欠記録を削除しました');
-      await fetchRecords(); // リストを再取得
+      await deleteDoc(doc(db, "attendanceRecords", id));
+      toast.success('記録を削除しました。', { id: loadingToast });
+      fetchRecords();
     } catch (error) {
-      console.error("削除エラー:", error);
-      toast.error('削除に失敗しました');
+      console.error("削除エラー:", error); toast.error('削除に失敗しました。', { id: loadingToast });
     }
   };
 
-  const handleModalChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    if (!editingRecord) return;
-    const { name, value } = e.target;
-    setEditingRecord(prev => prev ? { ...prev, [name]: value } : null);
-  };
-  
-  // --- UI レンダリング ---
+  // UI レンダリング
+  if (loading && allUsers.length === 0) {
+    return <AppLayout pageTitle="出欠状況"><div className="text-center p-8">初期データを読み込み中...</div></AppLayout>;
+  }
+
+  const selectedUserName = allUsers.find(u => u.id === selectedUserId);
+  const pageTitle = selectedUserName ? `${selectedUserName.lastName} ${selectedUserName.firstName}さんの出欠状況` : '利用者別出欠状況';
 
   return (
-    <AppLayout pageTitle="利用者別出欠状況">
-      <Toaster />
+    <AppLayout pageTitle={pageTitle}>
       <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
-        <h2 className="text-xl font-semibold mb-6 text-gray-800">出欠記録の確認と編集</h2>
+        <h2 className="text-xl font-bold mb-4">出欠記録の確認と編集</h2>
 
-        {/* フィルタリング UI */}
-        <div className="flex flex-wrap items-center space-x-4 mb-6 p-4 bg-gray-50 rounded-lg border">
-          <label className="font-medium text-gray-700">利用者:</label>
-          <select 
-            value={selectedUserId} 
-            onChange={(e) => setSelectedUserId(e.target.value)} 
-            className="p-2 border rounded-md bg-white"
-          >
-            <option value="">利用者を選択してください</option>
-            {users.map(user => (
-              <option key={user.id} value={user.id}>{user.lastName} {user.firstName}</option>
-            ))}
-          </select>
+        {/* フィルターエリア */}
+        <div className="flex flex-wrap gap-4 items-center mb-6 p-4 bg-gray-50 rounded-lg border">
+          {/* 利用者選択 */}
+          <div className="flex items-center gap-2">
+            <label className="font-medium text-gray-700">利用者:</label>
+            <select 
+              value={selectedUserId} 
+              onChange={(e) => setSelectedUserId(e.target.value)}
+              className="p-2 border rounded-md bg-white"
+            >
+              {allUsers.map(user => (
+                <option key={user.id} value={user.id}>
+                  {user.lastName} {user.firstName}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          <label className="font-medium text-gray-700 ml-4">年:</label>
-          <select 
-            value={selectedYear} 
-            onChange={(e) => setSelectedYear(Number(e.target.value))} 
-            className="p-2 border rounded-md bg-white"
+          {/* 年月選択 */}
+          <div className="flex items-center gap-2">
+            <label className="font-medium text-gray-700">年:</label>
+            <select value={currentYear} onChange={(e) => setCurrentYear(Number(e.target.value))} className="p-2 border rounded-md bg-white">
+              {years.map(y => <option key={y} value={y}>{y}年</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="font-medium text-gray-700">月:</label>
+            <select value={currentMonth} onChange={(e) => setCurrentMonth(Number(e.target.value))} className="p-2 border rounded-md bg-white">
+              {months.map(m => <option key={m} value={m}>{m}月</option>)}
+            </select>
+          </div>
+
+          {/* ★ 修正点3: 表示ボタン */}
+          <button 
+            onClick={handleDisplayClick} 
+            className="ml-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg disabled:bg-gray-400"
+            disabled={loading}
           >
-            {years.map(y => (
-              <option key={y} value={y}>{y}年</option>
-            ))}
-          </select>
+            {loading ? '読み込み中' : '表示'}
+          </button>
           
-          <label className="font-medium text-gray-700 ml-4">月:</label>
-          <select 
-            value={selectedMonth} 
-            onChange={(e) => setSelectedMonth(Number(e.target.value))} 
-            className="p-2 border rounded-md bg-white"
-          >
-            {months.map(m => (
-              <option key={m} value={m}>{m}月</option>
-            ))}
-          </select>
+          <p className="ml-auto text-sm text-gray-600">
+            {records.length} 件の記録を表示中
+          </p>
         </div>
 
-        {/* 一覧表 */}
-        <div className="max-h-[70vh] overflow-y-auto border rounded-lg">
-          {loading ? (
-            <p className="p-4 text-center">出欠記録を読み込み中...</p>
-          ) : selectedUserId ? (
+        {/* 出欠一覧表 */}
+        <div className="overflow-x-auto">
+          {(!hasSearched && records.length === 0) ? (
+            <p className="text-center py-8 text-gray-500">条件を選択し「表示」ボタンを押してください。</p>
+          ) : loading ? (
+            <p className="text-center py-8">出欠記録を読み込み中...</p>
+          ) : records.length === 0 ? (
+            <p className="text-center py-8 text-gray-500">選択された期間に出欠記録はありません。</p>
+          ) : (
             <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50 sticky top-0">
+              <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">日付</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">利用状況</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">来所時間</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">帰所時間</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">特記事項</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-20">操作</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">日付</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">利用状況</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">来所時間</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">帰所時間</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">特記事項</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">操作</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {records.length > 0 ? (
-                  records.map(record => (
-                    <tr key={record.id} className={record.usageStatus === '欠席' ? 'bg-red-50/50' : 'hover:bg-gray-50'}>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-800">{record.date}</td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm font-semibold text-gray-700">{record.usageStatus}</td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">{record.arrivalTime || '---'}</td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">{record.departureTime || '---'}</td>
-                      <td className="px-4 py-3 text-sm text-gray-600 max-w-sm whitespace-normal">{record.notes || '---'}</td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700 space-x-2">
-                        <button onClick={() => handleEdit(record)} className="text-blue-500 hover:underline text-sm">編集</button>
-                        <button onClick={() => handleDelete(record.id)} className="text-red-500 hover:underline text-sm">削除</button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={6} className="py-8 text-center text-gray-500">
-                      この期間の出欠記録はありません。
+                {records.map(record => (
+                  <tr key={record.id}>
+                    {/* 日付 */}
+                    <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {formatDisplayDate(record.date)}
+                    </td>
+                    
+                    {/* 状況・時間・特記事項 (インライン編集) */}
+                    {record.id === editingId && editData ? (
+                      <>
+                        <td className="px-3 py-2"><select name="usageStatus" value={editData.usageStatus} onChange={handleEditChange} className="p-1 border rounded w-full"><option>放課後</option><option>休校日</option><option>欠席</option><option>キャンセル待ち</option><option>取り消し</option></select></td>
+                        <td className="px-3 py-2"><input type="time" name="arrivalTime" value={editData.arrivalTime || ''} onChange={handleEditChange} className="p-1 border rounded w-full" /></td>
+                        <td className="px-3 py-2"><input type="time" name="departureTime" value={editData.departureTime || ''} onChange={handleEditChange} className="p-1 border rounded w-full" /></td>
+                        <td className="px-3 py-2"><input type="text" name="notes" value={editData.notes || ''} onChange={handleEditChange} className="p-1 border rounded w-full" /></td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="px-3 py-3 text-sm text-gray-700">{record.usageStatus}</td>
+                        <td className="px-3 py-3 text-sm text-gray-700">{record.arrivalTime || '---'}</td>
+                        <td className="px-3 py-3 text-sm text-gray-700">{record.departureTime || '---'}</td>
+                        <td className="px-3 py-3 text-sm text-gray-700 whitespace-pre-wrap max-w-xs">{record.notes || '---'}</td>
+                      </>
+                    )}
+                    
+                    {/* 操作ボタン */}
+                    <td className="px-3 py-3 whitespace-nowrap text-sm font-medium space-x-2">
+                      {record.id === editingId ? (
+                        <div className="flex gap-2">
+                          <button onClick={handleUpdate} className="text-green-600 hover:text-green-900">保存</button>
+                          <button onClick={() => setEditingId(null)} className="text-gray-500 hover:text-gray-700">取消</button>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2">
+                          <button onClick={() => handleEdit(record)} className="text-blue-600 hover:text-blue-900">編集</button>
+                          <button onClick={() => handleDelete(record.id)} className="text-red-600 hover:text-red-900">削除</button>
+                        </div>
+                      )}
                     </td>
                   </tr>
-                )}
+                ))}
               </tbody>
             </table>
-          ) : (
-            <p className="p-4 text-center text-gray-500">利用者を選択してください。</p>
           )}
         </div>
-        
-        {/* ★ 7. 編集モーダル UI */}
-        {isEditModalOpen && editingRecord && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-[200]">
-            <form onSubmit={handleUpdate} className="relative z-[201] bg-white p-6 rounded-lg shadow-xl w-full max-w-md">
-              <h3 className="text-xl font-semibold mb-4 text-gray-800">
-                {editingRecord.userName} ({editingRecord.date}) の出欠を編集
-              </h3>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">利用状況</label>
-                  <select 
-                    name="usageStatus" 
-                    value={editingRecord.usageStatus} 
-                    onChange={handleModalChange} 
-                    className="p-2 border rounded-md w-full bg-white"
-                  >
-                    <option value="放課後">放課後</option>
-                    <option value="休校日">休校日</option>
-                    <option value="欠席">欠席</option>
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">来所時間</label>
-                    <input 
-                      type="time" 
-                      name="arrivalTime" 
-                      value={editingRecord.arrivalTime} 
-                      onChange={handleModalChange} 
-                      className={`p-2 border rounded-md w-full ${editingRecord.usageStatus === '欠席' ? 'bg-gray-100' : ''}`}
-                      disabled={editingRecord.usageStatus === '欠席'}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">帰所時間</label>
-                    <input 
-                      type="time" 
-                      name="departureTime" 
-                      value={editingRecord.departureTime} 
-                      onChange={handleModalChange} 
-                      className={`p-2 border rounded-md w-full ${editingRecord.usageStatus === '欠席' ? 'bg-gray-100' : ''}`}
-                      disabled={editingRecord.usageStatus === '欠席'}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">特記事項</label>
-                  <textarea 
-                    name="notes" 
-                    value={editingRecord.notes} 
-                    onChange={handleModalChange} 
-                    rows={3} 
-                    className="p-2 border rounded-md w-full"
-                  ></textarea>
-                  <p className="text-xs text-gray-500 mt-1">※ 延長支援加算情報は自動で追記されます。</p>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-3 mt-6">
-                <button 
-                  type="button" 
-                  onClick={() => setIsEditModalOpen(false)} 
-                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded"
-                >
-                  キャンセル
-                </button>
-                <button 
-                  type="submit" 
-                  className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
-                >
-                  更新
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
       </div>
     </AppLayout>
   );
