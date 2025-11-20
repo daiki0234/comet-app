@@ -67,13 +67,14 @@ export default function UserAttendanceListPage() {
 
       const recordsRef = collection(db, "attendanceRecords");
       
-      // ★ 必須インデックス: userId と date の複合インデックスが必要です
+      // ★★★ 修正点1: Firestore側で日付の昇順ソートを設定 ★★★
+      // (これにより、複合インデックスが userId と date で必要になります)
       const q = query(
         recordsRef,
         where("userId", "==", selectedUserId),
         where("date", ">=", dateMin),
-        where("date", "<=", dateMax)
-        // ここに orderBy('date', 'desc') を追加すると、ソートもDB側で行えて高速になります
+        where("date", "<=", dateMax),
+        orderBy('date', 'asc') // ★ 日付の古い順 (昇順)
       );
 
       const snapshot = await getDocs(q);
@@ -82,8 +83,8 @@ export default function UserAttendanceListPage() {
         ...(doc.data() as Omit<AttendanceRecord, 'id'>),
       })) as AttendanceRecord[];
       
-      // 日付の降順（新しい順）でソート
-      setRecords(data.sort((a, b) => b.date.localeCompare(a.date)));
+      // ★★★ 修正点2: クライアント側でも日付の古い順（昇順）でソート ★★★
+      setRecords(data.sort((a, b) => a.date.localeCompare(b.date)));
     } catch (error) {
       console.error("出欠記録の取得に失敗:", error);
       toast.error("出欠記録の取得に失敗しました。");
