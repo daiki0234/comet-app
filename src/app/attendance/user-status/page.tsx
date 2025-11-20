@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
-import { collection, getDocs, query, where, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, updateDoc, deleteDoc, orderBy } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 
 // --- 型定義 ---
@@ -30,24 +30,28 @@ const formatDisplayDate = (dateStr: string) => {
 export default function UserAttendanceListPage() {
   const now = new Date();
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  
+  // ★ 修正点1: デフォルトは何も選択されていない状態
   const [selectedUserId, setSelectedUserId] = useState<string>('');
+  
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   
+  // デフォルト値は現在の年月に設定
   const [currentYear, setCurrentYear] = useState(now.getFullYear());
   const [currentMonth, setCurrentMonth] = useState(now.getMonth() + 1);
   
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<AttendanceRecord> | null>(null);
 
-  // ★ 修正点1: 検索が実行されたかどうかの状態
+  // ★ 修正点2: 検索が実行されたかどうかの状態
   const [hasSearched, setHasSearched] = useState(false);
 
   // 年月日のプルダウンリスト生成
   const years = useMemo(() => Array.from({ length: 5 }, (_, i) => now.getFullYear() - i), []);
   const months = useMemo(() => Array.from({ length: 12 }, (_, i) => i + 1), []);
 
-  // --- データ取得ロジック (useCallback の依存配列から年月を削除) ---
+  // --- データ取得ロジック ---
   const fetchRecords = useCallback(async () => {
     if (!selectedUserId) {
       setRecords([]);
@@ -57,16 +61,19 @@ export default function UserAttendanceListPage() {
 
     setLoading(true);
     try {
+      // 選択された年月の範囲
       const dateMin = `${currentYear}-${pad2(currentMonth)}-01`;
       const dateMax = `${currentYear}-${pad2(currentMonth)}-31`;
 
       const recordsRef = collection(db, "attendanceRecords");
-      // ★ ここでFirestoreのインデックスエラーが発生しています
+      
+      // ★ 必須インデックス: userId と date の複合インデックスが必要です
       const q = query(
         recordsRef,
         where("userId", "==", selectedUserId),
         where("date", ">=", dateMin),
         where("date", "<=", dateMax)
+        // ここに orderBy('date', 'desc') を追加すると、ソートもDB側で行えて高速になります
       );
 
       const snapshot = await getDocs(q);
@@ -75,42 +82,42 @@ export default function UserAttendanceListPage() {
         ...(doc.data() as Omit<AttendanceRecord, 'id'>),
       })) as AttendanceRecord[];
       
+      // 日付の降順（新しい順）でソート
       setRecords(data.sort((a, b) => b.date.localeCompare(a.date)));
     } catch (error) {
       console.error("出欠記録の取得に失敗:", error);
-      toast.error("出欠記録の取得に失敗しました。"); // ★ エラー通知
+      toast.error("出欠記録の取得に失敗しました。");
     } finally {
       setLoading(false);
     }
-  }, [selectedUserId, currentYear, currentMonth]); // 依存配列は維持
+  }, [selectedUserId, currentYear, currentMonth]);
 
   // 全ユーザーリスト取得 (初回マウント時のみ実行)
   useEffect(() => {
     const fetchUsers = async () => {
-      const usersSnap = await getDocs(query(collection(db, 'users')));
+      const usersSnap = await getDocs(query(collection(db, 'users'), orderBy('lastName')));
       const usersData = usersSnap.docs.map(doc => ({ 
         id: doc.id, 
         lastName: doc.data().lastName, 
         firstName: doc.data().firstName 
       })) as User[];
       setAllUsers(usersData);
-      if (usersData.length > 0) {
-        setSelectedUserId(usersData[0].id);
-      } else {
+      
+      // ★ 初回はユーザーを自動選択しない
+      if (usersData.length === 0) {
         setLoading(false);
       }
     };
     fetchUsers();
   }, []);
 
-  // ★ 修正点2: ボタンクリックで実行されるハンドラ
+  // ★ 修正点3: ボタンクリックで実行されるハンドラ
   const handleDisplayClick = () => {
-    setHasSearched(true);
-    fetchRecords();
+    setHasSearched(true); // 検索済みフラグを立てる
+    fetchRecords(); // データ取得を実行
   };
 
-  // --- CRUD 操作 --- (変更なし)
-
+  // --- CRUD 操作 (省略) ---
   const handleEdit = (record: AttendanceRecord) => { setEditingId(record.id); setEditData({ ...record }); };
   const handleEditChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target; setEditData(prev => prev ? { ...prev, [name]: value } : null);
@@ -140,7 +147,8 @@ export default function UserAttendanceListPage() {
     }
   };
 
-  // UI レンダリング
+  // --- UI レンダリング ---
+  
   if (loading && allUsers.length === 0) {
     return <AppLayout pageTitle="出欠状況"><div className="text-center p-8">初期データを読み込み中...</div></AppLayout>;
   }
@@ -163,6 +171,8 @@ export default function UserAttendanceListPage() {
               onChange={(e) => setSelectedUserId(e.target.value)}
               className="p-2 border rounded-md bg-white"
             >
+              {/* ★ 修正点4: デフォルトの「利用者を選択」オプションを追加 */}
+              <option value="" disabled>利用者を選択</option> 
               {allUsers.map(user => (
                 <option key={user.id} value={user.id}>
                   {user.lastName} {user.firstName}
@@ -185,11 +195,11 @@ export default function UserAttendanceListPage() {
             </select>
           </div>
 
-          {/* ★ 修正点3: 表示ボタン */}
+          {/* ★ 修正点5: 表示ボタン */}
           <button 
             onClick={handleDisplayClick} 
+            disabled={loading || !selectedUserId} 
             className="ml-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg disabled:bg-gray-400"
-            disabled={loading}
           >
             {loading ? '読み込み中' : '表示'}
           </button>
@@ -201,10 +211,11 @@ export default function UserAttendanceListPage() {
 
         {/* 出欠一覧表 */}
         <div className="overflow-x-auto">
+          {/* ★ 修正点6: 初期状態/ロード中の表示変更 */}
           {(!hasSearched && records.length === 0) ? (
             <p className="text-center py-8 text-gray-500">条件を選択し「表示」ボタンを押してください。</p>
           ) : loading ? (
-            <p className="text-center py-8">出欠記録を読み込み中...</p>
+            <p className="text-center py-8">読み込み中...</p>
           ) : records.length === 0 ? (
             <p className="text-center py-8 text-gray-500">選択された期間に出欠記録はありません。</p>
           ) : (
@@ -222,6 +233,7 @@ export default function UserAttendanceListPage() {
               <tbody className="bg-white divide-y divide-gray-200">
                 {records.map(record => (
                   <tr key={record.id}>
+                    
                     {/* 日付 */}
                     <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                       {formatDisplayDate(record.date)}
