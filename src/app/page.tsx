@@ -1,124 +1,60 @@
-// src/app/page.tsx
-
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect } from "react";
 import { auth } from "@/lib/firebase/firebase";
-import {
-  GoogleAuthProvider,
-  signInWithPopup,
-  onAuthStateChanged,
-  User,
-} from "firebase/auth";
+import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import { useRouter } from "next/navigation";
+import { useAuth } from '@/context/AuthContext';
+import toast from 'react-hot-toast';
 
-// GoogleアイコンのSVGをコンポーネントとして定義
+// GoogleアイコンSVG
 const GoogleIcon = () => (
-  <svg
-    className="h-5 w-5"
-    aria-hidden="true"
-    xmlns="http://www.w3.org/2000/svg"
-    preserveAspectRatio="xMidYMid"
-    viewBox="0 0 256 262"
-  >
-    <path
-      fill="#4285F4"
-      d="M255.878 133.451c0-10.734-.871-18.567-2.756-26.69H130.55v48.448h71.947c-1.45 12.04-9.283 30.172-26.69 42.356l-.117.189-38.755 30.023-.512 39.215c29.9-27.548 46.99-68.997 46.99-113.845z"
-    />
-    <path
-      fill="#34A853"
-      d="M130.55 261.1c36.817 0 67.9-12.112 90.54-32.894l-39.215-39.739c-12.112 8.169-27.756 13.116-45.39 13.116-34.522 0-63.824-22.773-74.269-54.25l-39.3 30.58c21.6 42.602 66.594 71.5 117.584 71.5z"
-    />
-    <path
-      fill="#FBBC05"
-      d="M56.281 156.37c-2.756-8.169-4.125-16.891-4.125-26.074s1.369-17.905 4.125-26.074l-39.3-30.58C6.34 83.996 0 106.19 0 130.3s6.34 46.304 16.981 65.37l39.3-30.58z"
-    />
-    <path
-      fill="#EB4335"
-      d="M130.55 50.479c24.514 0 41.05 10.582 50.479 19.438l34.469-34.469C198.397 11.897 167.202 0 130.55 0 79.56 0 34.566 28.898 16.981 70.934l39.3 30.58c10.445-31.477 39.747-54.25 74.269-54.25z"
-    />
-  </svg>
+  <svg className="h-5 w-5" aria-hidden="true" viewBox="0 0 24 24"><path fill="#4285F4" d="M23.49 12.275c0-.85-.075-1.675-.215-2.465H12v4.66h6.445c-.28 1.5-1.115 2.775-2.395 3.635v3.015h3.875c2.265-2.09 3.57-5.165 3.57-8.845z" /><path fill="#34A853" d="M12 24c3.24 0 5.955-1.075 7.94-2.96l-3.875-3.015c-1.075.72-2.45 1.145-4.065 1.145-3.135 0-5.79-2.115-6.74-4.96H1.29v3.125C3.365 21.43 7.395 24 12 24z" /><path fill="#FBBC05" d="M5.26 14.21A7.29 7.29 0 0 1 4.93 12c0-.76.135-1.495.375-2.21V6.665H1.29C.47 8.295 0 10.1 0 12c0 1.9.47 3.705 1.29 5.335l3.97-3.125z" /><path fill="#EB4335" d="M12 4.75c1.765 0 3.35.605 4.615 1.81l3.45-3.45C17.955 1.2 15.24 0 12 0 7.395 0 3.365 2.57 1.29 6.665l3.97 3.125C6.21 6.865 8.865 4.75 12 4.75z" /></svg>
 );
 
 export default function Home() {
-  // ログイン処理中のローディング状態を管理
-  const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const { isLoggedIn, isLoading, isUnauthorized } = useAuth(); 
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      if (currentUser) {
-        // ログイン済みの場合はダッシュボードへ遷移
-        router.push("/dashboard");
-      }
-      // 未ログインの場合は何もせず、このログイン画面を表示し続ける
-    });
-    return () => unsubscribe();
-  }, [router]);
+    if (isLoading) return;
+    if (isLoggedIn) {
+      router.push("/dashboard");
+    } else if (isUnauthorized) {
+      // 未登録ユーザーへの警告のみ表示（登録ボタンは消す）
+      toast.error("このアカウントはアクセス権がありません。");
+    }
+  }, [router, isLoggedIn, isLoading, isUnauthorized]);
 
   const handleLogin = async () => {
-    setIsLoading(true); // ログイン処理開始
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
-      // 成功した場合、上記のonAuthStateChangedが検知してリダイレクト処理を行う
     } catch (error) {
       console.error("ログインエラー:", error);
-      setIsLoading(false); // エラーが発生した場合のみローディングを解除
+      toast.error("ログインに失敗しました。");
     }
   };
 
   return (
-    // 画面全体を中央寄せにし、背景色を設定
     <main className="flex min-h-screen items-center justify-center bg-gray-100 p-4">
-      {/* ログインカード */}
-      <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-xl">
-        <div className="text-center">
-          {/* テキストベースのロゴ */}
-          <h1 className="text-5xl font-extrabold text-indigo-600">Comet</h1>
-          <p className="mt-2 text-xl font-semibold text-gray-700">
-            ログイン
-          </p>
-        </div>
+      <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-xl text-center">
+        <h1 className="text-5xl font-extrabold text-indigo-600 mb-2">Comet</h1>
+        <p className="text-xl font-semibold text-gray-700 mb-8">ログイン</p>
+        
+        {isUnauthorized && (
+          <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md text-sm">
+            アクセス権がありません。<br/>管理者に問い合わせてください。
+          </div>
+        )}
 
-        {/* ログインボタン */}
-        <div className="mt-8">
-          <button
-            onClick={handleLogin}
-            disabled={isLoading} // ローディング中はボタンを無効化
-            className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-3 text-lg font-medium text-gray-700 shadow-sm transition-all duration-150 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isLoading ? (
-              // ローディングスピナー
-              <svg
-                className="h-5 w-5 animate-spin text-indigo-600"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-            ) : (
-              // Googleアイコン
-              <GoogleIcon />
-            )}
-            <span>
-              {isLoading ? "処理中..." : "Googleアカウントでログイン"}
-            </span>
-          </button>
-        </div>
+        <button
+          onClick={handleLogin}
+          disabled={isLoading}
+          className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-3 text-lg font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+        >
+          {isLoading ? "確認中..." : <><GoogleIcon /> <span>Googleアカウントでログイン</span></>}
+        </button>
       </div>
     </main>
   );
