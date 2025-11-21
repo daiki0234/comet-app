@@ -68,7 +68,7 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
     // ★ 管理者のみ表示するメニュー (条件付きレンダリング)
     ...(isAdmin ? [
       { href: '/masters', label: 'マスタ設定', icon: <SettingsIcon /> },
-      { href: '/admin-settings', label: '職員管理', icon: <UsersIcon /> }, // ★ 追加
+      { href: '/admin-settings', label: 'スタッフ管理', icon: <UsersIcon /> }, // ★ 追加
     ] : []),
   ];
 
