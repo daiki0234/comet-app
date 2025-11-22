@@ -4,12 +4,29 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+// ★★★ 修正点： マップにすべてのページ定義を追加 ★★★
 const breadcrumbNameMap: { [key: string]: string } = {
   '/dashboard': 'ダッシュボード',
+  '/calendar': 'カレンダー',
+  
+  // 出欠記録関連
+  '/attendance': '出欠記録',
+  '/attendance/register-absence': '別日の欠席登録',
+  '/attendance/user-status': '利用者別出欠状況',
+  
+  // 利用者管理関連
   '/users': '利用者管理',
   '/users/new': '新規登録',
-  '/calendar': 'カレンダー',
-  '/attendance': '出欠記録',
+  
+  // マスタ・設定関連
+  '/masters': 'サービス情報マスタ',
+  '/admin-settings': '職員管理',
+  
+  // 支援管理関連
+  '/support': '支援管理',
+  '/support/records': '支援記録',
+  '/support/plans': '個別支援計画',
+  '/support/monitoring': 'モニタリング',
 };
 
 export function Breadcrumbs() {
@@ -26,7 +43,8 @@ export function Breadcrumbs() {
           const href = `/${pathSegments.slice(0, index + 1).join('/')}`;
           const isLast = index === pathSegments.length - 1;
           
-          // IDなどの動的なセグメントは、今のところ「詳細」と表示します
+          // 定義があればその名前を、なければ「詳細」を表示
+          // (例: /users/abc12345 のようなID部分は '詳細' になります)
           const name = breadcrumbNameMap[href] || '詳細';
 
           return (
