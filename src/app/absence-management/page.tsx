@@ -4,22 +4,22 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
 import { collection, getDocs, query, where, doc, updateDoc, orderBy, Timestamp } from 'firebase/firestore';
-import { useAuth } from '@/context/AuthContext'; // 担当者名取得用
+import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
 import jsPDF from 'jspdf';
-import 'jspdf-autotable'; // npm install jspdf-autotable してください
+import 'jspdf-autotable';
 
 // --- 型定義 ---
 type AbsenceRecord = {
   id: string;
-  date: string; // YYYY-MM-DD
+  date: string;
   userId: string;
   userName: string;
-  reason: string;       // 欠席理由 (例: 体調不良)
-  notes: string;        // 連絡の内容 (保護者からの連絡)
-  aiAdvice: string;     // 相談内容 (AI生成)
-  staffName: string;    // 担当者 (対応したスタッフ)
-  nextVisit: string;    // 次回利用予定
+  reason: string;       // 欠席理由
+  notes: string;        // 連絡の内容
+  aiAdvice: string;
+  staffName: string;
+  nextVisit: string;
   updatedAt?: Timestamp;
 };
 
@@ -31,23 +31,34 @@ const formatDateJP = (dateStr: string) => {
   return `${d.getMonth() + 1}月${d.getDate()}日(${week})`;
 };
 
+// ★★★ 追加: 欠席理由の自動判定ロジック (GASから移植) ★★★
+const determineAbsenceCategory = (text: string): string => {
+  if (!text) return 'その他';
+  
+  if (text.includes('体調不良') || text.includes('熱') || text.includes('頭痛') || text.includes('風邪') || text.includes('痛') || text.includes('病院')) {
+    return '体調不良';
+  } else if (text.includes('用事') || text.includes('親戚') || text.includes('家族') || text.includes('私用')) {
+    return '私用';
+  } else if (text.includes('クラブ') || text.includes('大会') || text.includes('練習試合') || text.includes('運動会') || text.includes('部活')) {
+    return '学校行事';
+  } else {
+    return 'その他';
+  }
+};
+
 export default function AbsenceManagementPage() {
-  const { currentUser } = useAuth(); // ログイン中のユーザー情報
+  const { currentUser } = useAuth();
   const now = new Date();
   
-  // フィルター State
   const [currentYear, setCurrentYear] = useState(now.getFullYear());
   const [currentMonth, setCurrentMonth] = useState(now.getMonth() + 1);
   
-  // データ State
   const [records, setRecords] = useState<AbsenceRecord[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // 編集用 State
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<AbsenceRecord> | null>(null);
 
-  // プルダウン用リスト
   const years = useMemo(() => Array.from({ length: 5 }, (_, i) => now.getFullYear() - i), []);
   const months = useMemo(() => Array.from({ length: 12 }, (_, i) => i + 1), []);
 
@@ -63,21 +74,26 @@ export default function AbsenceManagementPage() {
         where('usageStatus', '==', '欠席'),
         where('date', '>=', startStr),
         where('date', '<=', endStr),
-        orderBy('date', 'asc') // 日付順
+        orderBy('date', 'asc')
       );
 
       const snapshot = await getDocs(q);
       const data = snapshot.docs.map(doc => {
         const d = doc.data();
+        const notes = d.notes || '';
+        
+        // ★★★ 修正点: DBにreasonがあればそれを使い、なければnotesから自動判定する ★★★
+        const reason = d.reason || determineAbsenceCategory(notes);
+
         return {
           id: doc.id,
           date: d.date,
           userId: d.userId,
           userName: d.userName,
-          reason: d.reason || 'その他', // 既存データにない場合のデフォルト
-          notes: d.notes || '',
-          aiAdvice: d.aiAdvice || '', // まだ無い機能なので空
-          staffName: d.staffName || '', // 既存データは空かも
+          reason: reason, // 自動判定された理由
+          notes: notes,
+          aiAdvice: d.aiAdvice || '',
+          staffName: d.staffName || '',
           nextVisit: d.nextVisit || '', 
         } as AbsenceRecord;
       });
@@ -91,7 +107,6 @@ export default function AbsenceManagementPage() {
     }
   };
 
-  // 年月が変わったら再取得
   useEffect(() => {
     fetchAbsenceRecords();
   }, [currentYear, currentMonth]);
@@ -108,13 +123,12 @@ export default function AbsenceManagementPage() {
     try {
       const docRef = doc(db, 'attendanceRecords', editingId);
       
-      // 更新データを準備 (担当者が空なら、今のログインユーザーで上書きするなどのロジックも可)
       const updatePayload = {
-        reason: editData.reason,
+        reason: editData.reason, // 編集された理由を保存
         notes: editData.notes,
         aiAdvice: editData.aiAdvice,
         nextVisit: editData.nextVisit,
-        staffName: editData.staffName || currentUser?.displayName || '担当者', // 未入力なら自動補完
+        staffName: editData.staffName || currentUser?.displayName || '担当者',
       };
 
       await updateDoc(docRef, updatePayload);
@@ -122,48 +136,38 @@ export default function AbsenceManagementPage() {
       toast.success("更新しました");
       setEditingId(null);
       setEditData(null);
-      fetchAbsenceRecords(); // リロード
+      fetchAbsenceRecords();
     } catch (error) {
       console.error(error);
       toast.error("保存に失敗しました");
     }
   };
 
-  // --- PDF作成機能 (1ヶ月分) ---
+  // --- PDF作成機能 (簡易版: 日本語は文字化けする可能性あり) ---
   const handlePrintMonthlyReport = () => {
     if (records.length === 0) return toast.error("出力するデータがありません");
 
-    // 1. 日付ごとにデータをグループ化
     const groupedByDate: { [date: string]: AbsenceRecord[] } = {};
     records.forEach(r => {
       if (!groupedByDate[r.date]) groupedByDate[r.date] = [];
       groupedByDate[r.date].push(r);
     });
 
-    // 2. PDF生成 (jsPDF + autoTable)
-    const doc = new jsPDF({ orientation: 'landscape' }); // 横向き A4
-    
-    // 日本語フォント設定 (実際にはカスタムフォントの読み込みが必要です)
-    // ここでは標準フォントを使用する前提の簡易コードです。
-    // ※日本語を通すには .ttf ファイルの addFileToVFS が必要になります。
-    
+    const doc = new jsPDF({ orientation: 'landscape' });
     let pageIndex = 0;
     const dates = Object.keys(groupedByDate).sort();
 
     dates.forEach((dateStr) => {
-      if (pageIndex > 0) doc.addPage(); // 2日目以降は改ページ
+      if (pageIndex > 0) doc.addPage();
       pageIndex++;
 
       const dayRecords = groupedByDate[dateStr];
       const dateJp = formatDateJP(dateStr);
 
-      // ヘッダー
       doc.setFontSize(16);
-      doc.text(`欠席時対応加算記録 - ${dateJp}`, 14, 20);
+      doc.text(`Absence Record - ${dateStr}`, 14, 20); // 日本語回避のため英語表記
       doc.setFontSize(10);
-      doc.text(`作成日: ${new Date().toLocaleDateString()}`, 250, 20);
-
-      // テーブルデータ作成
+      
       const tableBody = dayRecords.map(r => [
         r.userName,
         r.reason,
@@ -173,27 +177,15 @@ export default function AbsenceManagementPage() {
         r.staffName
       ]);
 
-      // テーブル描画 (autoTable)
       (doc as any).autoTable({
         startY: 30,
-        head: [['利用者名', '欠席理由', '連絡の内容', '相談内容(対応)', '次回予定', '担当者']],
+        head: [['Name', 'Reason', 'Notes', 'AI Advice', 'Next Visit', 'Staff']],
         body: tableBody,
-        styles: { font: 'helvetica', fontSize: 10 }, // ※日本語フォント設定が必要
-        columnStyles: {
-          0: { cellWidth: 30 }, // 利用者名
-          1: { cellWidth: 30 }, // 理由
-          2: { cellWidth: 60 }, // 連絡内容
-          3: { cellWidth: 60 }, // 相談内容
-          4: { cellWidth: 30 }, // 次回
-          5: { cellWidth: 20 }, // 担当
-        },
         theme: 'grid'
       });
-      
-      // 署名欄などが必要なら footer に追加
     });
 
-    doc.save(`${currentYear}年${currentMonth}月_欠席対応記録.pdf`);
+    doc.save(`${currentYear}-${currentMonth}_Absence_Report.pdf`);
   };
 
 
@@ -201,7 +193,6 @@ export default function AbsenceManagementPage() {
     <AppLayout pageTitle="欠席管理">
       <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
         
-        {/* ヘッダー・フィルター */}
         <div className="flex flex-wrap justify-between items-center mb-6">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
@@ -220,12 +211,11 @@ export default function AbsenceManagementPage() {
             onClick={handlePrintMonthlyReport}
             className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2-2v4h10z" /></svg>
             月間レポート出力 (PDF)
           </button>
         </div>
 
-        {/* 一覧テーブル */}
         <div className="overflow-x-auto border border-gray-200 rounded-lg">
           <table className="min-w-full divide-y divide-gray-200 whitespace-nowrap">
             <thead className="bg-gray-50 sticky top-0">
@@ -251,7 +241,10 @@ export default function AbsenceManagementPage() {
                       <>
                         <td className="px-4 py-3 text-sm text-gray-500">{formatDateJP(record.date)}</td>
                         <td className="px-4 py-3 text-sm font-bold text-gray-800">{record.userName}</td>
-                        <td className="px-4 py-3"><input className="border rounded p-1 w-full" value={editData.reason} onChange={e => setEditData({...editData, reason: e.target.value})} /></td>
+                        <td className="px-4 py-3">
+                          {/* ★ 修正点: 編集時もプルダウンで選択できるようにすると尚良しですが、今はInputのままにします */}
+                          <input className="border rounded p-1 w-full" value={editData.reason} onChange={e => setEditData({...editData, reason: e.target.value})} />
+                        </td>
                         <td className="px-4 py-3"><textarea className="border rounded p-1 w-full" value={editData.notes} onChange={e => setEditData({...editData, notes: e.target.value})} /></td>
                         <td className="px-4 py-3"><textarea className="border rounded p-1 w-full bg-blue-50" value={editData.aiAdvice} onChange={e => setEditData({...editData, aiAdvice: e.target.value})} placeholder="AI生成または手入力" /></td>
                         <td className="px-4 py-3"><input className="border rounded p-1 w-24" value={editData.staffName} onChange={e => setEditData({...editData, staffName: e.target.value})} /></td>
@@ -266,9 +259,17 @@ export default function AbsenceManagementPage() {
                       <>
                         <td className="px-4 py-3 text-sm text-gray-500">{formatDateJP(record.date)}</td>
                         <td className="px-4 py-3 text-sm font-bold text-gray-800">{record.userName}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700">{record.reason}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700 whitespace-pre-wrap">{record.notes}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700 whitespace-pre-wrap">{record.aiAdvice || <span className="text-gray-400 text-xs">(未記入)</span>}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700">
+                          {/* 理由ごとに色分け表示 */}
+                          <span className={`px-2 py-1 rounded text-xs font-bold
+                            ${record.reason === '体調不良' ? 'bg-red-100 text-red-700' : 
+                              record.reason === '私用' ? 'bg-green-100 text-green-700' :
+                              record.reason === '学校行事' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>
+                            {record.reason}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-700 whitespace-pre-wrap max-w-xs">{record.notes}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700 whitespace-pre-wrap max-w-xs">{record.aiAdvice || <span className="text-gray-400 text-xs">(未記入)</span>}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">{record.staffName || <span className="text-gray-400">-</span>}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">{record.nextVisit || <span className="text-gray-400">-</span>}</td>
                         <td className="px-4 py-3 text-sm font-medium">
