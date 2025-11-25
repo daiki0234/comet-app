@@ -67,6 +67,9 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
         { href: '/attendance/user-status', label: '利用者別の出欠状況' },
       ]
     },
+    // ★★★ ここに追加 ★★★
+    { href: '/absence-management', label: '欠席管理', icon: <FileTextIcon /> },
+    // ★★★ 追加ここまで ★★★
     // ★★★ ここに追加: 支援管理メニュー ★★★
     {
       href: '/support',
