@@ -35,7 +35,7 @@ const formatDateJP = (dateStr: string) => {
 const determineAbsenceCategory = (text: string): string => {
   if (!text) return 'その他';
   
-  if (text.includes('体調') || text.includes('熱') || text.includes('頭痛') || text.includes('風邪') || text.includes('痛') || text.includes('病院')) {
+  if (text.includes('体調') || text.includes('熱') || text.includes('頭痛') || text.includes('風邪') || text.includes('痛') || text.includes('インフル') || text.includes('病院')) {
     return '体調不良';
   } else if (text.includes('用事') || text.includes('親戚') || text.includes('家族')  || text.includes('家庭') || text.includes('私用')) {
     return '私用';
@@ -194,6 +194,35 @@ export default function AbsenceManagementPage() {
     doc.save(`${currentYear}-${currentMonth}_Absence_Report.pdf`);
   };
 
+  // ★ AI生成ハンドラ
+  const handleGenerateAdvice = async () => {
+    if (!editData || !editData.userId || !editData.date) return;
+    
+    const loadingToast = toast.loading("AIが相談内容を考案中...");
+    try {
+      const res = await fetch('/api/absence/generate-advice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: editData.userId,
+          date: editData.date,
+          currentNote: editData.notes // 連絡の内容
+        })
+      });
+      
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      // 結果をフォームにセット
+      setEditData(prev => prev ? { ...prev, aiAdvice: data.advice } : null);
+      toast.success("生成しました", { id: loadingToast });
+
+    } catch (e) {
+      toast.error("生成に失敗しました", { id: loadingToast });
+      console.error(e);
+    }
+  };
+
 
   return (
     <AppLayout pageTitle="欠席管理">
@@ -252,7 +281,25 @@ export default function AbsenceManagementPage() {
                           <input className="border rounded p-1 w-full" value={editData.reason} onChange={e => setEditData({...editData, reason: e.target.value})} />
                         </td>
                         <td className="px-4 py-3"><textarea className="border rounded p-1 w-full" value={editData.notes} onChange={e => setEditData({...editData, notes: e.target.value})} /></td>
-                        <td className="px-4 py-3"><textarea className="border rounded p-1 w-full bg-blue-50" value={editData.aiAdvice} onChange={e => setEditData({...editData, aiAdvice: e.target.value})} placeholder="AI生成または手入力" /></td>
+                        <td className="px-4 py-3">
+                          <div className="relative">
+                            <textarea 
+                              className="border rounded p-1 w-full bg-blue-50 min-h-[80px]" 
+                              value={editData.aiAdvice} 
+                              onChange={e => setEditData({...editData, aiAdvice: e.target.value})} 
+                              placeholder="AI生成または手入力" 
+                            />
+                            {/* ★ AI作成ボタン ★ */}
+                            <button 
+                              onClick={handleGenerateAdvice}
+                              className="absolute bottom-2 right-2 bg-blue-600 text-white text-xs px-2 py-1 rounded hover:bg-blue-700 shadow-sm flex items-center gap-1"
+                              type="button"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 1 0 10 10H12V2z"/><path d="M12 2a10 10 0 0 1 10 10H12V2z"/><path d="M21.18 8.02c-1-2.3-2.85-4.17-5.16-5.18"/><path d="M2.82 16c1 2.3 2.85 4.17 5.16 5.18"/></svg>
+                              AI作成
+                            </button>
+                          </div>
+                        </td>
                         <td className="px-4 py-3"><input className="border rounded p-1 w-24" value={editData.staffName} onChange={e => setEditData({...editData, staffName: e.target.value})} /></td>
                         <td className="px-4 py-3"><input className="border rounded p-1 w-24" value={editData.nextVisit} onChange={e => setEditData({...editData, nextVisit: e.target.value})} /></td>
                         <td className="px-4 py-3 text-sm font-medium space-x-2">
