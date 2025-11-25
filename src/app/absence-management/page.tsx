@@ -82,16 +82,22 @@ export default function AbsenceManagementPage() {
         const d = doc.data();
         const notes = d.notes || '';
         
-        // ★★★ 修正点: DBにreasonがあればそれを使い、なければnotesから自動判定する ★★★
-        const reason = d.reason || determineAbsenceCategory(notes);
+// ★★★ 修正点： "欠席（n）｜" を削除してきれいにする ★★★
+        // 正規表現: 先頭にある "欠席" + "（数字）" + "｜" を空文字に置換
+        const rawNotes = d.notes || '';
+        const cleanNotes = rawNotes.replace(/^欠席（\d+）｜/, '');
+
+        // reasonの判定には元の rawNotes を使うか、cleanNotes を使うか
+        // (判定精度は変わらないはずですが、念のため cleanNotes で判定)
+        const reason = d.reason || determineAbsenceCategory(cleanNotes);
 
         return {
           id: doc.id,
           date: d.date,
           userId: d.userId,
           userName: d.userName,
-          reason: reason, // 自動判定された理由
-          notes: notes,
+          reason: reason,
+          notes: cleanNotes, // ★ きれいになった文言を表示・編集用にする
           aiAdvice: d.aiAdvice || '',
           staffName: d.staffName || '',
           nextVisit: d.nextVisit || '', 
