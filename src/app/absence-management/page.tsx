@@ -223,6 +223,34 @@ export default function AbsenceManagementPage() {
     }
   };
 
+  // --- 一括AI作成機能 ---
+  const handleBatchGenerate = async () => {
+    // 今日の日付 (YYYY-MM-DD) を取得
+    const d = new Date();
+    const todayStr = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    
+    // 確認ダイアログ
+    if (!confirm(`${todayStr} の欠席データに対して、AI相談内容を一括作成しますか？\n(未作成のものだけ処理されます)`)) return;
+
+    const loadingToast = toast.loading("AIが相談内容を一括作成中...");
+    try {
+      const res = await fetch('/api/absence/batch-generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetDate: todayStr })
+      });
+      const data = await res.json();
+      
+      if (data.error) throw new Error(data.error);
+      
+      toast.success(`${data.count}件の作成が完了しました`, { id: loadingToast });
+      fetchAbsenceRecords(); // 画面をリロードして結果を表示
+    } catch (e) {
+      console.error(e);
+      toast.error("一括作成に失敗しました", { id: loadingToast });
+    }
+  };
+
 
   return (
     <AppLayout pageTitle="欠席管理">
@@ -241,6 +269,15 @@ export default function AbsenceManagementPage() {
             </div>
             <span className="text-sm text-gray-500">{records.length} 件の欠席</span>
           </div>
+          <div className="flex gap-2">
+            {/* ★★★ AI一括作成ボタン ★★★ */}
+            <button 
+              onClick={handleBatchGenerate}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+              本日のAI一括作成
+            </button>
 
           <button 
             onClick={handlePrintMonthlyReport}
@@ -249,6 +286,7 @@ export default function AbsenceManagementPage() {
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2-2v4h10z" /></svg>
             月間レポート出力 (PDF)
           </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto border border-gray-200 rounded-lg">
