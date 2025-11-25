@@ -35,9 +35,9 @@ const formatDateJP = (dateStr: string) => {
 const determineAbsenceCategory = (text: string): string => {
   if (!text) return 'その他';
   
-  if (text.includes('体調不良') || text.includes('熱') || text.includes('頭痛') || text.includes('風邪') || text.includes('痛') || text.includes('病院')) {
+  if (text.includes('体調') || text.includes('熱') || text.includes('頭痛') || text.includes('風邪') || text.includes('痛') || text.includes('病院')) {
     return '体調不良';
-  } else if (text.includes('用事') || text.includes('親戚') || text.includes('家族') || text.includes('私用')) {
+  } else if (text.includes('用事') || text.includes('親戚') || text.includes('家族')  || text.includes('家庭') || text.includes('私用')) {
     return '私用';
   } else if (text.includes('クラブ') || text.includes('大会') || text.includes('練習試合') || text.includes('運動会') || text.includes('部活')) {
     return '学校行事';
