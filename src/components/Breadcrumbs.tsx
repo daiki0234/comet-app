@@ -14,6 +14,9 @@ const breadcrumbNameMap: { [key: string]: string } = {
   '/attendance/register-absence': '別日の欠席登録',
   '/attendance/user-status': '利用者別出欠状況',
   
+  //欠席管理
+  '/absence-management': '欠席管理',
+
   // 利用者管理関連
   '/users': '利用者管理',
   '/users/new': '新規登録',
