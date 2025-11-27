@@ -3,12 +3,15 @@ import { adminDb } from '@/lib/firebase/admin';
 
 const pad2 = (n: number) => n.toString().padStart(2, "0");
 
+// ★ 追加: 待機用関数 (指定したミリ秒だけ止まる)
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function callGemini(prompt: string) {
   const API_KEY = process.env.GEMINI_API_KEY;
   if (!API_KEY) throw new Error("API Key not found");
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -31,7 +34,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { year, month } = body;
 
-    console.log(`[Batch] Request received for: ${year}-${month}`); // ★ログ確認用
+    console.log(`[Batch] Request received for: ${year}-${month}`);
 
     if (!year || !month) {
       return NextResponse.json({ error: "year または month が不足しています" }, { status: 400 });
@@ -41,8 +44,6 @@ export async function POST(request: Request) {
     const lastDay = new Date(year, month, 0).getDate(); 
     const endStr = `${year}-${pad2(month)}-${lastDay}`;
 
-    console.log(`[Batch] Searching range: ${startStr} ~ ${endStr}`); // ★ログ確認用
-
     const recordsRef = adminDb.collection('attendanceRecords');
     const snapshot = await recordsRef
       .where('usageStatus', '==', '欠席')
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
       .where('date', '<=', endStr)
       .get();
 
-    console.log(`[Batch] Found documents: ${snapshot.size}`); // ★ログ確認用：ここで0なら検索条件かデータがおかしい
+    console.log(`[Batch] Found documents: ${snapshot.size}`);
 
     if (snapshot.empty) {
       return NextResponse.json({ message: "対象データなし", count: 0 });
@@ -61,16 +62,14 @@ export async function POST(request: Request) {
     for (const docSnap of snapshot.docs) {
       const data = docSnap.data();
       
-      // ▼▼▼ 修正点：スキップ条件をコメントアウト（強制上書きモード） ▼▼▼
-      // if (data.aiAdvice) {
-      //   console.log(`[Batch] Skipping ${data.userName} (Already exists)`);
-      //   continue; 
-      // }
-      // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+      // ★ 復活: すでに作成済みならスキップ (エラー時の再開用)
+      if (data.aiAdvice) {
+        console.log(`[Batch] Skipping ${data.userName} (Already exists)`);
+        continue; 
+      }
 
       console.log(`[Batch] Processing: ${data.userName} (${data.date})`);
 
-      // 過去の相談内容を取得
       const historySnap = await recordsRef
         .where('userId', '==', data.userId)
         .where('usageStatus', '==', '欠席')
@@ -108,8 +107,13 @@ ${promptInputPart}
         const advice = await callGemini(prompt);
         await docSnap.ref.update({ aiAdvice: advice });
         processedCount++;
-      } catch (err) {
+
+        // ★★★ 追加: 速度制限回避のため、1件処理するごとに3秒休む ★★★
+        await sleep(3000); 
+
+      } catch (err: any) {
         console.error(`[Batch] Error processing ${docSnap.id}:`, err);
+        // エラーが出てもログだけ出して次へ (Rate Limitの場合は次もコケる可能性が高いですが)
       }
     }
 
