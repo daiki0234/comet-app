@@ -385,7 +385,6 @@ export default function CalendarPage() {
     setIsPrinting(true);
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'b5' });
     
-    // ★★★ 修正点: ここで型を指定して null を許容させる ★★★
     const records: (PseudoRecord | null)[] = dailyScheduledUsers.map(event => ({
       userName: event.userName, date: (event.dateKeyJst ?? ''), usageStatus: event.type as any, notes: '',
     }));
@@ -472,11 +471,70 @@ export default function CalendarPage() {
     );
   };
 
+  // ★★★ 修正箇所: ここを復活させました ★★★
   const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month') return null;
     const key = toDateString(date);
-    // 既存のスケジュールタイル表示ロジック...
-    return null; // ※scheduleタブ用は省略していますが、managementTileContentと同様です
+    const day = eventsMap.get(key);
+
+    // 1. 全体の予定数 (Managementと同じロジックで計算)
+    let totalCountsContent = null;
+    if (day) {
+      const counts: Record<ScheduleStatus, number> = {
+        放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0,
+      };
+      
+      let houkagoHasJihatsu = false;
+      let kyukouHasJihatsu = false;
+
+      day.items.forEach(it => { 
+        counts[it.status] = (counts[it.status] ?? 0) + 1; 
+        const u = users.find(user => user.id === it.userId);
+        if (u && u.serviceJihatsu === '利用中') {
+          if (it.status === '放課後') houkagoHasJihatsu = true;
+          else if (it.status === '休校日') kyukouHasJihatsu = true;
+        }
+      });
+
+      const houkagoCount = counts['放課後'];
+      const kyukouCount = counts['休校日'];
+      const waitCount = counts['キャンセル待ち'];
+
+      const Badge = () => (
+        <span className="ml-1 text-[9px] text-blue-600 font-bold border border-blue-400 rounded px-[1px] bg-white">
+          児発含
+        </span>
+      );
+
+      totalCountsContent = (
+        <div className="text-[12px] leading-tight text-gray-700">
+          {houkagoCount > 0 && <div className="flex items-center flex-wrap">放課後: {houkagoCount}人 {houkagoHasJihatsu && <Badge />}</div>}
+          {kyukouCount > 0 && <div className="flex items-center flex-wrap">休校日: {kyukouCount}人 {kyukouHasJihatsu && <Badge />}</div>}
+          {waitCount > 0 && <div>ｷｬﾝｾﾙ: {waitCount}人</div>}
+        </div>
+      );
+    }
+
+    // 2. 選択中利用者の予定
+    let userStatusContent = null;
+    if (selectedUserId) {
+      const event = userSchedule.find(e => e.dateKeyJst === key);
+      if (event) {
+        const textColor = USER_SCHEDULE_TEXT_CLASS[event.type] || 'text-black';
+        userStatusContent = (
+          <div className={`mt-1 text-[14px] font-bold ${textColor}`}>
+            {event.type}
+          </div>
+        );
+      }
+    }
+
+    return (
+      <div className="px-1 pb-1">
+        {totalCountsContent}
+        {userStatusContent}
+      </div>
+    );
   };
 
   return (
@@ -487,7 +545,6 @@ export default function CalendarPage() {
           <button onClick={() => setActiveTab('schedule')} className={`py-3 px-4 text-sm font-medium ${activeTab === 'schedule' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>利用者予定管理</button>
         </div>
         
-        {/* モーダル等は省略せずそのまま使用 */}
         {isModalOpen && selectedDateForModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-[200]">
             <div className="relative z-[201] bg-white p-6 rounded-lg shadow-xl">
@@ -651,7 +708,14 @@ export default function CalendarPage() {
                 {selectedUserId && <button onClick={() => setSelectedUserId('')} className="ml-2 text-xs text-gray-500 hover:text-red-500 underline">解除</button>}
               </div>
 
-              <Calendar className="comet-cal" onChange={(value) => { let clickedDate: Date | null = null; if (Array.isArray(value)) { clickedDate = value[0] as Date; } else { clickedDate = value as Date; } if (!clickedDate) return; setSelectedDate(clickedDate); handleDateClickForScheduling(clickedDate); }} value={selectedDate} locale="ja-JP" calendarType="hebrew" tileClassName={scheduleTileClassName} tileContent={(props) => (<div className="pointer-events-none relative z-0">{/* scheduleTileContent */}</div>)} />
+              <Calendar className="comet-cal" onChange={(value) => { let clickedDate: Date | null = null; if (Array.isArray(value)) { clickedDate = value[0] as Date; } else { clickedDate = value as Date; } if (!clickedDate) return; setSelectedDate(clickedDate); handleDateClickForScheduling(clickedDate); }} value={selectedDate} locale="ja-JP" calendarType="hebrew" tileClassName={scheduleTileClassName} 
+              // ★★★ 修正箇所: ここを復活させました ★★★
+              tileContent={(props) => (
+                <div className="pointer-events-none relative z-0">
+                  {scheduleTileContent(props)}
+                </div>
+              )}
+              />
             </div>
           )}
         </div>
