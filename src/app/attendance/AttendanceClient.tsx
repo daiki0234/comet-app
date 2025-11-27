@@ -274,8 +274,10 @@ export default function AttendancePage() {
 
   // 自動AI生成関数
   const generateAndSaveAdvice = async (docId: string, userId: string, date: string, notes: string) => {
+    // ★ 修正: try の外でトーストを表示開始する（これで catch からも参照できます）
+    const aiToast = toast.loading('AIが相談内容を自動生成中...');
+    
     try {
-      const aiToast = toast.loading('AIが相談内容を自動生成中...');
       const res = await fetch('/api/absence/generate-advice', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, date, currentNote: notes })
@@ -285,8 +287,13 @@ export default function AttendancePage() {
         await updateDoc(doc(db, 'attendanceRecords', docId), { aiAdvice: data.advice });
         toast.success('AI相談内容を保存しました', { id: aiToast });
         fetchData();
-      } else { toast.dismiss(aiToast); }
-    } catch (e) { toast.error('AI生成失敗', { id: aiToast }); }
+      } else { 
+        toast.dismiss(aiToast); 
+      }
+    } catch (e) { 
+      // これでエラー時も正しくローディングを上書きできます
+      toast.error('AI生成失敗', { id: aiToast }); 
+    }
   };
 
   const handleAddAbsence = async () => {
