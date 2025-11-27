@@ -1,17 +1,12 @@
-// src/app/api/absence/batch-generate/route.ts
-
 import { NextResponse } from 'next/server';
-// ★ 管理者権限(adminDb)を使用
 import { adminDb } from '@/lib/firebase/admin'; 
 
-// 2桁埋めヘルパー
 const pad2 = (n: number) => n.toString().padStart(2, "0");
 
 async function callGemini(prompt: string) {
   const API_KEY = process.env.GEMINI_API_KEY;
   if (!API_KEY) throw new Error("API Key not found");
 
-  // モデルは安定版の 1.5-flash を使用
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
     {
@@ -28,33 +23,34 @@ async function callGemini(prompt: string) {
     }
     throw new Error(data.error.message || "AI生成エラー");
   }
-
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "生成エラー";
 }
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    // ★ 変更点: targetDate ではなく year, month を受け取る
     const { year, month } = body;
+
+    console.log(`[Batch] Request received for: ${year}-${month}`); // ★ログ確認用
 
     if (!year || !month) {
       return NextResponse.json({ error: "year または month が不足しています" }, { status: 400 });
     }
 
-    // 月の範囲を計算 (例: 2025-11-01 〜 2025-11-30)
     const startStr = `${year}-${pad2(month)}-01`;
-    const lastDay = new Date(year, month, 0).getDate(); // 月の最終日を取得
+    const lastDay = new Date(year, month, 0).getDate(); 
     const endStr = `${year}-${pad2(month)}-${lastDay}`;
 
-    const recordsRef = adminDb.collection('attendanceRecords');
+    console.log(`[Batch] Searching range: ${startStr} ~ ${endStr}`); // ★ログ確認用
 
-    // ★ 変更点: その月の「欠席」データを範囲検索
+    const recordsRef = adminDb.collection('attendanceRecords');
     const snapshot = await recordsRef
       .where('usageStatus', '==', '欠席')
       .where('date', '>=', startStr)
       .where('date', '<=', endStr)
       .get();
+
+    console.log(`[Batch] Found documents: ${snapshot.size}`); // ★ログ確認用：ここで0なら検索条件かデータがおかしい
 
     if (snapshot.empty) {
       return NextResponse.json({ message: "対象データなし", count: 0 });
@@ -65,14 +61,20 @@ export async function POST(request: Request) {
     for (const docSnap of snapshot.docs) {
       const data = docSnap.data();
       
-      // 既にAIアドバイスがある場合はスキップ (無駄な消費を防ぐため)
-      if (data.aiAdvice) continue; 
+      // ▼▼▼ 修正点：スキップ条件をコメントアウト（強制上書きモード） ▼▼▼
+      // if (data.aiAdvice) {
+      //   console.log(`[Batch] Skipping ${data.userName} (Already exists)`);
+      //   continue; 
+      // }
+      // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+      console.log(`[Batch] Processing: ${data.userName} (${data.date})`);
 
       // 過去の相談内容を取得
       const historySnap = await recordsRef
         .where('userId', '==', data.userId)
         .where('usageStatus', '==', '欠席')
-        .where('date', '<', data.date) // その欠席日より前
+        .where('date', '<', data.date)
         .orderBy('date', 'desc')
         .limit(5)
         .get();
@@ -104,12 +106,10 @@ ${promptInputPart}
 
       try {
         const advice = await callGemini(prompt);
-        // Firestore更新
         await docSnap.ref.update({ aiAdvice: advice });
         processedCount++;
       } catch (err) {
-        console.error(`Error processing ${docSnap.id}:`, err);
-        // 1件エラーが出ても他は続ける
+        console.error(`[Batch] Error processing ${docSnap.id}:`, err);
       }
     }
 
