@@ -6,20 +6,24 @@ import { db } from '@/lib/firebase/firebase';
 import { collection, getDocs, query, where, doc, updateDoc, orderBy, Timestamp } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
+
+// ★ PDF生成用ライブラリ
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import html2canvas from 'html2canvas';
+import { createRoot } from 'react-dom/client';
+import { AbsenceReportSheet } from '@/components/AbsenceReportSheet'; // ★ 作成したコンポーネント
 
 // --- 型定義 ---
 type AbsenceRecord = {
   id: string;
-  date: string;
+  date: string; // YYYY-MM-DD
   userId: string;
   userName: string;
   reason: string;       // 欠席理由
   notes: string;        // 連絡の内容
-  aiAdvice: string;
-  staffName: string;
-  nextVisit: string;
+  aiAdvice: string;     // 相談内容
+  staffName: string;    // 担当者
+  nextVisit: string;    // 次回利用予定
   updatedAt?: Timestamp;
 };
 
@@ -31,13 +35,12 @@ const formatDateJP = (dateStr: string) => {
   return `${d.getMonth() + 1}月${d.getDate()}日(${week})`;
 };
 
-// ★★★ 追加: 欠席理由の自動判定ロジック (GASから移植) ★★★
+// 欠席理由の自動判定ロジック
 const determineAbsenceCategory = (text: string): string => {
   if (!text) return 'その他';
-  
-  if (text.includes('体調') || text.includes('熱') || text.includes('頭痛') || text.includes('風邪') || text.includes('痛') || text.includes('インフル') || text.includes('病院')) {
+  if (text.includes('体調不良') || text.includes('熱') || text.includes('頭痛') || text.includes('風邪') || text.includes('痛') || text.includes('病院')) {
     return '体調不良';
-  } else if (text.includes('用事') || text.includes('親戚') || text.includes('家族')  || text.includes('家庭') || text.includes('私用')) {
+  } else if (text.includes('用事') || text.includes('親戚') || text.includes('家族') || text.includes('私用')) {
     return '私用';
   } else if (text.includes('クラブ') || text.includes('大会') || text.includes('練習試合') || text.includes('運動会') || text.includes('部活')) {
     return '学校行事';
@@ -81,15 +84,7 @@ export default function AbsenceManagementPage() {
       const data = snapshot.docs.map(doc => {
         const d = doc.data();
         const notes = d.notes || '';
-        
-// ★★★ 修正点： "欠席（n）｜" を削除してきれいにする ★★★
-        // 正規表現: 先頭にある "欠席" + "（数字）" + "｜" を空文字に置換
-        const rawNotes = d.notes || '';
-        const cleanNotes = rawNotes.replace(/^欠席（\d+）｜/, '');
-
-        // reasonの判定には元の rawNotes を使うか、cleanNotes を使うか
-        // (判定精度は変わらないはずですが、念のため cleanNotes で判定)
-        const reason = d.reason || determineAbsenceCategory(cleanNotes);
+        const reason = d.reason || determineAbsenceCategory(notes);
 
         return {
           id: doc.id,
@@ -97,7 +92,7 @@ export default function AbsenceManagementPage() {
           userId: d.userId,
           userName: d.userName,
           reason: reason,
-          notes: cleanNotes, // ★ きれいになった文言を表示・編集用にする
+          notes: notes,
           aiAdvice: d.aiAdvice || '',
           staffName: d.staffName || '',
           nextVisit: d.nextVisit || '', 
@@ -128,17 +123,14 @@ export default function AbsenceManagementPage() {
     if (!editingId || !editData) return;
     try {
       const docRef = doc(db, 'attendanceRecords', editingId);
-      
       const updatePayload = {
-        reason: editData.reason, // 編集された理由を保存
+        reason: editData.reason,
         notes: editData.notes,
         aiAdvice: editData.aiAdvice,
         nextVisit: editData.nextVisit,
         staffName: editData.staffName || currentUser?.displayName || '担当者',
       };
-
       await updateDoc(docRef, updatePayload);
-      
       toast.success("更新しました");
       setEditingId(null);
       setEditData(null);
@@ -149,55 +141,9 @@ export default function AbsenceManagementPage() {
     }
   };
 
-  // --- PDF作成機能 (簡易版: 日本語は文字化けする可能性あり) ---
-  const handlePrintMonthlyReport = () => {
-    if (records.length === 0) return toast.error("出力するデータがありません");
-
-    const groupedByDate: { [date: string]: AbsenceRecord[] } = {};
-    records.forEach(r => {
-      if (!groupedByDate[r.date]) groupedByDate[r.date] = [];
-      groupedByDate[r.date].push(r);
-    });
-
-    const doc = new jsPDF({ orientation: 'landscape' });
-    let pageIndex = 0;
-    const dates = Object.keys(groupedByDate).sort();
-
-    dates.forEach((dateStr) => {
-      if (pageIndex > 0) doc.addPage();
-      pageIndex++;
-
-      const dayRecords = groupedByDate[dateStr];
-      const dateJp = formatDateJP(dateStr);
-
-      doc.setFontSize(16);
-      doc.text(`Absence Record - ${dateStr}`, 14, 20); // 日本語回避のため英語表記
-      doc.setFontSize(10);
-      
-      const tableBody = dayRecords.map(r => [
-        r.userName,
-        r.reason,
-        r.notes,
-        r.aiAdvice,
-        r.nextVisit,
-        r.staffName
-      ]);
-
-      (doc as any).autoTable({
-        startY: 30,
-        head: [['Name', 'Reason', 'Notes', 'AI Advice', 'Next Visit', 'Staff']],
-        body: tableBody,
-        theme: 'grid'
-      });
-    });
-
-    doc.save(`${currentYear}-${currentMonth}_Absence_Report.pdf`);
-  };
-
-  // ★ AI生成ハンドラ
+  // --- 個別AI作成 (編集画面用) ---
   const handleGenerateAdvice = async () => {
     if (!editData || !editData.userId || !editData.date) return;
-    
     const loadingToast = toast.loading("AIが相談内容を考案中...");
     try {
       const res = await fetch('/api/absence/generate-advice', {
@@ -206,26 +152,20 @@ export default function AbsenceManagementPage() {
         body: JSON.stringify({
           userId: editData.userId,
           date: editData.date,
-          currentNote: editData.notes // 連絡の内容
+          currentNote: editData.notes
         })
       });
-      
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-
-      // 結果をフォームにセット
       setEditData(prev => prev ? { ...prev, aiAdvice: data.advice } : null);
       toast.success("生成しました", { id: loadingToast });
-
-    } catch (e) {
-      toast.error("生成に失敗しました", { id: loadingToast });
-      console.error(e);
+    } catch (e: any) {
+      toast.error(`生成失敗: ${e.message}`, { id: loadingToast });
     }
   };
 
-// --- 一括AI作成機能 (月単位・不足情報補完) ---
+  // --- 一括AI作成機能 (月単位・不足情報補完) ---
   const handleBatchGenerate = async () => {
-    // 現在選択中の年月を確認
     if (!confirm(`${currentYear}年${currentMonth}月 の欠席データに対して、\nAI相談・担当者・次回予定を一括作成しますか？\n(空欄の項目のみ補完されます)`)) return;
 
     const loadingToast = toast.loading("データを処理中... (AI生成が含まれる場合は時間がかかります)");
@@ -236,19 +176,79 @@ export default function AbsenceManagementPage() {
         body: JSON.stringify({ 
           year: currentYear, 
           month: currentMonth,
-          // ★ 追加: 実行者の名前を送る (未設定なら '担当者' とする)
           staffName: currentUser?.displayName || '担当者'
         })
       });
       const data = await res.json();
-      
       if (data.error) throw new Error(data.error);
-      
       toast.success(`${data.count}件のデータを更新しました`, { id: loadingToast });
-      fetchAbsenceRecords(); // 画面をリロード
+      fetchAbsenceRecords();
     } catch (e: any) {
       console.error(e);
       toast.error(`作成失敗: ${e.message}`, { id: loadingToast });
+    }
+  };
+
+  // --- ★★★ PDF一括出力 (日付ごと1枚) ★★★ ---
+  const handlePrintMonthlyReport = async () => {
+    if (records.length === 0) return toast.error("出力するデータがありません");
+
+    const loadingToast = toast.loading("PDFを生成中...");
+
+    try {
+      // 1. 日付ごとにデータをグループ化
+      const groupedByDate: { [date: string]: AbsenceRecord[] } = {};
+      records.forEach(r => {
+        if (!groupedByDate[r.date]) groupedByDate[r.date] = [];
+        groupedByDate[r.date].push(r);
+      });
+
+      const dates = Object.keys(groupedByDate).sort();
+      
+      // 2. PDF初期化 (A4 横向き)
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+      // 3. 日付ごとにループしてページ作成
+      for (let i = 0; i < dates.length; i++) {
+        const dateStr = dates[i];
+        const dayRecords = groupedByDate[dateStr];
+
+        // 一時的なDOMを作成
+        const tempDiv = document.createElement('div');
+        tempDiv.style.width = '297mm'; // A4横幅
+        tempDiv.style.position = 'absolute';
+        tempDiv.style.left = '-9999px'; // 画面外に配置
+        document.body.appendChild(tempDiv);
+
+        // Reactコンポーネントをレンダリング
+        const root = createRoot(tempDiv);
+        // ★ ここで `flushSync` 的な処理が必要なため、Promiseで待機
+        await new Promise<void>((resolve) => {
+          root.render(<AbsenceReportSheet dateStr={dateStr} records={dayRecords} />);
+          // レンダリング完了を少し待つ (画像読み込み等はないが念のため)
+          setTimeout(resolve, 500);
+        });
+
+        // html2canvas で画像化
+        const canvas = await html2canvas(tempDiv, { scale: 2 }); // 解像度2倍できれいに
+        const imgData = canvas.toDataURL('image/png');
+
+        // PDFに追加
+        if (i > 0) pdf.addPage(); // 2ページ目以降は改ページ
+        pdf.addImage(imgData, 'PNG', 0, 0, 297, 210);
+
+        // お掃除
+        root.unmount();
+        document.body.removeChild(tempDiv);
+      }
+
+      // 4. 保存
+      pdf.save(`${currentYear}年${currentMonth}月_欠席対応記録.pdf`);
+      toast.success("PDFをダウンロードしました", { id: loadingToast });
+
+    } catch (e) {
+      console.error("PDF Generation Error:", e);
+      toast.error("PDFの生成に失敗しました", { id: loadingToast });
     }
   };
 
@@ -257,39 +257,43 @@ export default function AbsenceManagementPage() {
     <AppLayout pageTitle="欠席管理">
       <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
         
-        <div className="flex flex-wrap justify-between items-center mb-6">
+        {/* ヘッダー・フィルター */}
+        <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <label className="font-bold text-gray-700">対象月:</label>
-              <select value={currentYear} onChange={(e) => setCurrentYear(Number(e.target.value))} className="p-2 border rounded-md">
+              <select value={currentYear} onChange={(e) => setCurrentYear(Number(e.target.value))} className="p-2 border rounded-md bg-white">
                 {years.map(y => <option key={y} value={y}>{y}年</option>)}
               </select>
-              <select value={currentMonth} onChange={(e) => setCurrentMonth(Number(e.target.value))} className="p-2 border rounded-md">
+              <select value={currentMonth} onChange={(e) => setCurrentMonth(Number(e.target.value))} className="p-2 border rounded-md bg-white">
                 {months.map(m => <option key={m} value={m}>{m}月</option>)}
               </select>
             </div>
             <span className="text-sm text-gray-500">{records.length} 件の欠席</span>
           </div>
+
           <div className="flex gap-2">
-            {/* ★★★ ボタンのラベルを変更 ★★★ */}
+            {/* AI一括作成ボタン */}
             <button 
               onClick={handleBatchGenerate}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2 shadow-sm"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
               今月のAI一括作成
             </button>
 
-          <button 
-            onClick={handlePrintMonthlyReport}
-            className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2-2v4h10z" /></svg>
-            月間レポート出力 (PDF)
-          </button>
+            {/* PDF出力ボタン */}
+            <button 
+              onClick={handlePrintMonthlyReport}
+              className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2 shadow-sm"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+              月間レポート出力 (PDF)
+            </button>
           </div>
         </div>
 
+        {/* 一覧テーブル */}
         <div className="overflow-x-auto border border-gray-200 rounded-lg">
           <table className="min-w-full divide-y divide-gray-200 whitespace-nowrap">
             <thead className="bg-gray-50 sticky top-0">
@@ -315,10 +319,7 @@ export default function AbsenceManagementPage() {
                       <>
                         <td className="px-4 py-3 text-sm text-gray-500">{formatDateJP(record.date)}</td>
                         <td className="px-4 py-3 text-sm font-bold text-gray-800">{record.userName}</td>
-                        <td className="px-4 py-3">
-                          {/* ★ 修正点: 編集時もプルダウンで選択できるようにすると尚良しですが、今はInputのままにします */}
-                          <input className="border rounded p-1 w-full" value={editData.reason} onChange={e => setEditData({...editData, reason: e.target.value})} />
-                        </td>
+                        <td className="px-4 py-3"><input className="border rounded p-1 w-full" value={editData.reason} onChange={e => setEditData({...editData, reason: e.target.value})} /></td>
                         <td className="px-4 py-3"><textarea className="border rounded p-1 w-full" value={editData.notes} onChange={e => setEditData({...editData, notes: e.target.value})} /></td>
                         <td className="px-4 py-3">
                           <div className="relative">
@@ -328,13 +329,11 @@ export default function AbsenceManagementPage() {
                               onChange={e => setEditData({...editData, aiAdvice: e.target.value})} 
                               placeholder="AI生成または手入力" 
                             />
-                            {/* ★ AI作成ボタン ★ */}
                             <button 
                               onClick={handleGenerateAdvice}
                               className="absolute bottom-2 right-2 bg-blue-600 text-white text-xs px-2 py-1 rounded hover:bg-blue-700 shadow-sm flex items-center gap-1"
                               type="button"
                             >
-                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 1 0 10 10H12V2z"/><path d="M12 2a10 10 0 0 1 10 10H12V2z"/><path d="M21.18 8.02c-1-2.3-2.85-4.17-5.16-5.18"/><path d="M2.82 16c1 2.3 2.85 4.17 5.16 5.18"/></svg>
                               AI作成
                             </button>
                           </div>
@@ -352,7 +351,6 @@ export default function AbsenceManagementPage() {
                         <td className="px-4 py-3 text-sm text-gray-500">{formatDateJP(record.date)}</td>
                         <td className="px-4 py-3 text-sm font-bold text-gray-800">{record.userName}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">
-                          {/* 理由ごとに色分け表示 */}
                           <span className={`px-2 py-1 rounded text-xs font-bold
                             ${record.reason === '体調不良' ? 'bg-red-100 text-red-700' : 
                               record.reason === '私用' ? 'bg-green-100 text-green-700' :
