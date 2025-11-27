@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect ,useMemo} from 'react';
 import { useRouter } from 'next/navigation';
 import { db } from '@/lib/firebase/firebase';
 import { collection, addDoc, getDocs, query, where, orderBy } from 'firebase/firestore';
@@ -36,6 +36,9 @@ export default function RegisterAbsencePage() {
   
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // ★★★ 追加: 検索用State ★★★
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+
   useEffect(() => {
     const fetchUsers = async () => {
       try {
@@ -51,6 +54,18 @@ export default function RegisterAbsencePage() {
     };
     fetchUsers();
   }, []);
+
+  // ★★★ 追加: 検索ロジック ★★★
+  const searchMatchedUsers = useMemo(() => {
+    const queryText = userSearchQuery.trim();
+    if (!queryText) return []; // 未入力時は候補を出さない
+    
+    const lowerQuery = queryText.toLowerCase();
+    return users.filter(user => {
+      const fullName = `${user.lastName || ''}${user.firstName || ''}`;
+      return fullName.toLowerCase().includes(lowerQuery);
+    });
+  }, [userSearchQuery, users]);
 
   const handleAddAbsence = async () => {
     if (!absentUserId) { return toast.error('利用者を選択してください。'); }
@@ -139,19 +154,56 @@ export default function RegisterAbsencePage() {
             />
           </div>
 
-          {/* 利用者 */}
+          {/* 利用者 (検索式に変更) */}
           <div>
             <label className="block text-sm font-bold text-gray-700 mb-1">利用者 <span className="text-red-500">*</span></label>
-            <select 
-              value={absentUserId} 
-              onChange={(e) => setAbsentUserId(e.target.value)} 
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-            >
-              <option value="">選択してください</option>
-              {users.map(user => (
-                <option key={user.id} value={user.id}>{user.lastName} {user.firstName}</option>
-              ))}
-            </select>
+            <div className="relative">
+              <input
+                type="text"
+                value={userSearchQuery}
+                onChange={(e) => setUserSearchQuery(e.target.value)}
+                placeholder={users.length > 0 ? "氏名を入力して検索..." : "読み込み中..."}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100"
+                disabled={!!absentUserId} // 選択済みなら入力不可にする
+              />
+              
+              {/* 候補リスト */}
+              {!absentUserId && userSearchQuery && searchMatchedUsers.length > 0 && (
+                <ul className="absolute top-full left-0 z-10 w-full max-h-60 overflow-y-auto bg-white border border-blue-400 rounded-md shadow-lg mt-1">
+                  {searchMatchedUsers.map(user => (
+                    <li
+                      key={user.id}
+                      onClick={() => {
+                        setAbsentUserId(user.id);
+                        setUserSearchQuery(''); // 入力をクリア
+                      }}
+                      className="p-3 cursor-pointer hover:bg-blue-100 text-sm border-b last:border-b-0"
+                    >
+                      {user.lastName} {user.firstName}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* 選択中の表示 & 解除ボタン */}
+            {absentUserId && (
+              <div className="mt-2 flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
+                <span className="text-blue-700 font-bold">
+                  選択中: {users.find(u => u.id === absentUserId)?.lastName} {users.find(u => u.id === absentUserId)?.firstName}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAbsentUserId('');
+                    setUserSearchQuery('');
+                  }}
+                  className="text-sm text-gray-500 hover:text-red-500 underline"
+                >
+                  解除
+                </button>
+              </div>
+            )}
           </div>
 
           {/* ★ 手動の「欠席理由」入力欄を削除しました ★ */}
