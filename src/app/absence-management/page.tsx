@@ -209,7 +209,7 @@ export default function AbsenceManagementPage() {
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
       
       // ★ 1ページあたりの最大件数 (文字量にもよりますが 8〜10件が安全)
-      const RECORDS_PER_PAGE = 8;
+      const RECORDS_PER_PAGE = 3;
 
       let isFirstPage = true; // 最初のページ追加制御用
 
