@@ -223,28 +223,28 @@ export default function AbsenceManagementPage() {
     }
   };
 
-  // --- 一括AI作成機能 ---
-// --- 一括AI作成機能 (月単位) ---
+// --- 一括AI作成機能 (月単位・不足情報補完) ---
   const handleBatchGenerate = async () => {
     // 現在選択中の年月を確認
-    if (!confirm(`${currentYear}年${currentMonth}月 の欠席データに対して、\nAI相談内容を一括作成しますか？\n(未作成のものだけ処理されます)`)) return;
+    if (!confirm(`${currentYear}年${currentMonth}月 の欠席データに対して、\nAI相談・担当者・次回予定を一括作成しますか？\n(空欄の項目のみ補完されます)`)) return;
 
-    const loadingToast = toast.loading("AIが相談内容を一括作成中...(時間がかかります)");
+    const loadingToast = toast.loading("データを処理中... (AI生成が含まれる場合は時間がかかります)");
     try {
       const res = await fetch('/api/absence/batch-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // ★ 変更点: date ではなく year, month を送る
         body: JSON.stringify({ 
           year: currentYear, 
-          month: currentMonth 
+          month: currentMonth,
+          // ★ 追加: 実行者の名前を送る (未設定なら '担当者' とする)
+          staffName: currentUser?.displayName || '担当者'
         })
       });
       const data = await res.json();
       
       if (data.error) throw new Error(data.error);
       
-      toast.success(`${data.count}件の作成が完了しました`, { id: loadingToast });
+      toast.success(`${data.count}件のデータを更新しました`, { id: loadingToast });
       fetchAbsenceRecords(); // 画面をリロード
     } catch (e: any) {
       console.error(e);
