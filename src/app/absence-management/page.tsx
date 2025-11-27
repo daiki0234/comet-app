@@ -224,30 +224,31 @@ export default function AbsenceManagementPage() {
   };
 
   // --- 一括AI作成機能 ---
+// --- 一括AI作成機能 (月単位) ---
   const handleBatchGenerate = async () => {
-    // 今日の日付 (YYYY-MM-DD) を取得
-    const d = new Date();
-    const todayStr = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-    
-    // 確認ダイアログ
-    if (!confirm(`${todayStr} の欠席データに対して、AI相談内容を一括作成しますか？\n(未作成のものだけ処理されます)`)) return;
+    // 現在選択中の年月を確認
+    if (!confirm(`${currentYear}年${currentMonth}月 の欠席データに対して、\nAI相談内容を一括作成しますか？\n(未作成のものだけ処理されます)`)) return;
 
-    const loadingToast = toast.loading("AIが相談内容を一括作成中...");
+    const loadingToast = toast.loading("AIが相談内容を一括作成中...(時間がかかります)");
     try {
       const res = await fetch('/api/absence/batch-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetDate: todayStr })
+        // ★ 変更点: date ではなく year, month を送る
+        body: JSON.stringify({ 
+          year: currentYear, 
+          month: currentMonth 
+        })
       });
       const data = await res.json();
       
       if (data.error) throw new Error(data.error);
       
       toast.success(`${data.count}件の作成が完了しました`, { id: loadingToast });
-      fetchAbsenceRecords(); // 画面をリロードして結果を表示
-    } catch (e) {
+      fetchAbsenceRecords(); // 画面をリロード
+    } catch (e: any) {
       console.error(e);
-      toast.error("一括作成に失敗しました", { id: loadingToast });
+      toast.error(`作成失敗: ${e.message}`, { id: loadingToast });
     }
   };
 
@@ -270,13 +271,13 @@ export default function AbsenceManagementPage() {
             <span className="text-sm text-gray-500">{records.length} 件の欠席</span>
           </div>
           <div className="flex gap-2">
-            {/* ★★★ AI一括作成ボタン ★★★ */}
+            {/* ★★★ ボタンのラベルを変更 ★★★ */}
             <button 
               onClick={handleBatchGenerate}
               className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-              本日のAI一括作成
+              今月のAI一括作成
             </button>
 
           <button 
