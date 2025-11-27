@@ -167,6 +167,21 @@ export default function CalendarPage() {
 // ===== 既存のステートの近くに追記 =====
 const [events, setEvents] = useState<any[]>([]);
 
+// ★★★ 追加: 検索用のステート ★★★
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+
+  // ★★★ 追加: 検索ロジック ★★★
+  const searchMatchedUsers = useMemo(() => {
+    const queryText = userSearchQuery.trim();
+    if (!queryText) return []; // 未入力時はリストを出さない（すっきりさせるため）
+    
+    const lowerQuery = queryText.toLowerCase();
+    return users.filter(user => {
+      const fullName = `${user.lastName || ''}${user.firstName || ''}`;
+      return fullName.toLowerCase().includes(lowerQuery);
+    });
+  }, [userSearchQuery, users]);
+
 useEffect(() => {
     const y = new Date().getFullYear();
     fetchJapaneseHolidays(y)
@@ -990,14 +1005,50 @@ const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
           {activeTab === 'schedule' && (
             <div>
               <p className="text-gray-600 mb-4">カレンダーから利用予定日をクリックして登録・編集します。</p>
-              <div className="mb-4">
+              {/* ★★★ 修正点: プルダウンを検索式リストに変更 ★★★ */}
+              <div className="mb-4 relative">
                 <label className="mr-2 font-medium">利用者:</label>
-                <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} className="p-2 border border-gray-300 rounded-md">
-                  <option value="">選択してください</option>
-                  {users.map(user => (<option key={user.id} value={user.id}>{user.lastName} {user.firstName}</option>))}
-                </select>
+                <div className="inline-block relative">
+                  <input
+                    type="text"
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    placeholder={users.length > 0 ? "氏名を入力して検索..." : "読み込み中..."}
+                    className="p-2 border border-gray-300 rounded-md w-64"
+                  />
+                  {userSearchQuery && searchMatchedUsers.length > 0 && (
+                    <ul className="absolute top-full left-0 z-50 w-full max-h-60 overflow-y-auto bg-white border border-blue-400 rounded-md shadow-lg mt-1">
+                      {searchMatchedUsers.map(user => (
+                        <li 
+                          key={user.id} 
+                          onClick={() => { 
+                            setSelectedUserId(user.id); 
+                            setUserSearchQuery(''); // 選択したら検索文字はクリア
+                          }}
+                          className="p-2 cursor-pointer hover:bg-blue-100 text-sm border-b last:border-b-0"
+                        >
+                          {user.lastName} {user.firstName}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                {/* 選択中の表示 */}
+                {selectedUserId && (
+                  <span className="ml-2 text-blue-600 font-bold">
+                    選択中: {users.find(u => u.id === selectedUserId)?.lastName} {users.find(u => u.id === selectedUserId)?.firstName}
+                  </span>
+                )}
+                {selectedUserId && (
+                  <button 
+                    onClick={() => setSelectedUserId('')} 
+                    className="ml-2 text-xs text-gray-500 hover:text-red-500 underline"
+                  >
+                    解除
+                  </button>
+                )}
               </div>
-              {/* ★ 変更点①： {selectedUserId && ...} の制約を解除 */}
+              {/* ★★★ 修正ここまで ★★★ */}
               {/* ★★★ 修正箇所②： Calendar コンポーネント ★★★ */}
               <Calendar 
                 className="comet-cal" 
