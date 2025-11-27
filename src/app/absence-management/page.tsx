@@ -189,7 +189,7 @@ export default function AbsenceManagementPage() {
     }
   };
 
-  // --- ★★★ PDF一括出力 (A4縦・ハンコ欄あり) ★★★ ---
+  // --- ★★★ PDF一括出力 (日付ごと・複数ページ対応) ★★★ ---
   const handlePrintMonthlyReport = async () => {
     if (records.length === 0) return toast.error("出力するデータがありません");
 
@@ -205,43 +205,66 @@ export default function AbsenceManagementPage() {
 
       const dates = Object.keys(groupedByDate).sort();
       
-      // ★ 修正: PDF初期化 (A4 縦向き portrait)
+      // PDF初期化 (A4 縦向き)
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      
+      // ★ 1ページあたりの最大件数 (文字量にもよりますが 8〜10件が安全)
+      const RECORDS_PER_PAGE = 8;
 
-      // 3. 日付ごとにループしてページ作成
+      let isFirstPage = true; // 最初のページ追加制御用
+
+      // 2. 日付ごとにループ
       for (let i = 0; i < dates.length; i++) {
         const dateStr = dates[i];
-        const dayRecords = groupedByDate[dateStr];
+        const allDayRecords = groupedByDate[dateStr];
 
-        // 一時的なDOMを作成
-        const tempDiv = document.createElement('div');
-        // ★ 修正: 幅をA4縦に合わせる (210mm)
-        tempDiv.style.width = '210mm'; 
-        tempDiv.style.position = 'absolute';
-        tempDiv.style.left = '-9999px'; 
-        document.body.appendChild(tempDiv);
+        // ★ データを分割 (ページネーション)
+        const totalPages = Math.ceil(allDayRecords.length / RECORDS_PER_PAGE);
 
-        // Reactコンポーネントをレンダリング
-        const root = createRoot(tempDiv);
-        await new Promise<void>((resolve) => {
-          root.render(<AbsenceReportSheet dateStr={dateStr} records={dayRecords} />);
-          setTimeout(resolve, 500);
-        });
+        for (let pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+          // 現在のページに表示するデータを取り出す
+          const chunk = allDayRecords.slice(
+            pageIndex * RECORDS_PER_PAGE,
+            (pageIndex + 1) * RECORDS_PER_PAGE
+          );
 
-        // html2canvas で画像化 (解像度2倍)
-        const canvas = await html2canvas(tempDiv, { scale: 2 });
-        const imgData = canvas.toDataURL('image/png');
+          // DOM作成
+          const tempDiv = document.createElement('div');
+          tempDiv.style.width = '210mm'; 
+          tempDiv.style.position = 'absolute';
+          tempDiv.style.left = '-9999px'; 
+          document.body.appendChild(tempDiv);
 
-        if (i > 0) pdf.addPage();
-        
-        // ★ 修正: 画像サイズをA4縦 (210x297) に合わせる
-        pdf.addImage(imgData, 'PNG', 0, 0, 210, 297);
+          const root = createRoot(tempDiv);
+          await new Promise<void>((resolve) => {
+            root.render(
+              <AbsenceReportSheet 
+                dateStr={dateStr} 
+                records={chunk} 
+                pageIndex={pageIndex}
+                totalPages={totalPages}
+              />
+            );
+            setTimeout(resolve, 500);
+          });
 
-        root.unmount();
-        document.body.removeChild(tempDiv);
+          // 画像化
+          const canvas = await html2canvas(tempDiv, { scale: 2 });
+          const imgData = canvas.toDataURL('image/png');
+
+          // 2枚目以降なら改ページ
+          if (!isFirstPage) {
+            pdf.addPage();
+          }
+          isFirstPage = false; // フラグを折る
+
+          pdf.addImage(imgData, 'PNG', 0, 0, 210, 297);
+
+          root.unmount();
+          document.body.removeChild(tempDiv);
+        }
       }
 
-      // 4. 保存
       pdf.save(`${currentYear}年${currentMonth}月_欠席対応記録.pdf`);
       toast.success("PDFをダウンロードしました", { id: loadingToast });
 

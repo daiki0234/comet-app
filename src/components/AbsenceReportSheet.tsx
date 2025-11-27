@@ -1,6 +1,5 @@
 import React from 'react';
 
-// データ型定義
 type AbsenceRecord = {
   id: string;
   date: string;
@@ -13,11 +12,12 @@ type AbsenceRecord = {
 };
 
 type Props = {
-  dateStr: string; // "YYYY-MM-DD"
+  dateStr: string;
   records: AbsenceRecord[];
+  pageIndex: number; // ★ 追加: 現在のページ番号 (0始まり)
+  totalPages: number; // ★ 追加: 総ページ数
 };
 
-// 日付フォーマット関数
 const formatDateJP = (dateStr: string) => {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -25,59 +25,56 @@ const formatDateJP = (dateStr: string) => {
   return `${d.getFullYear()}年 ${d.getMonth() + 1}月 ${d.getDate()}日 (${week})`;
 };
 
-// ★ 文言整形関数 ("欠席(n)|" を除去)
 const cleanNoteText = (text: string) => {
   if (!text) return '';
-  // 全角・半角の「欠席(数字)|」または「欠席|」を除去
   return text
     .replace(/^欠席[（(]\d+[）)]\s*[｜\|]\s*/u, '')
     .replace(/^欠席\s*[｜\|]\s*/u, '');
 };
 
-export const AbsenceReportSheet: React.FC<Props> = ({ dateStr, records }) => {
+export const AbsenceReportSheet: React.FC<Props> = ({ dateStr, records, pageIndex, totalPages }) => {
   return (
-    // ★ 修正: A4縦 (210mm x 297mm)
     <div 
       className="bg-white text-black box-border relative"
       style={{ width: '210mm', height: '297mm', padding: '15mm' }}
     >
       {/* タイトルと日付 */}
-      <div className="mb-2">
+      <div className="mb-2 relative">
         <h1 className="text-2xl font-bold text-center mb-2">欠席時対応加算記録</h1>
         <div className="text-right text-sm font-semibold">
           日付：{formatDateJP(dateStr)}
+          {/* 複数ページある場合のみページ番号を表示 */}
+          {totalPages > 1 && (
+            <span className="ml-4 text-gray-600">
+              ({pageIndex + 1} / {totalPages})
+            </span>
+          )}
         </div>
       </div>
 
-      {/* ★ 追加: 押印欄 (管理者・児発管) */}
+      {/* 押印欄 (管理者・児発管) - 全ページに表示するか、1枚目だけにするかはお好みですが、通常は全ページにあってOK */}
       <div className="flex justify-end mb-4">
         <div className="flex border border-black">
-          {/* 管理者枠 */}
           <div className="border-r border-black w-20">
-            <div className="bg-gray-200 text-center text-xs py-1 border-b border-black font-bold">
-              管理者
-            </div>
-            <div className="h-16"></div> {/* ハンコスペース */}
+            <div className="bg-gray-200 text-center text-xs py-1 border-b border-black font-bold">管理者</div>
+            <div className="h-16"></div>
           </div>
-          {/* 児発管枠 */}
           <div className="w-20">
-            <div className="bg-gray-200 text-center text-xs py-1 border-b border-black font-bold">
-              児発管
-            </div>
-            <div className="h-16"></div> {/* ハンコスペース */}
+            <div className="bg-gray-200 text-center text-xs py-1 border-b border-black font-bold">児発管</div>
+            <div className="h-16"></div>
           </div>
         </div>
       </div>
 
-      {/* テーブル (縦向き用に幅などを調整) */}
+      {/* テーブル */}
       <table className="w-full border-collapse border border-black text-xs table-fixed">
         <colgroup>
-          <col style={{ width: '8%' }} />  {/* No. */}
+          <col style={{ width: '6%' }} />  {/* No. */}
           <col style={{ width: '15%' }} /> {/* 氏名 */}
           <col style={{ width: '12%' }} /> {/* 理由 */}
-          <col style={{ width: '25%' }} /> {/* 連絡内容 */}
-          <col style={{ width: '25%' }} /> {/* 相談援助 */}
-          <col style={{ width: '15%' }} /> {/* 次回/担当 */}
+          <col style={{ width: '27%' }} /> {/* 連絡内容 */}
+          <col style={{ width: '27%' }} /> {/* 相談援助 */}
+          <col style={{ width: '13%' }} /> {/* 次回/担当 */}
         </colgroup>
         <thead>
           <tr className="bg-gray-200 text-center h-8">
@@ -92,19 +89,19 @@ export const AbsenceReportSheet: React.FC<Props> = ({ dateStr, records }) => {
         <tbody>
           {records.map((rec, index) => (
             <tr key={rec.id} className="align-top">
-              <td className="border border-black p-2 text-center">{index + 1}</td>
+              {/* 通し番号 (ページをまたいでも連番になるように計算) */}
+              <td className="border border-black p-2 text-center">
+                {(pageIndex * 8) + index + 1} 
+                {/* ※「8」は1ページの最大件数と合わせてください */}
+              </td>
               <td className="border border-black p-2 font-bold break-words">{rec.userName}</td>
               <td className="border border-black p-2 text-center">{rec.reason}</td>
-              
-              {/* ★ 修正: 整形したテキストを表示 */}
               <td className="border border-black p-2 whitespace-pre-wrap break-words leading-snug">
                 {cleanNoteText(rec.notes)}
               </td>
-              
               <td className="border border-black p-2 whitespace-pre-wrap break-words leading-snug">
                 {rec.aiAdvice}
               </td>
-              
               <td className="border border-black p-2 text-center">
                 <div className="mb-2 border-b border-dotted border-gray-400 pb-1">
                   {rec.nextVisit || '-'}
@@ -113,22 +110,10 @@ export const AbsenceReportSheet: React.FC<Props> = ({ dateStr, records }) => {
               </td>
             </tr>
           ))}
-          
-          {/* 余白行 (レイアウト維持のため数行追加) */}
-          {records.length < 6 && Array.from({ length: 6 - records.length }).map((_, i) => (
-            <tr key={`empty-${i}`} className="h-16">
-              <td className="border border-black"></td>
-              <td className="border border-black"></td>
-              <td className="border border-black"></td>
-              <td className="border border-black"></td>
-              <td className="border border-black"></td>
-              <td className="border border-black"></td>
-            </tr>
-          ))}
+          {/* ★ 空白行の生成コードは削除しました ★ */}
         </tbody>
       </table>
 
-      {/* フッター */}
       <div className="absolute bottom-10 right-10 text-[10px] text-gray-400">
         Comet System / 出力日: {new Date().toLocaleDateString()}
       </div>
