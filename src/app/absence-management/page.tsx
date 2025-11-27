@@ -189,7 +189,7 @@ export default function AbsenceManagementPage() {
     }
   };
 
-  // --- ★★★ PDF一括出力 (日付ごと1枚) ★★★ ---
+  // --- ★★★ PDF一括出力 (A4縦・ハンコ欄あり) ★★★ ---
   const handlePrintMonthlyReport = async () => {
     if (records.length === 0) return toast.error("出力するデータがありません");
 
@@ -205,8 +205,8 @@ export default function AbsenceManagementPage() {
 
       const dates = Object.keys(groupedByDate).sort();
       
-      // 2. PDF初期化 (A4 横向き)
-      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      // ★ 修正: PDF初期化 (A4 縦向き portrait)
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
       // 3. 日付ごとにループしてページ作成
       for (let i = 0; i < dates.length; i++) {
@@ -215,29 +215,28 @@ export default function AbsenceManagementPage() {
 
         // 一時的なDOMを作成
         const tempDiv = document.createElement('div');
-        tempDiv.style.width = '297mm'; // A4横幅
+        // ★ 修正: 幅をA4縦に合わせる (210mm)
+        tempDiv.style.width = '210mm'; 
         tempDiv.style.position = 'absolute';
-        tempDiv.style.left = '-9999px'; // 画面外に配置
+        tempDiv.style.left = '-9999px'; 
         document.body.appendChild(tempDiv);
 
         // Reactコンポーネントをレンダリング
         const root = createRoot(tempDiv);
-        // ★ ここで `flushSync` 的な処理が必要なため、Promiseで待機
         await new Promise<void>((resolve) => {
           root.render(<AbsenceReportSheet dateStr={dateStr} records={dayRecords} />);
-          // レンダリング完了を少し待つ (画像読み込み等はないが念のため)
           setTimeout(resolve, 500);
         });
 
-        // html2canvas で画像化
-        const canvas = await html2canvas(tempDiv, { scale: 2 }); // 解像度2倍できれいに
+        // html2canvas で画像化 (解像度2倍)
+        const canvas = await html2canvas(tempDiv, { scale: 2 });
         const imgData = canvas.toDataURL('image/png');
 
-        // PDFに追加
-        if (i > 0) pdf.addPage(); // 2ページ目以降は改ページ
-        pdf.addImage(imgData, 'PNG', 0, 0, 297, 210);
+        if (i > 0) pdf.addPage();
+        
+        // ★ 修正: 画像サイズをA4縦 (210x297) に合わせる
+        pdf.addImage(imgData, 'PNG', 0, 0, 210, 297);
 
-        // お掃除
         root.unmount();
         document.body.removeChild(tempDiv);
       }
