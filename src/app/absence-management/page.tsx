@@ -230,22 +230,28 @@ export default function AbsenceManagementPage() {
       // 2. PDF初期化 (A4 縦向き)
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
-// ★★★ 修正: フォント読み込みロジック ★★★
+// ★ フォント読み込みロジックの修正 ★
       try {
-        const fontUrl = '/fonts/NotoSansJP-Regular.ttf'; // publicフォルダからの相対パス
+        const fontUrl = '/fonts/NotoSansJP-Regular.ttf';
         const fontRes = await fetch(fontUrl);
         if (!fontRes.ok) throw new Error("フォントファイルが見つかりません");
         
         const fontBuffer = await fontRes.arrayBuffer();
-        const fontBase64 = arrayBufferToBase64(fontBuffer); // Bufferを使わずに変換
+        const fontBase64 = arrayBufferToBase64(fontBuffer);
 
-        // フォント登録 (ファイル名, ID, スタイル)
+        // フォントをVFSに追加
         pdf.addFileToVFS('NotoSansJP.ttf', fontBase64);
+
+        // 1. 標準フォントとして登録
         pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'normal');
+        
+        // ★★★ 2. 太字(bold)としても同じファイルを登録（これでエラー回避！） ★★★
+        pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'bold');
+
         pdf.setFont('NotoSansJP'); // メインフォントに設定
       } catch (err) {
         console.error("Font loading error:", err);
-        toast.error("フォントの読み込みに失敗しました。文字化けする可能性があります。", { id: loadingToast });
+        toast.error("フォントの読み込みに失敗しました。", { id: loadingToast });
       }
 
       // 3. 日付ごとにページ作成
