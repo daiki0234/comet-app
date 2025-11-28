@@ -7,8 +7,10 @@ import { collection, getDocs, query, where, doc, updateDoc, orderBy, Timestamp }
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
 
+
 // ★ PDF生成用ライブラリ
 import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 import html2canvas from 'html2canvas';
 import { createRoot } from 'react-dom/client';
 import { AbsenceReportSheet } from '@/components/AbsenceReportSheet'; // ★ 作成したコンポーネント
@@ -164,6 +166,8 @@ export default function AbsenceManagementPage() {
     }
   };
 
+  
+
   // --- 一括AI作成機能 (月単位・不足情報補完) ---
   const handleBatchGenerate = async () => {
     if (!confirm(`${currentYear}年${currentMonth}月 の欠席データに対して、\nAI相談・担当者・次回予定を一括作成しますか？\n(空欄の項目のみ補完されます)`)) return;
@@ -189,7 +193,14 @@ export default function AbsenceManagementPage() {
     }
   };
 
-  // --- ★★★ PDF一括出力 (日付ごと・複数ページ対応) ★★★ ---
+  const cleanNoteText = (text: string) => {
+  if (!text) return '';
+  return text
+    .replace(/^欠席[（(]\d+[）)]\s*[｜\|]\s*/u, '')
+    .replace(/^欠席\s*[｜\|]\s*/u, '');
+};
+
+  // --- ★★★ PDF一括出力 (軽量版: jspdf-autotable使用) ★★★ ---
   const handlePrintMonthlyReport = async () => {
     if (records.length === 0) return toast.error("出力するデータがありません");
 
@@ -205,72 +216,102 @@ export default function AbsenceManagementPage() {
 
       const dates = Object.keys(groupedByDate).sort();
       
-      // PDF初期化 (A4 縦向き)
+      // 2. PDF初期化 (A4 縦向き)
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+      // ★ 日本語フォントの読み込み (public/fonts/NotoSansJP-Regular.ttf が必要)
+      // ※ Vercel環境などではURLが変わる可能性があるため window.location.origin を使用
+      const fontUrl = `${window.location.origin}/fonts/NotoSansJP-Regular.ttf`;
+      const fontBytes = await fetch(fontUrl).then(res => res.arrayBuffer());
       
-      // ★ 1ページあたりの最大件数 (文字量にもよりますが 8〜10件が安全)
-      const RECORDS_PER_PAGE = 3;
+      // フォントをPDFに追加 (ファイル名: NotoSansJP.ttf, フォント名: NotoSansJP)
+      pdf.addFileToVFS('NotoSansJP.ttf', Buffer.from(fontBytes).toString('base64'));
+      pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'normal');
+      pdf.setFont('NotoSansJP'); // これで日本語が使えるようになる
 
-      let isFirstPage = true; // 最初のページ追加制御用
-
-      // 2. 日付ごとにループ
+      // 3. 日付ごとにページ作成
       for (let i = 0; i < dates.length; i++) {
         const dateStr = dates[i];
-        const allDayRecords = groupedByDate[dateStr];
+        const dayRecords = groupedByDate[dateStr];
+        const dateJp = formatDateJP(dateStr);
 
-        // ★ データを分割 (ページネーション)
-        const totalPages = Math.ceil(allDayRecords.length / RECORDS_PER_PAGE);
+        if (i > 0) pdf.addPage();
 
-        for (let pageIndex = 0; pageIndex < totalPages; pageIndex++) {
-          // 現在のページに表示するデータを取り出す
-          const chunk = allDayRecords.slice(
-            pageIndex * RECORDS_PER_PAGE,
-            (pageIndex + 1) * RECORDS_PER_PAGE
-          );
+        // --- ヘッダー描画 ---
+        pdf.setFontSize(16);
+        pdf.text('欠席時対応加算記録', 105, 20, { align: 'center' }); // 中央寄せ
+        
+        pdf.setFontSize(10);
+        pdf.text(`日付：${dateJp}`, 195, 28, { align: 'right' });
 
-          // DOM作成
-          const tempDiv = document.createElement('div');
-          tempDiv.style.width = '210mm'; 
-          tempDiv.style.position = 'absolute';
-          tempDiv.style.left = '-9999px'; 
-          document.body.appendChild(tempDiv);
+        // --- 押印欄 (枠線と文字を手動描画) ---
+        // 管理者枠
+        pdf.rect(150, 35, 20, 20); // x, y, w, h
+        pdf.text('管理者', 160, 40, { align: 'center' });
+        pdf.line(150, 42, 170, 42); // 横線
 
-          const root = createRoot(tempDiv);
-          await new Promise<void>((resolve) => {
-            root.render(
-              <AbsenceReportSheet 
-                dateStr={dateStr} 
-                records={chunk} 
-                pageIndex={pageIndex}
-                totalPages={totalPages}
-              />
-            );
-            setTimeout(resolve, 500);
-          });
+        // 児発管枠
+        pdf.rect(170, 35, 20, 20);
+        pdf.text('児発管', 180, 40, { align: 'center' });
+        pdf.line(170, 42, 190, 42);
 
-          // 画像化
-          const canvas = await html2canvas(tempDiv, { scale: 2 });
-          const imgData = canvas.toDataURL('image/png');
+        // --- テーブルデータ作成 ---
+        const tableBody = dayRecords.map((rec, index) => [
+          index + 1,
+          rec.userName,
+          rec.reason,
+          cleanNoteText(rec.notes), // "欠席(n)|" 除去済み
+          rec.aiAdvice,
+          `${rec.nextVisit || '-'}\n${rec.staffName}` // 次回予定と担当者を同じセルに改行して入れる
+        ]);
 
-          // 2枚目以降なら改ページ
-          if (!isFirstPage) {
-            pdf.addPage();
-          }
-          isFirstPage = false; // フラグを折る
+        // --- テーブル描画 (autoTable) ---
+        (pdf as any).autoTable({
+          startY: 60, // 描画開始位置
+          head: [['No.', '利用者氏名', '欠席理由', '連絡の内容', '相談援助内容 (対応)', '次回予定 / 担当']],
+          body: tableBody,
+          styles: { 
+            font: 'NotoSansJP', // 日本語フォント指定
+            fontSize: 9,
+            cellPadding: 3,
+            lineColor: [0, 0, 0], // 黒枠
+            lineWidth: 0.1,
+            valign: 'top',
+            overflow: 'linebreak' // 自動折り返し
+          },
+          headStyles: {
+            fillColor: [230, 230, 230], // 薄いグレー背景
+            textColor: [0, 0, 0], // 黒文字
+            fontStyle: 'bold',
+            halign: 'center'
+          },
+          columnStyles: {
+            0: { cellWidth: 10, halign: 'center' }, // No.
+            1: { cellWidth: 30, fontStyle: 'bold' }, // 氏名
+            2: { cellWidth: 20, halign: 'center' }, // 理由
+            3: { cellWidth: 45 }, // 連絡内容
+            4: { cellWidth: 50 }, // 相談内容
+            5: { cellWidth: 30, halign: 'center' }  // 次回/担当
+          },
+          theme: 'grid', // 格子状のデザイン
+          // ページまたぎ制御
+          margin: { top: 20, bottom: 20, left: 15, right: 15 },
+        });
 
-          pdf.addImage(imgData, 'PNG', 0, 0, 210, 297);
-
-          root.unmount();
-          document.body.removeChild(tempDiv);
-        }
+        // フッター
+        pdf.setFontSize(8);
+        pdf.setTextColor(150);
+        pdf.text(`Comet System / 出力日: ${new Date().toLocaleDateString()}`, 195, 290, { align: 'right' });
+        pdf.setTextColor(0); // 色戻し
       }
 
+      // 4. 保存
       pdf.save(`${currentYear}年${currentMonth}月_欠席対応記録.pdf`);
       toast.success("PDFをダウンロードしました", { id: loadingToast });
 
-    } catch (e) {
+    } catch (e: any) {
       console.error("PDF Generation Error:", e);
-      toast.error("PDFの生成に失敗しました", { id: loadingToast });
+      toast.error(`PDF生成失敗: ${e.message}`, { id: loadingToast });
     }
   };
 
