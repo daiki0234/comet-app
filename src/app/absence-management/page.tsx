@@ -10,7 +10,7 @@ import toast from 'react-hot-toast';
 
 // ★ PDF生成用ライブラリ
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
 import { createRoot } from 'react-dom/client';
 import { AbsenceReportSheet } from '@/components/AbsenceReportSheet'; // ★ 作成したコンポーネント
@@ -265,36 +265,35 @@ export default function AbsenceManagementPage() {
           `${rec.nextVisit || '-'}\n${rec.staffName}` // 次回予定と担当者を同じセルに改行して入れる
         ]);
 
-        // --- テーブル描画 (autoTable) ---
-        (pdf as any).autoTable({
-          startY: 60, // 描画開始位置
+        // ★ autoTableを関数として実行
+        autoTable(pdf, {
+          startY: 60,
           head: [['No.', '利用者氏名', '欠席理由', '連絡の内容', '相談援助内容 (対応)', '次回予定 / 担当']],
           body: tableBody,
           styles: { 
-            font: 'NotoSansJP', // 日本語フォント指定
+            font: 'NotoSansJP',
             fontSize: 9,
             cellPadding: 3,
-            lineColor: [0, 0, 0], // 黒枠
+            lineColor: [0, 0, 0],
             lineWidth: 0.1,
             valign: 'top',
-            overflow: 'linebreak' // 自動折り返し
+            overflow: 'linebreak'
           },
           headStyles: {
-            fillColor: [230, 230, 230], // 薄いグレー背景
-            textColor: [0, 0, 0], // 黒文字
+            fillColor: [230, 230, 230],
+            textColor: [0, 0, 0],
             fontStyle: 'bold',
             halign: 'center'
           },
           columnStyles: {
-            0: { cellWidth: 10, halign: 'center' }, // No.
-            1: { cellWidth: 30, fontStyle: 'bold' }, // 氏名
-            2: { cellWidth: 20, halign: 'center' }, // 理由
-            3: { cellWidth: 45 }, // 連絡内容
-            4: { cellWidth: 50 }, // 相談内容
-            5: { cellWidth: 30, halign: 'center' }  // 次回/担当
+            0: { cellWidth: 10, halign: 'center' },
+            1: { cellWidth: 30, fontStyle: 'bold' },
+            2: { cellWidth: 20, halign: 'center' },
+            3: { cellWidth: 45 },
+            4: { cellWidth: 50 },
+            5: { cellWidth: 30, halign: 'center' }
           },
-          theme: 'grid', // 格子状のデザイン
-          // ページまたぎ制御
+          theme: 'grid',
           margin: { top: 20, bottom: 20, left: 15, right: 15 },
         });
 
