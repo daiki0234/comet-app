@@ -221,7 +221,7 @@ export default function AbsenceManagementPage() {
 
       // ★ 日本語フォントの読み込み (public/fonts/NotoSansJP-Regular.ttf が必要)
       // ※ Vercel環境などではURLが変わる可能性があるため window.location.origin を使用
-      const fontUrl = `${window.location.origin}/fonts/NotoSansJP-Regular.ttf`;
+      const fontUrl = `${window.location.origin}/public/fonts/NotoSansJP-Regular.ttf`;
       const fontBytes = await fetch(fontUrl).then(res => res.arrayBuffer());
       
       // フォントをPDFに追加 (ファイル名: NotoSansJP.ttf, フォント名: NotoSansJP)
