@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
 import toast from "react-hot-toast";
 import Link from "next/link";
@@ -19,6 +19,7 @@ import {
  } from "firebase/firestore";
  import { computeExtension, stripExtensionNote } from '@/lib/attendance/extension';
 
+// JSTのyyyy-mm-ddキー
 const jstDateKey = (d: Date = new Date()) => {
   const tzDate = new Date(d.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
   const y = tzDate.getFullYear();
@@ -69,8 +70,6 @@ export default function AttendancePage() {
   const [viewDate, setViewDate] = useState(new Date());
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [todaysScheduledUsers, setTodaysScheduledUsers] = useState<User[]>([]);
-  
-  // ★ 追加: 欠席回数を管理するマップ (Key: recordId, Value: 回数)
   const [absenceCounts, setAbsenceCounts] = useState<Record<string, number>>({});
 
   const [scanResult, setScanResult] = useState('スキャン待機中...');
@@ -78,7 +77,13 @@ export default function AttendancePage() {
   const [absenceReason, setAbsenceReason] = useState('');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<AttendanceRecord | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+  
+  // ★ 修正: isProcessingをStateではなくRefで管理して即時性を高める
+  const [isProcessingState, setIsProcessingState] = useState(false); // UI表示用
+  const isScanningRef = useRef(false); // ロジック判定用
+
+  // ★ 追加: 検索用State
+  const [userSearchQuery, setUserSearchQuery] = useState('');
 
   // データ取得ロジック
   const fetchData = useCallback(async () => {
@@ -95,11 +100,10 @@ export default function AttendancePage() {
     records.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
     setAttendanceRecords(records);
 
-    // ★★★ 追加: 表示している日に欠席者がいる場合、その回数を計算する ★★★
+    // 欠席回数計算
     const absentRecords = records.filter(r => r.usageStatus === '欠席');
     if (absentRecords.length > 0) {
-      const targetMonth = dateStr.substring(0, 7); // YYYY-MM
-      // その月の「全ての欠席記録」を取得する (一括取得して計算)
+      const targetMonth = dateStr.substring(0, 7);
       const monthQuery = query(
         collection(db, 'attendanceRecords'),
         where('month', '==', targetMonth),
@@ -109,14 +113,9 @@ export default function AttendancePage() {
       const allMonthAbsences = monthSnap.docs.map(d => ({ id: d.id, ...d.data() } as AttendanceRecord));
 
       const newCounts: Record<string, number> = {};
-      
-      // 表示されている各欠席者について、「今月何回目か」を計算
       absentRecords.forEach(target => {
-        // その人の今月の欠席記録を抽出
         const myAbsences = allMonthAbsences.filter(a => a.userId === target.userId);
-        // 日付順に並べ替え
         myAbsences.sort((a, b) => a.date.localeCompare(b.date));
-        // 自分が何番目か探す (+1で回数になる)
         const index = myAbsences.findIndex(a => a.date === target.date);
         if (index !== -1) {
           newCounts[target.id] = index + 1;
@@ -126,7 +125,6 @@ export default function AttendancePage() {
     } else {
       setAbsenceCounts({});
     }
-    // ★★★ 追加ここまで ★★★
 
     // 3. 今日の利用予定者リストを作成
     const todayStr = toDateString(new Date());
@@ -143,22 +141,36 @@ export default function AttendancePage() {
     const scheduledForToday = usersData.filter(user => 
       scheduledUserIds.has(user.id) && !attendedUserIds.has(user.id)
     );
+    // 名前順にソート
+    scheduledForToday.sort((a, b) => `${a.lastName}${a.firstName}`.localeCompare(`${b.lastName}${b.firstName}`, 'ja'));
+    
     setTodaysScheduledUsers(scheduledForToday);
 
   }, [viewDate]);
 
   useEffect(() => {
-    loadTodaysScheduledUsers();
-  }, []);
-
-  useEffect(() => {
     fetchData();
-  }, [fetchData, viewDate]);
+  }, [fetchData]);
+
+  // ★ 追加: 検索ロジック
+  const searchMatchedUsers = useMemo(() => {
+    const queryText = userSearchQuery.trim();
+    if (!queryText) return [];
+    
+    const lowerQuery = queryText.toLowerCase();
+    return todaysScheduledUsers.filter(user => {
+      const fullName = `${user.lastName || ''}${user.firstName || ''}`;
+      return fullName.toLowerCase().includes(lowerQuery);
+    });
+  }, [userSearchQuery, todaysScheduledUsers]);
   
   const handleScanSuccess = useCallback(async (result: string) => {
-    if (isProcessing) return;
-    setIsProcessing(true);
-    const loadingToast = toast.loading('QRコードを処理中です...');
+    // ★ 修正: Refを使って確実に重複実行を防ぐ
+    if (isScanningRef.current) return;
+    isScanningRef.current = true;
+    setIsProcessingState(true);
+
+    const loadingToast = toast.loading('処理中...');
 
     const statusFromSymbol = (s: string): '放課後' | '休校日' => (s === '◯' ? '放課後' : '休校日');
     const parseHHMM = (t?: string) => {
@@ -178,7 +190,7 @@ export default function AttendancePage() {
       const a = parseHHMM(arrival), d = parseHHMM(departure);
       if (a == null || d == null) return { label: '', grade: '' };
       let span = d - a; if (span <= 0) return { label: '', grade: '' };
-      const base = usage === '放課後' ? 180 : 300; // 分
+      const base = usage === '放課後' ? 180 : 300; 
       const over = span - base; if (over < 30) return { label: '', grade: '' };
       let grade: '' | '1' | '2' | '3' = over >= 120 ? '3' : over >= 60 ? '2' : '1';
       const hh = Math.floor(over / 60), mm = over % 60;
@@ -210,7 +222,7 @@ export default function AttendancePage() {
         }
       }
 
-      if (!userDoc) throw new Error(`該当する利用者が登録されていません (受信データ: ${name})`);
+      if (!userDoc) throw new Error(`利用者未登録: ${name}`);
 
       const userId = userDoc.id;
       const userName = `${userDoc.data().lastName} ${userDoc.data().firstName}`;
@@ -264,19 +276,22 @@ export default function AttendancePage() {
       }
       await fetchData();
     } catch (error: any) {
-      toast.error(`エラー: ${error.message ?? error}`, { id: loadingToast });
+      toast.error(`${error.message ?? error}`, { id: loadingToast });
     } finally {
-      setTimeout(() => setIsProcessing(false), 800);
+      // ★ 修正: クールダウン時間を2秒(2000ms)に設定
+      // これにより、同じQRコードを連続で読み込んでも2秒間は無視されます
+      setTimeout(() => {
+        isScanningRef.current = false;
+        setIsProcessingState(false);
+      }, 2000);
     }
-  }, [isProcessing, fetchData]);
+  }, [fetchData]);
 
   const handleScanFailure = (error: string) => {};
 
   // 自動AI生成関数
   const generateAndSaveAdvice = async (docId: string, userId: string, date: string, notes: string) => {
-    // ★ 修正: try の外でトーストを表示開始する（これで catch からも参照できます）
     const aiToast = toast.loading('AIが相談内容を自動生成中...');
-    
     try {
       const res = await fetch('/api/absence/generate-advice', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -287,13 +302,8 @@ export default function AttendancePage() {
         await updateDoc(doc(db, 'attendanceRecords', docId), { aiAdvice: data.advice });
         toast.success('AI相談内容を保存しました', { id: aiToast });
         fetchData();
-      } else { 
-        toast.dismiss(aiToast); 
-      }
-    } catch (e) { 
-      // これでエラー時も正しくローディングを上書きできます
-      toast.error('AI生成失敗', { id: aiToast }); 
-    }
+      } else { toast.dismiss(aiToast); }
+    } catch (e) { toast.error('AI生成失敗', { id: aiToast }); }
   };
 
   const handleAddAbsence = async () => {
@@ -335,12 +345,12 @@ export default function AttendancePage() {
 
       const docRef = await addDoc(collection(db, "attendanceRecords"), newRecord);
 
-      // AI生成 (Comet完結なのでスプシ連携は削除済み)
       generateAndSaveAdvice(docRef.id, newRecord.userId, newRecord.date, absenceReason);
       
       toast.success(`${user.lastName} ${user.firstName} さんを欠席として登録しました。`, { id: loadingToast });
       await fetchData(); 
       setAbsentUserId('');
+      setUserSearchQuery(''); // 検索文字もクリア
       setAbsenceReason('');
     } catch (error: any) {
       toast.error(error.message, { id: loadingToast });
@@ -396,7 +406,6 @@ export default function AttendancePage() {
     }
   };
 
-  // ★ 修正: 欠席の場合は回数表示を含める
   const getUsageStatusSymbol = (status: '放課後' | '休校日' | '欠席', recordId: string) => {
     if (status === '放課後') return '◯';
     if (status === '休校日') return '◎';
@@ -405,38 +414,6 @@ export default function AttendancePage() {
       return count ? `欠席（${count}）` : '欠席';
     }
     return status;
-  };
-
-  const loadTodaysScheduledUsers = async () => {
-    const today = jstDateKey(new Date());
-    const scheduleColNames = ["userSchedule", "schedules", "events"] as const;
-    let scheduledDocs: any[] = [];
-    for (const colName of scheduleColNames) {
-      try {
-        const qRef = query(collection(db, colName), where("dateKeyJst", "==", today));
-        const snap = await getDocs(qRef);
-        if (!snap.empty) {
-          scheduledDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-          break;
-        }
-      } catch (_e) {}
-    }
-    if (scheduledDocs.length === 0) { setTodaysScheduledUsers([]); return; }
-    const userIds = Array.from(new Set(scheduledDocs.map((e) => e.userId).filter((v) => typeof v === "string" && v.length > 0)));
-    if (userIds.length === 0) { setTodaysScheduledUsers([]); return; }
-    const usersCol = collection(db, "users");
-    const batches = chunk(userIds, 10);
-    const users: User[] = [];
-    for (const ids of batches) {
-      const qRef = query(usersCol, where(documentId(), "in", ids));
-      const snap = await getDocs(qRef);
-      snap.forEach((d) => {
-        const u = { id: d.id, ...(d.data() as any) };
-        users.push({ id: u.id, lastName: u.lastName ?? "", firstName: u.firstName ?? "" } as User);
-      });
-    }
-    users.sort((a, b) => `${a.lastName}${a.firstName}`.localeCompare(`${b.lastName}${b.firstName}`, "ja"));
-    setTodaysScheduledUsers(users);
   };
 
   return (
@@ -457,13 +434,59 @@ export default function AttendancePage() {
               <Link href="/attendance/register-absence" className="text-xs text-blue-600 hover:underline">別日はこちら</Link>
             </div>
             <div className="space-y-3">
-              <div>
+              
+              {/* ★★★ 修正点: 検索付き利用者選択 ★★★ */}
+              <div className="relative">
                 <label className="block text-sm font-medium text-gray-700 mb-1">利用者</label>
-                <select value={absentUserId} onChange={(e) => setAbsentUserId(e.target.value)} className="w-full h-10 px-3 border border-gray-300 rounded-lg text-sm">
-                  <option value="">利用予定者を選択</option>
-                  {todaysScheduledUsers.map(u => (<option key={u.id} value={u.id}>{u.lastName} {u.firstName}</option>))}
-                </select>
+                
+                {/* 検索ボックス */}
+                <input
+                  type="text"
+                  value={userSearchQuery}
+                  onChange={(e) => setUserSearchQuery(e.target.value)}
+                  placeholder={todaysScheduledUsers.length > 0 ? "氏名を入力して検索..." : "予定者なし"}
+                  className="w-full h-10 px-3 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100"
+                  disabled={!!absentUserId} // 選択中は無効化
+                />
+
+                {/* 候補リスト (入力中のみ表示) */}
+                {!absentUserId && userSearchQuery && searchMatchedUsers.length > 0 && (
+                  <ul className="absolute top-full left-0 z-10 w-full max-h-48 overflow-y-auto bg-white border border-blue-400 rounded-md shadow-lg mt-1">
+                    {searchMatchedUsers.map(user => (
+                      <li 
+                        key={user.id} 
+                        onClick={() => {
+                          setAbsentUserId(user.id);
+                          setUserSearchQuery(''); // 検索文字クリア
+                        }}
+                        className="p-2 cursor-pointer hover:bg-blue-100 text-sm border-b last:border-b-0"
+                      >
+                        {user.lastName} {user.firstName}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {/* 選択中の表示 */}
+                {absentUserId && (
+                  <div className="mt-2 flex items-center justify-between bg-blue-50 p-2 rounded border border-blue-200">
+                    <span className="text-sm font-bold text-blue-700">
+                      選択中: {users.find(u => u.id === absentUserId)?.lastName} {users.find(u => u.id === absentUserId)?.firstName}
+                    </span>
+                    <button 
+                      onClick={() => {
+                        setAbsentUserId('');
+                        setUserSearchQuery('');
+                      }} 
+                      className="text-xs text-gray-500 hover:text-red-600 underline"
+                    >
+                      解除
+                    </button>
+                  </div>
+                )}
               </div>
+              {/* ★★★ 修正ここまで ★★★ */}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">欠席理由</label>
                 <input type="text" value={absenceReason} onChange={(e) => setAbsenceReason(e.target.value)} className="w-full h-10 px-3 border border-gray-300 rounded-lg text-sm" />
@@ -506,7 +529,6 @@ export default function AttendancePage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      {/* ★ 変更点: 引数にrecord.idを渡す */}
                       <span className={rec.usageStatus === '欠席' ? 'font-bold text-red-600' : ''}>
                         {getUsageStatusSymbol(rec.usageStatus, rec.id)}
                       </span>
