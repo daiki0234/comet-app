@@ -51,6 +51,17 @@ const determineAbsenceCategory = (text: string): string => {
   }
 };
 
+// ★★★ 追加: ブラウザでArrayBufferをBase64に変換する関数 ★★★
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary);
+}
+
 export default function AbsenceManagementPage() {
   const { currentUser } = useAuth();
   const now = new Date();
@@ -219,15 +230,23 @@ export default function AbsenceManagementPage() {
       // 2. PDF初期化 (A4 縦向き)
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
-      // ★ 日本語フォントの読み込み (public/fonts/NotoSansJP-Regular.ttf が必要)
-      // ※ Vercel環境などではURLが変わる可能性があるため window.location.origin を使用
-      const fontUrl = `${window.location.origin}/fonts/NotoSansJP-Regular.ttf`;
-      const fontBytes = await fetch(fontUrl).then(res => res.arrayBuffer());
-      
-      // フォントをPDFに追加 (ファイル名: NotoSansJP.ttf, フォント名: NotoSansJP)
-      pdf.addFileToVFS('NotoSansJP.ttf', Buffer.from(fontBytes).toString('base64'));
-      pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'normal');
-      pdf.setFont('NotoSansJP'); // これで日本語が使えるようになる
+// ★★★ 修正: フォント読み込みロジック ★★★
+      try {
+        const fontUrl = '/fonts/NotoSansJP-Regular.ttf'; // publicフォルダからの相対パス
+        const fontRes = await fetch(fontUrl);
+        if (!fontRes.ok) throw new Error("フォントファイルが見つかりません");
+        
+        const fontBuffer = await fontRes.arrayBuffer();
+        const fontBase64 = arrayBufferToBase64(fontBuffer); // Bufferを使わずに変換
+
+        // フォント登録 (ファイル名, ID, スタイル)
+        pdf.addFileToVFS('NotoSansJP.ttf', fontBase64);
+        pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'normal');
+        pdf.setFont('NotoSansJP'); // メインフォントに設定
+      } catch (err) {
+        console.error("Font loading error:", err);
+        toast.error("フォントの読み込みに失敗しました。文字化けする可能性があります。", { id: loadingToast });
+      }
 
       // 3. 日付ごとにページ作成
       for (let i = 0; i < dates.length; i++) {
