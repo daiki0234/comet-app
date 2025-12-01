@@ -8,13 +8,6 @@ import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
 
 // --- 設定 ---
-// ★ GoogleカレンダーID (自分のメアドを入れる場合はカレンダーを「一般公開」にする必要があります)
-// 動作確認用として「日本の祝日」カレンダーを使用します
-const CALENDAR_ID = 'd_tatsushiro@kantsu.com'; 
-
-// 頂いたAPIキー
-const GOOGLE_API_KEY = 'AIzaSyCpc02bopjWKtUVOSPU1Ly0DPaEC3TEabY';
-
 // 大阪の座標 (天気用)
 const LAT = 34.6937;
 const LON = 135.5023;
@@ -24,7 +17,10 @@ type JournalRow = {
   dateStr: string;
   dayOfWeek: string;
   weather: string;
-  googleEvents: string[];
+  // ★ 変更: 予定を3つに分割
+  googleEventsMeeting: string[]; // 会議・出張
+  googleEventsVisitor: string[]; // 来所者
+  googleEventsNote: string[];    // 特記事項
   userNames: string;
   countHoukago: number;
   countKyuko: number;
@@ -60,11 +56,10 @@ export default function BusinessJournalPage() {
     fetchJournalData();
   }, [currentYear, currentMonth]);
 
-// --- Googleカレンダー取得 (自社API経由 - 中身はiCal解析) ---
+  // --- Googleカレンダー取得 (自社API経由 - iCal) ---
   const fetchGoogleEvents = async (startStr: string, endStr: string) => {
     try {
       const timeMin = new Date(startStr).toISOString();
-      // 終了日は23:59:59まで含める
       const timeMax = new Date(new Date(endStr).setHours(23, 59, 59)).toISOString();
       
       const url = `/api/calendar?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`;
@@ -81,8 +76,6 @@ export default function BusinessJournalPage() {
       // 日付ごとにイベント名をまとめる
       const eventsByDate: Record<string, string[]> = {};
       data.items.forEach((item: any) => {
-        // dateTime(時間指定) または date(終日) を取得
-        // ※iCal経由の場合、文字列の形式が少し違う場合があるので安全にsubstringで切る
         const startRaw = item.start.dateTime || item.start.date;
         const dateKey = startRaw.substring(0, 10); // YYYY-MM-DD
         
@@ -100,33 +93,24 @@ export default function BusinessJournalPage() {
   // --- 天気取得 (Open-Meteo: 過去天気) ---
   const fetchWeatherHistory = async (startStr: string, endStr: string) => {
     try {
-      // ★ 修正: end_date が未来にならないように調整
       const today = new Date();
-      // YYYY-MM-DD 形式の文字列を作成
       const todayStr = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`;
       
-      // もし指定範囲の開始日がすでに未来なら、天気は取れないのでスキップ
       if (startStr > todayStr) return {};
 
-      // 終了日が未来なら、今日（または昨日）までに切り詰める
-      // Open-Meteo Archive API は通常2日前までのデータが確実だが、一旦「昨日」までとする
       let actualEndStr = endStr;
       if (endStr >= todayStr) {
         const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1); // 1日前
+        yesterday.setDate(yesterday.getDate() - 1);
         actualEndStr = `${yesterday.getFullYear()}-${pad2(yesterday.getMonth() + 1)}-${pad2(yesterday.getDate())}`;
       }
 
-      // もし開始日が終了日より後になってしまったら（月初めなどで）スキップ
       if (startStr > actualEndStr) return {};
 
       const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${LAT}&longitude=${LON}&start_date=${startStr}&end_date=${actualEndStr}&daily=weather_code&timezone=Asia%2FTokyo`;
       const res = await fetch(url);
       
-      if (!res.ok) {
-        console.warn("Weather API Error:", res.status);
-        return {};
-      }
+      if (!res.ok) return {};
 
       const data = await res.json();
       if (!data.daily) return {};
@@ -181,12 +165,39 @@ export default function BusinessJournalPage() {
           else if (r.usageStatus === '欠席') { countAbsence++; names.push(`${r.userName}(加算)`); }
         });
 
+        // ★★★ 予定の振り分けロジック ★★★
+        const rawEvents = googleEventsMap[dateKey] || [];
+        const meetingEvents: string[] = [];
+        const visitorEvents: string[] = [];
+        const noteEvents: string[] = [];
+
+        rawEvents.forEach(evt => {
+          if (evt.includes('休み') || evt.includes('休所')) {
+            // 特記事項へ
+            noteEvents.push(evt);
+          } else if (
+            evt.includes('モニタリング') ||
+            evt.includes('㋲') ||
+            evt.includes('更新') ||
+            evt.includes('相談') ||
+            evt.includes('新規')
+          ) {
+            // 来所者へ
+            visitorEvents.push(evt);
+          } else {
+            // それ以外は 会議・出張へ
+            meetingEvents.push(evt);
+          }
+        });
+
         rows.push({
           date: dateObj,
           dateStr: dateKey,
           dayOfWeek,
           weather: weatherMap[dateKey] || '-', 
-          googleEvents: googleEventsMap[dateKey] || [], 
+          googleEventsMeeting: meetingEvents,
+          googleEventsVisitor: visitorEvents,
+          googleEventsNote: noteEvents,
           userNames: names.join('、'),
           countHoukago,
           countKyuko,
@@ -228,7 +239,10 @@ export default function BusinessJournalPage() {
               <tr>
                 <th className="border p-2 w-12 text-center">日</th>
                 <th className="border p-2 w-10 text-center">曜</th>
-                <th className="border p-2 min-w-[200px]">予定 (Google)</th>
+                {/* ★ 変更: ヘッダーを3分割 */}
+                <th className="border p-2 min-w-[120px]">会議・出張</th>
+                <th className="border p-2 min-w-[120px]">来所者</th>
+                <th className="border p-2 min-w-[120px]">特記事項</th>
                 <th className="border p-2 w-16 text-center">天気</th>
                 <th className="border p-2 min-w-[300px]">利用者名</th>
                 <th className="border p-2 w-10 text-center bg-blue-50">放</th>
@@ -239,7 +253,7 @@ export default function BusinessJournalPage() {
             </thead>
             <tbody className="divide-y divide-gray-200">
               {loading ? (
-                <tr><td colSpan={9} className="p-10 text-center">読み込み中...</td></tr>
+                <tr><td colSpan={11} className="p-10 text-center">読み込み中...</td></tr>
               ) : (
                 journalData.map((row) => (
                   <tr key={row.dateStr} className="hover:bg-gray-50">
@@ -250,21 +264,38 @@ export default function BusinessJournalPage() {
                     `}>
                       {row.dayOfWeek}
                     </td>
-                    <td className="border p-2 text-gray-600 text-xs whitespace-normal">
-                      {row.googleEvents.map((ev, i) => (
+                    
+                    {/* ★ 会議・出張 */}
+                    <td className="border p-2 text-gray-600 text-xs whitespace-normal align-top">
+                      {row.googleEventsMeeting.map((ev, i) => (
                         <div key={i} className="mb-1 border-b border-dotted last:border-0 pb-1">{ev}</div>
                       ))}
                     </td>
-                    <td className="border p-2 text-center">
+                    
+                    {/* ★ 来所者 */}
+                    <td className="border p-2 text-gray-600 text-xs whitespace-normal align-top">
+                      {row.googleEventsVisitor.map((ev, i) => (
+                        <div key={i} className="mb-1 border-b border-dotted last:border-0 pb-1">{ev}</div>
+                      ))}
+                    </td>
+                    
+                    {/* ★ 特記事項 */}
+                    <td className="border p-2 text-gray-600 text-xs whitespace-normal align-top">
+                      {row.googleEventsNote.map((ev, i) => (
+                        <div key={i} className="mb-1 border-b border-dotted last:border-0 pb-1">{ev}</div>
+                      ))}
+                    </td>
+
+                    <td className="border p-2 text-center align-top">
                       {row.weather}
                     </td>
-                    <td className="border p-2 text-xs leading-relaxed whitespace-normal">
+                    <td className="border p-2 text-xs leading-relaxed whitespace-normal align-top">
                       {row.userNames}
                     </td>
-                    <td className="border p-2 text-center bg-blue-50 font-semibold">{row.countHoukago || ''}</td>
-                    <td className="border p-2 text-center bg-orange-50 font-semibold">{row.countKyuko || ''}</td>
-                    <td className="border p-2 text-center bg-red-50 font-semibold">{row.countAbsence || ''}</td>
-                    <td className="border p-2"></td>
+                    <td className="border p-2 text-center bg-blue-50 font-semibold align-top">{row.countHoukago || ''}</td>
+                    <td className="border p-2 text-center bg-orange-50 font-semibold align-top">{row.countKyuko || ''}</td>
+                    <td className="border p-2 text-center bg-red-50 font-semibold align-top">{row.countAbsence || ''}</td>
+                    <td className="border p-2 align-top"></td>
                   </tr>
                 ))
               )}
