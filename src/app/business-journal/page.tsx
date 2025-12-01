@@ -10,7 +10,7 @@ import { ja } from 'date-fns/locale';
 // --- 設定 ---
 // ★ GoogleカレンダーID (自分のメアドを入れる場合はカレンダーを「一般公開」にする必要があります)
 // 動作確認用として「日本の祝日」カレンダーを使用します
-const CALENDAR_ID = 'ja.japanese#holiday@group.v.calendar.google.com'; 
+const CALENDAR_ID = 'd_tatsushiro@kantsu.com'; 
 
 // 頂いたAPIキー
 const GOOGLE_API_KEY = 'AIzaSyCpc02bopjWKtUVOSPU1Ly0DPaEC3TEabY';
