@@ -60,18 +60,18 @@ export default function BusinessJournalPage() {
     fetchJournalData();
   }, [currentYear, currentMonth]);
 
-  // --- Googleカレンダー取得 ---
+// --- Googleカレンダー取得 (自社API経由 - 中身はiCal解析) ---
   const fetchGoogleEvents = async (startStr: string, endStr: string) => {
     try {
       const timeMin = new Date(startStr).toISOString();
+      // 終了日は23:59:59まで含める
       const timeMax = new Date(new Date(endStr).setHours(23, 59, 59)).toISOString();
       
-      const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(CALENDAR_ID)}/events` +
-                  `?key=${GOOGLE_API_KEY}&timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&orderBy=startTime`;
+      const url = `/api/calendar?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`;
       
       const res = await fetch(url);
       if (!res.ok) {
-        console.warn("Google Calendar API Error:", res.status);
+        console.warn("Calendar API Error:", res.status);
         return {};
       }
       const data = await res.json();
@@ -81,15 +81,18 @@ export default function BusinessJournalPage() {
       // 日付ごとにイベント名をまとめる
       const eventsByDate: Record<string, string[]> = {};
       data.items.forEach((item: any) => {
-        const start = item.start.dateTime || item.start.date;
-        const dateKey = start.substring(0, 10); 
+        // dateTime(時間指定) または date(終日) を取得
+        // ※iCal経由の場合、文字列の形式が少し違う場合があるので安全にsubstringで切る
+        const startRaw = item.start.dateTime || item.start.date;
+        const dateKey = startRaw.substring(0, 10); // YYYY-MM-DD
+        
         if (!eventsByDate[dateKey]) eventsByDate[dateKey] = [];
         eventsByDate[dateKey].push(item.summary);
       });
       
       return eventsByDate;
     } catch (e) {
-      console.error("Google Calendar Fetch Error:", e);
+      console.error("Calendar Fetch Error:", e);
       return {};
     }
   };
