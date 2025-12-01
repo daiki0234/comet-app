@@ -195,7 +195,7 @@ export default function BusinessJournalPage() {
           <button onClick={fetchJournalData} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">更新</button>
           
           {/* 注意書き */}
-          {CALENDAR_ID === 'k_maeda@kantsu.com' && (
+          {CALENDAR_ID === 'example@gmail.com' && (
             <span className="text-red-500 text-xs font-bold bg-red-100 px-2 py-1 rounded">
               ※コード内のCALENDAR_IDを設定してください
             </span>
