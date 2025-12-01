@@ -88,6 +88,7 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
         { href: '/support/monitoring', label: 'モニタリング' },
       ]
     },
+    { href: '/business-journal', label: '業務日誌', icon: <FileTextIcon /> },
     // ★★★ 追加ここまで ★★★
     { href: '/users', label: '利用者管理', icon: <UsersIcon /> },
     
