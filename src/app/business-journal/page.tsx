@@ -8,12 +8,12 @@ import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
 
 // --- 設定 ---
-// ★★★ ここを必ず書き換えてください ★★★
-const CALENDAR_ID = 'k_maeda@kantsu.com'; // ← ここにGoogleカレンダーのID (メールアドレス)
+// ★ GoogleカレンダーID (自分のメアドを入れる場合はカレンダーを「一般公開」にする必要があります)
+// 動作確認用として「日本の祝日」カレンダーを使用します
+const CALENDAR_ID = 'ja.japanese#holiday@group.v.calendar.google.com'; 
 
 // 頂いたAPIキー
 const GOOGLE_API_KEY = 'AIzaSyCpc02bopjWKtUVOSPU1Ly0DPaEC3TEabY';
-// const OWM_API_KEY = 'e22a39282400f4f4567dbb411aa67a91'; // ※今回は過去天気対応のためOpen-Meteoを使用します
 
 // 大阪の座標 (天気用)
 const LAT = 34.6937;
@@ -70,19 +70,19 @@ export default function BusinessJournalPage() {
                   `?key=${GOOGLE_API_KEY}&timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&orderBy=startTime`;
       
       const res = await fetch(url);
-      const data = await res.json();
-      
-      if (!data.items) {
-        console.warn("Google Calendar API Error:", data);
+      if (!res.ok) {
+        console.warn("Google Calendar API Error:", res.status);
         return {};
       }
+      const data = await res.json();
+      
+      if (!data.items) return {};
 
       // 日付ごとにイベント名をまとめる
       const eventsByDate: Record<string, string[]> = {};
       data.items.forEach((item: any) => {
-        // "dateTime" (時間指定あり) または "date" (終日) を取得
         const start = item.start.dateTime || item.start.date;
-        const dateKey = start.substring(0, 10); // YYYY-MM-DD
+        const dateKey = start.substring(0, 10); 
         if (!eventsByDate[dateKey]) eventsByDate[dateKey] = [];
         eventsByDate[dateKey].push(item.summary);
       });
@@ -94,14 +94,38 @@ export default function BusinessJournalPage() {
     }
   };
 
-  // --- 天気取得 (Open-Meteo: 過去天気も無料) ---
+  // --- 天気取得 (Open-Meteo: 過去天気) ---
   const fetchWeatherHistory = async (startStr: string, endStr: string) => {
     try {
-      // Open-Meteo Archive API
-      const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${LAT}&longitude=${LON}&start_date=${startStr}&end_date=${endStr}&daily=weather_code&timezone=Asia%2FTokyo`;
-      const res = await fetch(url);
-      const data = await res.json();
+      // ★ 修正: end_date が未来にならないように調整
+      const today = new Date();
+      // YYYY-MM-DD 形式の文字列を作成
+      const todayStr = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`;
+      
+      // もし指定範囲の開始日がすでに未来なら、天気は取れないのでスキップ
+      if (startStr > todayStr) return {};
 
+      // 終了日が未来なら、今日（または昨日）までに切り詰める
+      // Open-Meteo Archive API は通常2日前までのデータが確実だが、一旦「昨日」までとする
+      let actualEndStr = endStr;
+      if (endStr >= todayStr) {
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1); // 1日前
+        actualEndStr = `${yesterday.getFullYear()}-${pad2(yesterday.getMonth() + 1)}-${pad2(yesterday.getDate())}`;
+      }
+
+      // もし開始日が終了日より後になってしまったら（月初めなどで）スキップ
+      if (startStr > actualEndStr) return {};
+
+      const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${LAT}&longitude=${LON}&start_date=${startStr}&end_date=${actualEndStr}&daily=weather_code&timezone=Asia%2FTokyo`;
+      const res = await fetch(url);
+      
+      if (!res.ok) {
+        console.warn("Weather API Error:", res.status);
+        return {};
+      }
+
+      const data = await res.json();
       if (!data.daily) return {};
 
       const weatherByDate: Record<string, string> = {};
@@ -123,7 +147,7 @@ export default function BusinessJournalPage() {
       const startStr = `${currentYear}-${pad2(currentMonth)}-01`;
       const endStr = `${currentYear}-${pad2(currentMonth)}-${pad2(daysInMonth)}`;
 
-      // 並行してデータ取得 (Firestore, GoogleCal, Weather)
+      // 並行してデータ取得
       const [snap, googleEventsMap, weatherMap] = await Promise.all([
         getDocs(query(
           collection(db, 'attendanceRecords'),
@@ -131,7 +155,6 @@ export default function BusinessJournalPage() {
           where('date', '<=', endStr)
         )),
         fetchGoogleEvents(startStr, endStr),
-        // 未来の日付だとArchive APIはエラーになることがあるが、try-catch済み
         fetchWeatherHistory(startStr, endStr) 
       ]);
 
@@ -159,8 +182,8 @@ export default function BusinessJournalPage() {
           date: dateObj,
           dateStr: dateKey,
           dayOfWeek,
-          weather: weatherMap[dateKey] || '-', // 天気
-          googleEvents: googleEventsMap[dateKey] || [], // カレンダー
+          weather: weatherMap[dateKey] || '-', 
+          googleEvents: googleEventsMap[dateKey] || [], 
           userNames: names.join('、'),
           countHoukago,
           countKyuko,
@@ -193,13 +216,6 @@ export default function BusinessJournalPage() {
             </select>
           </div>
           <button onClick={fetchJournalData} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">更新</button>
-          
-          {/* 注意書き */}
-          {CALENDAR_ID === 'k_maeda@kantsu.com' && (
-            <span className="text-red-500 text-xs font-bold bg-red-100 px-2 py-1 rounded">
-              ※コード内のCALENDAR_IDを設定してください
-            </span>
-          )}
         </div>
 
         {/* テーブル */}
