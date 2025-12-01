@@ -6,9 +6,13 @@ import { db } from '@/lib/firebase/firebase';
 import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
 import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
+import toast from 'react-hot-toast';
+
+// ★ PDF用ライブラリ
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // --- 設定 ---
-// 大阪の座標 (天気用)
 const LAT = 34.6937;
 const LON = 135.5023;
 
@@ -17,10 +21,9 @@ type JournalRow = {
   dateStr: string;
   dayOfWeek: string;
   weather: string;
-  // ★ 変更: 予定を3つに分割
-  googleEventsMeeting: string[]; // 会議・出張
-  googleEventsVisitor: string[]; // 来所者
-  googleEventsNote: string[];    // 特記事項
+  googleEventsMeeting: string[];
+  googleEventsVisitor: string[];
+  googleEventsNote: string[];
   userNames: string;
   countHoukago: number;
   countKyuko: number;
@@ -30,7 +33,7 @@ type JournalRow = {
 
 const pad2 = (n: number) => n.toString().padStart(2, "0");
 
-// --- 天気コード変換 (Open-Meteo用) ---
+// 天気コード変換
 const getWeatherLabel = (code: number) => {
   if (code === 0) return '晴';
   if (code >= 1 && code <= 3) return '晴/曇';
@@ -41,6 +44,17 @@ const getWeatherLabel = (code: number) => {
   if (code >= 95) return '雷雨';
   return '-';
 };
+
+// ブラウザでのフォント読み込み用ヘルパー
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary);
+}
 
 export default function BusinessJournalPage() {
   const now = new Date();
@@ -56,7 +70,7 @@ export default function BusinessJournalPage() {
     fetchJournalData();
   }, [currentYear, currentMonth]);
 
-  // --- Googleカレンダー取得 (自社API経由 - iCal) ---
+  // Googleカレンダー取得 (自社API経由 - iCal)
   const fetchGoogleEvents = async (startStr: string, endStr: string) => {
     try {
       const timeMin = new Date(startStr).toISOString();
@@ -73,11 +87,10 @@ export default function BusinessJournalPage() {
       
       if (!data.items) return {};
 
-      // 日付ごとにイベント名をまとめる
       const eventsByDate: Record<string, string[]> = {};
       data.items.forEach((item: any) => {
         const startRaw = item.start.dateTime || item.start.date;
-        const dateKey = startRaw.substring(0, 10); // YYYY-MM-DD
+        const dateKey = startRaw.substring(0, 10);
         
         if (!eventsByDate[dateKey]) eventsByDate[dateKey] = [];
         eventsByDate[dateKey].push(item.summary);
@@ -90,7 +103,7 @@ export default function BusinessJournalPage() {
     }
   };
 
-  // --- 天気取得 (Open-Meteo: 過去天気) ---
+  // 天気取得
   const fetchWeatherHistory = async (startStr: string, endStr: string) => {
     try {
       const today = new Date();
@@ -134,7 +147,6 @@ export default function BusinessJournalPage() {
       const startStr = `${currentYear}-${pad2(currentMonth)}-01`;
       const endStr = `${currentYear}-${pad2(currentMonth)}-${pad2(daysInMonth)}`;
 
-      // 並行してデータ取得
       const [snap, googleEventsMap, weatherMap] = await Promise.all([
         getDocs(query(
           collection(db, 'attendanceRecords'),
@@ -153,7 +165,6 @@ export default function BusinessJournalPage() {
         const dateObj = new Date(currentYear, currentMonth - 1, d);
         const dayOfWeek = format(dateObj, 'E', { locale: ja });
 
-        // レコード集計
         const dayRecords = allRecords.filter(r => r.date === dateKey);
         let countHoukago = 0, countKyuko = 0, countAbsence = 0;
         const names: string[] = [];
@@ -165,7 +176,6 @@ export default function BusinessJournalPage() {
           else if (r.usageStatus === '欠席') { countAbsence++; names.push(`${r.userName}(加算)`); }
         });
 
-        // ★★★ 予定の振り分けロジック ★★★
         const rawEvents = googleEventsMap[dateKey] || [];
         const meetingEvents: string[] = [];
         const visitorEvents: string[] = [];
@@ -173,7 +183,6 @@ export default function BusinessJournalPage() {
 
         rawEvents.forEach(evt => {
           if (evt.includes('休み') || evt.includes('休所')) {
-            // 特記事項へ
             noteEvents.push(evt);
           } else if (
             evt.includes('モニタリング') ||
@@ -182,10 +191,8 @@ export default function BusinessJournalPage() {
             evt.includes('相談') ||
             evt.includes('新規')
           ) {
-            // 来所者へ
             visitorEvents.push(evt);
           } else {
-            // それ以外は 会議・出張へ
             meetingEvents.push(evt);
           }
         });
@@ -216,20 +223,128 @@ export default function BusinessJournalPage() {
     }
   };
 
+  // --- ★★★ PDF出力機能 ★★★ ---
+  const handlePrintJournal = async () => {
+    if (journalData.length === 0) return toast.error("出力するデータがありません");
+    const loadingToast = toast.loading("PDFを生成中...");
+
+    try {
+      // 1. PDF初期化 (A4 横向き landscape)
+      // 横に長い表なので横向きが最適です
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+      // 2. フォント読み込み (日本語対応)
+      try {
+        const fontUrl = '/fonts/NotoSansJP-Regular.ttf';
+        const fontRes = await fetch(fontUrl);
+        if (!fontRes.ok) throw new Error("フォントファイルが見つかりません");
+        const fontBuffer = await fontRes.arrayBuffer();
+        const fontBase64 = arrayBufferToBase64(fontBuffer);
+
+        pdf.addFileToVFS('NotoSansJP.ttf', fontBase64);
+        pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'normal');
+        pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'bold'); // エラー回避用エイリアス
+        pdf.setFont('NotoSansJP');
+      } catch (err) {
+        console.error("Font error:", err);
+        toast.error("フォント読み込みに失敗しました", { id: loadingToast });
+      }
+
+      // 3. データ作成
+      const tableBody = journalData.map(row => [
+        format(row.date, 'yyyy/MM/dd'), // ★ 日付を yyyy/MM/dd に変更
+        row.dayOfWeek,
+        row.googleEventsMeeting.join('\n'),
+        row.googleEventsVisitor.join('\n'),
+        row.googleEventsNote.join('\n'),
+        row.weather,
+        row.userNames, // 利用者名 (長い場合は自動折り返し)
+        row.countHoukago || '',
+        row.countKyuko || '',
+        row.countAbsence || '',
+        row.staffNames
+      ]);
+
+      // 4. タイトル
+      pdf.setFontSize(16);
+      pdf.text(`業務日誌 (${currentYear}年${currentMonth}月)`, 14, 15);
+
+      // 5. テーブル描画
+      autoTable(pdf, {
+        startY: 20,
+        head: [[
+          '日付', '曜', '会議・出張', '来所者', '特記事項', 
+          '天気', '利用者名', '放', '休', '欠', '職員'
+        ]],
+        body: tableBody,
+        styles: { 
+          font: 'NotoSansJP',
+          fontSize: 8, // 少し小さめにしないと入り切らないかも
+          cellPadding: 2,
+          lineColor: [0, 0, 0],
+          lineWidth: 0.1,
+          valign: 'top',
+          overflow: 'linebreak'
+        },
+        headStyles: {
+          fillColor: [240, 240, 240],
+          textColor: [0, 0, 0],
+          fontStyle: 'bold',
+          halign: 'center'
+        },
+        columnStyles: {
+          0: { cellWidth: 20, halign: 'center' }, // 日付
+          1: { cellWidth: 8, halign: 'center' },  // 曜
+          2: { cellWidth: 35 }, // 会議
+          3: { cellWidth: 35 }, // 来所
+          4: { cellWidth: 30 }, // 特記
+          5: { cellWidth: 12, halign: 'center' }, // 天気
+          6: { cellWidth: 'auto' }, // 利用者名 (残りの幅を使う)
+          7: { cellWidth: 8, halign: 'center' }, // 放
+          8: { cellWidth: 8, halign: 'center' }, // 休
+          9: { cellWidth: 8, halign: 'center' }, // 欠
+          10: { cellWidth: 20 } // 職員
+        },
+        theme: 'grid',
+      });
+
+      // 6. 保存
+      pdf.save(`${currentYear}年${currentMonth}月_業務日誌.pdf`);
+      toast.success("PDFをダウンロードしました", { id: loadingToast });
+
+    } catch (e: any) {
+      console.error(e);
+      toast.error(`生成失敗: ${e.message}`, { id: loadingToast });
+    }
+  };
+
   return (
     <AppLayout pageTitle="業務日誌">
       <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 h-full flex flex-col">
         {/* ヘッダー */}
-        <div className="flex items-center gap-4 mb-4">
-          <div className="flex items-center gap-2">
-            <select value={currentYear} onChange={(e) => setCurrentYear(Number(e.target.value))} className="p-2 border rounded-md">
-              {years.map(y => <option key={y} value={y}>{y}年</option>)}
-            </select>
-            <select value={currentMonth} onChange={(e) => setCurrentMonth(Number(e.target.value))} className="p-2 border rounded-md">
-              {months.map(m => <option key={m} value={m}>{m}月</option>)}
-            </select>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <select value={currentYear} onChange={(e) => setCurrentYear(Number(e.target.value))} className="p-2 border rounded-md">
+                {years.map(y => <option key={y} value={y}>{y}年</option>)}
+              </select>
+              <select value={currentMonth} onChange={(e) => setCurrentMonth(Number(e.target.value))} className="p-2 border rounded-md">
+                {months.map(m => <option key={m} value={m}>{m}月</option>)}
+              </select>
+            </div>
+            <button onClick={fetchJournalData} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">更新</button>
           </div>
-          <button onClick={fetchJournalData} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">更新</button>
+
+          {/* ★ PDF出力ボタン */}
+          <button 
+            onClick={handlePrintJournal} 
+            className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2 shadow-sm"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+            </svg>
+            PDF出力
+          </button>
         </div>
 
         {/* テーブル */}
@@ -237,9 +352,8 @@ export default function BusinessJournalPage() {
           <table className="min-w-full text-sm text-left border-collapse whitespace-nowrap">
             <thead className="bg-gray-100 sticky top-0 z-10 text-xs text-gray-700 uppercase font-bold">
               <tr>
-                <th className="border p-2 w-12 text-center">日</th>
+                <th className="border p-2 w-24 text-center">日付</th> {/* 幅を広げました */}
                 <th className="border p-2 w-10 text-center">曜</th>
-                {/* ★ 変更: ヘッダーを3分割 */}
                 <th className="border p-2 min-w-[120px]">会議・出張</th>
                 <th className="border p-2 min-w-[120px]">来所者</th>
                 <th className="border p-2 min-w-[120px]">特記事項</th>
@@ -257,7 +371,8 @@ export default function BusinessJournalPage() {
               ) : (
                 journalData.map((row) => (
                   <tr key={row.dateStr} className="hover:bg-gray-50">
-                    <td className="border p-2 text-center">{row.date.getDate()}</td>
+                    {/* ★ 日付フォーマット変更 */}
+                    <td className="border p-2 text-center">{format(row.date, 'yyyy/MM/dd')}</td>
                     <td className={`border p-2 text-center font-bold
                       ${row.dayOfWeek === '土' ? 'text-blue-600' : ''}
                       ${row.dayOfWeek === '日' ? 'text-red-600' : ''}
@@ -265,21 +380,18 @@ export default function BusinessJournalPage() {
                       {row.dayOfWeek}
                     </td>
                     
-                    {/* ★ 会議・出張 */}
                     <td className="border p-2 text-gray-600 text-xs whitespace-normal align-top">
                       {row.googleEventsMeeting.map((ev, i) => (
                         <div key={i} className="mb-1 border-b border-dotted last:border-0 pb-1">{ev}</div>
                       ))}
                     </td>
                     
-                    {/* ★ 来所者 */}
                     <td className="border p-2 text-gray-600 text-xs whitespace-normal align-top">
                       {row.googleEventsVisitor.map((ev, i) => (
                         <div key={i} className="mb-1 border-b border-dotted last:border-0 pb-1">{ev}</div>
                       ))}
                     </td>
                     
-                    {/* ★ 特記事項 */}
                     <td className="border p-2 text-gray-600 text-xs whitespace-normal align-top">
                       {row.googleEventsNote.map((ev, i) => (
                         <div key={i} className="mb-1 border-b border-dotted last:border-0 pb-1">{ev}</div>
