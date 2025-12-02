@@ -23,7 +23,6 @@ type AttendanceRecord = {
 
 type User = { id: string; lastName: string; firstName: string; };
 
-// AIレスポンスの型定義
 type AiSummaryResponse = {
   overall: string;
   trends: string;
@@ -42,12 +41,28 @@ type AiUserResponse = {
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 const toDateInputStr = (d: Date) => d.toISOString().split('T')[0];
 
-// AIコメント表示用コンポーネント
+// AIコメント表示用コンポーネント (ローディングアニメーション付き)
 const AiCommentBox = ({ title, content, loading }: { title: string, content?: string, loading: boolean }) => {
-  if (loading) return <div className="bg-purple-50 h-20 rounded-lg animate-pulse border border-purple-100 mt-4 mx-4" />;
+  if (loading) {
+    return (
+      <div className="bg-purple-50 border border-purple-100 p-4 rounded-xl mt-4 mx-4 mb-4 shadow-sm animate-pulse">
+        <div className="flex items-center mb-2">
+          <span className="text-lg mr-2">🤖</span>
+          <div className="h-4 bg-purple-200 rounded w-1/4"></div>
+        </div>
+        <div className="space-y-2">
+          <div className="h-3 bg-purple-200 rounded w-3/4"></div>
+          <div className="h-3 bg-purple-200 rounded w-full"></div>
+          <div className="h-3 bg-purple-200 rounded w-5/6"></div>
+        </div>
+      </div>
+    );
+  }
+  
   if (!content) return null;
+
   return (
-    <div className="bg-purple-50 border border-purple-100 p-4 rounded-xl mt-4 mx-4 mb-4 text-sm text-gray-700 leading-relaxed shadow-sm">
+    <div className="bg-purple-50 border border-purple-100 p-4 rounded-xl mt-4 mx-4 mb-4 text-sm text-gray-700 leading-relaxed shadow-sm fade-in-up">
       <strong className="block text-purple-700 mb-1 flex items-center">
         <span className="text-lg mr-1">🤖</span> {title}
       </strong>
@@ -72,12 +87,11 @@ export default function AnalysisPage() {
 
   const [selectedUserId, setSelectedUserId] = useState('');
 
-  // AI分析結果State
   const [aiSummaryData, setAiSummaryData] = useState<AiSummaryResponse | null>(null);
   const [aiUserData, setAiUserData] = useState<AiUserResponse | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
 
-  // 自動実行制御用
+  // AI実行制御用Ref
   const hasRunSummary = useRef(false);
   const hasRunUser = useRef(false);
 
@@ -119,7 +133,7 @@ export default function AnalysisPage() {
     if (allRecords.length === 0) return null;
     const filtered = allRecords.filter(r => r.date >= startDate && r.date <= endDate);
 
-    // A. 月別推移
+    // 月別
     const monthlyStats: Record<string, any> = {};
     filtered.forEach(rec => {
       const m = rec.month;
@@ -129,7 +143,6 @@ export default function AnalysisPage() {
       else if (rec.usageStatus === '休校日') monthlyStats[m].kyuko++;
       else if (rec.usageStatus === '欠席') monthlyStats[m].absence++;
     });
-
     const monthlyChartData = Object.values(monthlyStats)
       .sort((a, b) => (a.month || '').localeCompare((b.month || '')))
       .map(d => {
@@ -139,7 +152,7 @@ export default function AnalysisPage() {
         return { ...d, rate };
       });
 
-    // B. 曜日別欠席率
+    // 曜日別
     const dayStats = [0, 1, 2, 3, 4, 5, 6].map(i => ({ dayIndex: i, name: ['日', '月', '火', '水', '木', '金', '土'][i], total: 0, absence: 0 }));
     filtered.forEach(rec => {
       const d = new Date(rec.date);
@@ -153,7 +166,7 @@ export default function AnalysisPage() {
       count: d.absence
     }));
 
-    // C. ランキング
+    // ランキング
     const usageRanking: Record<string, number> = {};
     const absenceRanking: Record<string, number> = {};
     filtered.forEach(rec => {
@@ -161,11 +174,10 @@ export default function AnalysisPage() {
       if (rec.usageStatus === '欠席') absenceRanking[rec.userName] = (absenceRanking[rec.userName] || 0) + 1;
       else usageRanking[rec.userName] = (usageRanking[rec.userName] || 0) + 1;
     });
-
     const usageRankingData = Object.entries(usageRanking).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 10);
     const absenceRankingData = Object.entries(absenceRanking).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 10);
 
-    // D. 欠席理由
+    // 理由
     const absenceReasonStats: Record<string, number> = {};
     filtered.forEach(rec => {
       if (rec.usageStatus === '欠席') {
@@ -204,11 +216,10 @@ export default function AnalysisPage() {
     return { user, monthlyChartData, reasonChartData, totalVisits: myRecords.filter(r => r.usageStatus !== '欠席').length };
   }, [selectedUserId, allRecords, users]);
 
-  // --- ★★★ 追加・修正: AI分析実行関数 (手動実行用) ★★★ ---
+  // --- AI実行関数 (内部用) ---
   const handleRunAI = async (type: 'summary' | 'user', contextData: any) => {
     setIsAiLoading(true);
     try {
-      // 必要なデータだけ抽出して軽量化
       let context = {};
       if (type === 'summary') {
         context = {
@@ -238,26 +249,30 @@ export default function AnalysisPage() {
 
     } catch (e) {
       console.error(e);
-      toast.error("AI分析に失敗しました");
+      // エラーでもトーストは出さず、UI上で静かに失敗させる（自動実行なので邪魔しないため）
     } finally {
       setIsAiLoading(false);
     }
   };
 
-  // --- 自動AI分析 (useEffect) ---
+  // --- 自動実行トリガー ---
   
-  // 1. サマリー分析の自動実行
+  // 1. サマリー分析
   useEffect(() => {
+    // データがあり、まだ実行していない、かつサマリータブの場合に実行
     if (activeTab === 'summary' && summaryData && summaryData.totalCount > 0 && !hasRunSummary.current) {
       handleRunAI('summary', summaryData);
       hasRunSummary.current = true;
     }
   }, [summaryData, activeTab]);
 
-  // 期間変更時にフラグをリセットして再実行可能にする
-  useEffect(() => { hasRunSummary.current = false; setAiSummaryData(null); }, [startDate, endDate]);
+  // 期間が変わったらフラグをリセットして再実行
+  useEffect(() => { 
+    hasRunSummary.current = false; 
+    setAiSummaryData(null); 
+  }, [startDate, endDate]);
 
-  // 2. ユーザー分析の自動実行
+  // 2. ユーザー分析
   useEffect(() => {
     if (activeTab === 'user' && userData && userData.totalVisits > 0 && !hasRunUser.current) {
       handleRunAI('user', userData);
@@ -265,20 +280,22 @@ export default function AnalysisPage() {
     }
   }, [userData, activeTab]);
 
-  // ユーザー変更時にフラグをリセット
-  useEffect(() => { hasRunUser.current = false; setAiUserData(null); }, [selectedUserId]);
+  // ユーザーが変わったらフラグをリセット
+  useEffect(() => { 
+    hasRunUser.current = false; 
+    setAiUserData(null); 
+  }, [selectedUserId]);
 
 
   return (
     <AppLayout pageTitle="AI分析">
       <div className="flex flex-col h-full space-y-6">
         
-        {/* タブ切り替え */}
+        {/* タブ */}
         <div className="flex space-x-1 bg-gray-100 p-1 rounded-xl w-fit">
           {['summary', 'user', 'training'].map((tab) => (
             <button
               key={tab}
-              // ★ 修正: setAiComment を削除
               onClick={() => setActiveTab(tab as any)}
               className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                 activeTab === tab ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
@@ -292,21 +309,13 @@ export default function AnalysisPage() {
         {/* ① サマリー分析 */}
         {activeTab === 'summary' && (
           <div className="space-y-6 animate-in fade-in zoom-in duration-300">
-            {/* 期間指定 */}
-            <div className="flex flex-wrap justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-200 gap-4">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-gray-600">期間指定:</span>
-                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border p-2 rounded-md text-sm" />
-                <span className="text-gray-400">~</span>
-                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border p-2 rounded-md text-sm" />
-              </div>
-              <button 
-                onClick={() => handleRunAI('summary', summaryData)}
-                disabled={isAiLoading || !summaryData || summaryData.totalCount === 0}
-                className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-md transition-transform active:scale-95 disabled:bg-gray-300"
-              >
-                {isAiLoading ? 'AI思考中...' : '✨ AI分析を実行'}
-              </button>
+            {/* 期間指定 (ボタンなし) */}
+            <div className="flex items-center gap-2 bg-white p-4 rounded-xl shadow-sm border border-gray-200 w-fit">
+              <span className="text-sm font-bold text-gray-600">期間指定:</span>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border p-2 rounded-md text-sm" />
+              <span className="text-gray-400">~</span>
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border p-2 rounded-md text-sm" />
+              {isAiLoading && <span className="text-xs text-purple-600 font-bold ml-2 animate-pulse">✨ 分析中...</span>}
             </div>
 
             {/* 総評 */}
@@ -314,7 +323,7 @@ export default function AnalysisPage() {
 
             {summaryData && summaryData.totalCount > 0 ? (
               <>
-                {/* 1段目: 月別推移 */}
+                {/* 1. 月別推移 */}
                 <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
                   <h3 className="text-gray-600 font-bold mb-4">月別コマ数・利用率推移</h3>
                   <div className="w-full h-[300px]">
@@ -336,7 +345,7 @@ export default function AnalysisPage() {
                   <AiCommentBox title="推移分析" content={aiSummaryData?.trends} loading={isAiLoading} />
                 </div>
 
-                {/* 2段目: 曜日別欠席率 */}
+                {/* 2. 曜日別欠席率 */}
                 <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
                   <h3 className="text-gray-600 font-bold mb-4">曜日別 欠席率 (%)</h3>
                   <div className="w-full h-[300px]">
@@ -353,7 +362,7 @@ export default function AnalysisPage() {
                   <AiCommentBox title="曜日傾向" content={aiSummaryData?.dayOfWeek} loading={isAiLoading} />
                 </div>
 
-                {/* 3段目: ランキング */}
+                {/* 3. ランキング */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
                     <h3 className="text-gray-600 font-bold mb-4">利用回数 TOP10</h3>
@@ -386,7 +395,7 @@ export default function AnalysisPage() {
                 </div>
                 <AiCommentBox title="利用者分析" content={aiSummaryData?.ranking} loading={isAiLoading} />
 
-                {/* 4段目: 欠席理由 */}
+                {/* 4. 欠席理由 */}
                 <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
                   <h3 className="text-gray-600 font-bold mb-4">欠席理由の内訳</h3>
                   <div className="w-full h-[300px]">
@@ -416,9 +425,7 @@ export default function AnalysisPage() {
                 </div>
               </>
             ) : (
-              <div className="text-center py-20 text-gray-400 bg-gray-50 rounded-2xl border border-dashed border-gray-300">
-                指定された期間のデータがありません
-              </div>
+              <div className="text-center py-20 text-gray-400 bg-gray-50 rounded-2xl border border-dashed border-gray-300">データがありません</div>
             )}
           </div>
         )}
@@ -426,15 +433,13 @@ export default function AnalysisPage() {
         {/* ② ユーザー分析 */}
         {activeTab === 'user' && (
           <div className="space-y-6 animate-in fade-in zoom-in duration-300">
-            <div className="flex flex-wrap justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-200 gap-4">
-              <div className="flex items-center gap-2 w-full md:w-auto">
-                <span className="text-sm font-bold text-gray-600">利用者選択:</span>
-                <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} className="p-2 border rounded-md text-sm flex-1">
-                  <option value="">選択してください</option>
-                  {users.map(u => (<option key={u.id} value={u.id}>{u.lastName} {u.firstName}</option>))}
-                </select>
-              </div>
-              <button onClick={() => handleRunAI('user', userData)} disabled={isAiLoading || !userData} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-md transition-transform active:scale-95 disabled:bg-gray-300">{isAiLoading ? 'AI思考中...' : '✨ AI分析を実行'}</button>
+            <div className="flex items-center gap-2 w-full bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+              <span className="text-sm font-bold text-gray-600">利用者選択:</span>
+              <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} className="p-2 border rounded-md text-sm flex-1">
+                <option value="">選択してください</option>
+                {users.map(u => (<option key={u.id} value={u.id}>{u.lastName} {u.firstName}</option>))}
+              </select>
+              {isAiLoading && <span className="text-xs text-purple-600 font-bold ml-2 animate-pulse">✨ AI分析中...</span>}
             </div>
 
             <AiCommentBox title="全体評価" content={aiUserData?.overall} loading={isAiLoading} />
@@ -499,10 +504,9 @@ export default function AnalysisPage() {
 
         {/* ③ トレーニング分析 */}
         {activeTab === 'training' && (
-          <div className="flex flex-col items-center justify-center h-96 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-300 text-gray-400 animate-in fade-in">
+          <div className="flex flex-col items-center justify-center h-96 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-300 text-gray-400">
             <span className="text-6xl mb-4">🚧</span>
             <h2 className="text-xl font-bold">トレーニング分析は準備中です</h2>
-            <p className="mt-2 text-sm">個別支援計画と連動した成長分析機能を実装予定です。</p>
           </div>
         )}
       </div>
