@@ -1,13 +1,28 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// 以前設定したAPIキーを使用
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
+// キャッシュ無効化
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
-    const { context, type } = await request.json();
+    // ★★★ 修正: あなたの設定に合わせて GEMINI_API_KEY を読み込むように変更 ★★★
+    // (念のため GOOGLE_API_KEY も探すようにしておきます)
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
+    if (!apiKey) {
+      console.error("[API] Error: GEMINI_API_KEY is not set in environment variables.");
+      return NextResponse.json({ comment: 'APIキーの設定エラーです。環境変数を確認してください。' }, { status: 500 });
+    }
+
+    const { context, type } = await request.json();
+    
+    if (!context) {
+      return NextResponse.json({ comment: '分析するデータがありません。' }, { status: 400 });
+    }
+
+    // Geminiの初期化
+    const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
     let prompt = '';
@@ -40,13 +55,16 @@ export async function POST(request: Request) {
       `;
     }
 
+    console.log(`[API] Generating content with Gemini (${type})...`);
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
+    console.log(`[API] Success. Generated ${text.length} chars.`);
 
     return NextResponse.json({ comment: text });
+
   } catch (error: any) {
-    console.error('AI Analysis Error:', error);
+    console.error('[API] AI Analysis Error:', error);
     return NextResponse.json({ comment: 'AI分析の生成に失敗しました。時間をおいて再度お試しください。' }, { status: 500 });
   }
 }
