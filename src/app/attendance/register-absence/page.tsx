@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect ,useMemo} from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { db } from '@/lib/firebase/firebase';
 import { collection, addDoc, getDocs, query, where, orderBy } from 'firebase/firestore';
@@ -12,10 +12,9 @@ type User = { id: string; lastName: string; firstName: string; };
 
 const toDateString = (date: Date) => date.toISOString().split('T')[0];
 
-// ★ 追加: 欠席理由の自動判定ロジック
 const determineAbsenceCategory = (text: string): string => {
   if (!text) return 'その他';
-  if (text.includes('体調不良') || text.includes('熱') || text.includes('頭痛') || text.includes('風邪') || text.includes('痛')  || text.includes('インフル') || text.includes('病院')) return '体調不良';
+    if (text.includes('体調不良') || text.includes('熱') || text.includes('頭痛') || text.includes('風邪') || text.includes('痛')  || text.includes('インフル') || text.includes('病院')) return '体調不良';
   else if (text.includes('用事') || text.includes('親戚') || text.includes('家族') || text.includes('家庭') || text.includes('私用')) return '私用';
   else if (text.includes('クラブ') || text.includes('大会') || text.includes('練習試合') || text.includes('運動会') || text.includes('部活')) return '学校行事';
   else return 'その他';
@@ -31,14 +30,17 @@ export default function RegisterAbsencePage() {
   // フォーム用State
   const [absentUserId, setAbsentUserId] = useState('');
   const [absenceDate, setAbsenceDate] = useState(toDateString(new Date()));
-  const [notes, setNotes] = useState('');   // 詳細メモ（これだけ入力してもらう）
-  // ※ reason（手動入力）は削除しました
+  const [notes, setNotes] = useState('');
   
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // ★★★ 追加: 検索用State ★★★
+  // 検索用State
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
+  // ★★★ 追加: 欠席回数管理用State (Key: userId, Value: 回数) ★★★
+  const [absenceCounts, setAbsenceCounts] = useState<Record<string, number>>({});
+
+  // 1. ユーザー一覧取得
   useEffect(() => {
     const fetchUsers = async () => {
       try {
@@ -55,10 +57,41 @@ export default function RegisterAbsencePage() {
     fetchUsers();
   }, []);
 
-  // ★★★ 追加: 検索ロジック ★★★
+  // ★★★ 追加: 日付が変わったら、その月の欠席回数を全ユーザー分集計する ★★★
+  useEffect(() => {
+    const fetchMonthlyAbsences = async () => {
+      if (!absenceDate) return;
+      try {
+        const targetMonth = absenceDate.substring(0, 7); // "YYYY-MM"
+        
+        // その月の欠席データを全て取得
+        const q = query(
+          collection(db, 'attendanceRecords'),
+          where('month', '==', targetMonth),
+          where('usageStatus', '==', '欠席')
+        );
+        const snapshot = await getDocs(q);
+
+        // 集計
+        const counts: Record<string, number> = {};
+        snapshot.docs.forEach(doc => {
+          const uid = doc.data().userId;
+          counts[uid] = (counts[uid] || 0) + 1;
+        });
+        
+        setAbsenceCounts(counts);
+      } catch (e) {
+        console.error("欠席回数の取得に失敗", e);
+      }
+    };
+
+    fetchMonthlyAbsences();
+  }, [absenceDate]); // 日付が変わるたびに再計算
+
+  // 検索ロジック
   const searchMatchedUsers = useMemo(() => {
     const queryText = userSearchQuery.trim();
-    if (!queryText) return []; // 未入力時は候補を出さない
+    if (!queryText) return [];
     
     const lowerQuery = queryText.toLowerCase();
     return users.filter(user => {
@@ -78,7 +111,8 @@ export default function RegisterAbsencePage() {
     try {
       const targetMonth = absenceDate.substring(0, 7);
       
-      // 1. 回数制限チェック (4回まで)
+      // 1. 回数制限チェック
+      // (念のため保存直前にも最新データをチェック)
       const absenceQuery = query(
         collection(db, "attendanceRecords"), 
         where("userId", "==", absentUserId), 
@@ -102,7 +136,7 @@ export default function RegisterAbsencePage() {
         throw new Error(`${absenceDate} に ${user.lastName} ${user.firstName} さんの記録は既にあります。`);
       }
 
-      // ★ 連絡内容から理由を自動判定
+      // 連絡内容から理由を自動判定
       const autoReason = determineAbsenceCategory(notes);
 
       // 3. 保存
@@ -113,7 +147,7 @@ export default function RegisterAbsencePage() {
         month: targetMonth,
         usageStatus: '欠席',
         
-        reason: autoReason, // ★ 自動判定した値を保存
+        reason: autoReason, 
         notes: notes,
         staffName: currentUser?.displayName || '担当者',
         
@@ -122,10 +156,16 @@ export default function RegisterAbsencePage() {
       
       toast.success(`${absenceDate} に ${user.lastName} ${user.firstName} さんを欠席登録しました。`, { id: loadingToast });
       
+      // State更新 (回数も+1しておく)
+      setAbsenceCounts(prev => ({
+        ...prev,
+        [user.id]: (prev[user.id] || 0) + 1
+      }));
+
       // フォームリセット
       setAbsentUserId('');
+      setUserSearchQuery('');
       setNotes('');
-      // setReason('') は削除済み
       
     } catch (error: any) {
       toast.error(error.message, { id: loadingToast });
@@ -154,7 +194,7 @@ export default function RegisterAbsencePage() {
             />
           </div>
 
-          {/* 利用者 (検索式に変更) */}
+          {/* 利用者 (検索式 + 回数表示) */}
           <div>
             <label className="block text-sm font-bold text-gray-700 mb-1">利用者 <span className="text-red-500">*</span></label>
             <div className="relative">
@@ -164,33 +204,48 @@ export default function RegisterAbsencePage() {
                 onChange={(e) => setUserSearchQuery(e.target.value)}
                 placeholder={users.length > 0 ? "氏名を入力して検索..." : "読み込み中..."}
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100"
-                disabled={!!absentUserId} // 選択済みなら入力不可にする
+                disabled={!!absentUserId}
               />
               
               {/* 候補リスト */}
               {!absentUserId && userSearchQuery && searchMatchedUsers.length > 0 && (
                 <ul className="absolute top-full left-0 z-10 w-full max-h-60 overflow-y-auto bg-white border border-blue-400 rounded-md shadow-lg mt-1">
-                  {searchMatchedUsers.map(user => (
-                    <li
-                      key={user.id}
-                      onClick={() => {
-                        setAbsentUserId(user.id);
-                        setUserSearchQuery(''); // 入力をクリア
-                      }}
-                      className="p-3 cursor-pointer hover:bg-blue-100 text-sm border-b last:border-b-0"
-                    >
-                      {user.lastName} {user.firstName}
-                    </li>
-                  ))}
+                  {searchMatchedUsers.map(user => {
+                    const count = absenceCounts[user.id] || 0; // 回数を取得
+                    return (
+                      <li
+                        key={user.id}
+                        onClick={() => {
+                          setAbsentUserId(user.id);
+                          setUserSearchQuery('');
+                        }}
+                        className="p-3 cursor-pointer hover:bg-blue-100 text-sm border-b last:border-b-0 flex justify-between items-center"
+                      >
+                        {/* 左：氏名 */}
+                        <span className="font-medium text-gray-800">
+                          {user.lastName} {user.firstName}
+                        </span>
+                        
+                        {/* ★ 右：欠席回数 (赤文字) */}
+                        <span className={`font-bold ${count >= 4 ? 'text-red-600' : 'text-red-500'}`}>
+                          欠席: {count}回
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
 
-            {/* 選択中の表示 & 解除ボタン */}
+            {/* 選択中の表示 */}
             {absentUserId && (
               <div className="mt-2 flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
                 <span className="text-blue-700 font-bold">
                   選択中: {users.find(u => u.id === absentUserId)?.lastName} {users.find(u => u.id === absentUserId)?.firstName}
+                  {/* 選択中も回数が見えるようにする場合 */}
+                  <span className="ml-2 text-sm text-red-500">
+                    (今月欠席: {absenceCounts[absentUserId] || 0}回)
+                  </span>
                 </span>
                 <button
                   type="button"
@@ -205,8 +260,6 @@ export default function RegisterAbsencePage() {
               </div>
             )}
           </div>
-
-          {/* ★ 手動の「欠席理由」入力欄を削除しました ★ */}
 
           {/* 詳細メモ */}
           <div>
