@@ -4,7 +4,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
 import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
-// ★ 修正: LineChart を追加しました
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   LineChart, Line, ComposedChart, PieChart, Pie, Cell
@@ -52,7 +51,7 @@ export default function AnalysisPage() {
   const [aiComment, setAiComment] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
 
-  // --- 初期データ取得 (全期間取得し、クライアント側でフィルタリング) ---
+  // --- 初期データ取得 ---
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
@@ -60,10 +59,13 @@ export default function AnalysisPage() {
         // 1. ユーザー一覧
         const userSnap = await getDocs(collection(db, 'users'));
         const userList = userSnap.docs.map(d => ({ id: d.id, ...d.data() } as User));
+        
+        // ★ 安全策: 名前がない場合のエラー回避
         userList.sort((a, b) => (a.lastName || '').localeCompare((b.lastName || ''), 'ja'));
+        
         setUsers(userList);
 
-        // 2. 出欠データ (過去1年分取得)
+        // 2. 出欠データ
         const now = new Date();
         const pastDate = new Date();
         pastDate.setFullYear(now.getFullYear() - 1);
@@ -122,6 +124,9 @@ export default function AnalysisPage() {
     
     filtered.forEach(rec => {
       const m = rec.month;
+      // monthデータがない場合はスキップ
+      if (!m) return;
+
       if (!monthlyStats[m]) monthlyStats[m] = { month: m, houkago: 0, kyuko: 0, absence: 0 };
       
       if (rec.usageStatus === '放課後') monthlyStats[m].houkago++;
@@ -129,8 +134,9 @@ export default function AnalysisPage() {
       else if (rec.usageStatus === '欠席') monthlyStats[m].absence++;
     });
 
+    // ★ 安全策: 月の並び替えでのエラー回避
     const monthlyChartData = Object.values(monthlyStats)
-      .sort((a, b) => a.month.localeCompare(b.month))
+      .sort((a, b) => (a.month || '').localeCompare((b.month || '')))
       .map(d => {
         const total = d.houkago + d.kyuko + d.absence;
         const usage = d.houkago + d.kyuko;
@@ -141,7 +147,7 @@ export default function AnalysisPage() {
     // B. 個人別ランキング (利用回数)
     const userRanking: Record<string, number> = {};
     filtered.forEach(rec => {
-      if (rec.usageStatus !== '欠席') {
+      if (rec.usageStatus !== '欠席' && rec.userName) {
         userRanking[rec.userName] = (userRanking[rec.userName] || 0) + 1;
       }
     });
@@ -179,11 +185,15 @@ export default function AnalysisPage() {
     // A. 月別利用推移
     const monthlyStats: Record<string, { month: string; usage: number; absence: number }> = {};
     myRecords.forEach(rec => {
+      if (!rec.month) return; // monthがない場合はスキップ
+
       if (!monthlyStats[rec.month]) monthlyStats[rec.month] = { month: rec.month, usage: 0, absence: 0 };
       if (rec.usageStatus === '欠席') monthlyStats[rec.month].absence++;
       else monthlyStats[rec.month].usage++;
     });
-    const monthlyChartData = Object.values(monthlyStats).sort((a, b) => a.month.localeCompare(b.month));
+    
+    // ★ 安全策: 月の並び替えでのエラー回避
+    const monthlyChartData = Object.values(monthlyStats).sort((a, b) => (a.month || '').localeCompare((b.month || '')));
 
     // B. 欠席理由の内訳
     const reasonStats: Record<string, number> = {};
@@ -250,7 +260,7 @@ export default function AnalysisPage() {
               </button>
             </div>
 
-            {/* AIコメント表示エリア (最上部に配置) */}
+            {/* AIコメント表示エリア */}
             {aiComment && (
               <div className="bg-purple-50 border border-purple-200 p-6 rounded-2xl shadow-sm">
                 <h3 className="text-purple-800 font-bold mb-2 flex items-center">
@@ -264,10 +274,10 @@ export default function AnalysisPage() {
 
             {summaryData && summaryData.totalCount > 0 ? (
               <>
-                {/* 1段目: 月別推移 & 利用率 (複合グラフ) */}
+                {/* 1段目: 月別推移 */}
                 <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
                   <h3 className="text-gray-600 font-bold mb-4">月別コマ数・欠席数・利用率推移</h3>
-                  <div className="flex-1 w-full min-h-[250px]">
+                  <div className="flex-1 w-full min-h-[300px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <ComposedChart data={summaryData.monthlyChartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -285,12 +295,12 @@ export default function AnalysisPage() {
                   </div>
                 </div>
 
-                {/* 2段目: ランキング & 欠席理由 (2カラム) */}
+                {/* 2段目: ランキング & 欠席理由 */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* 個人別ランキング */}
                   <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
                     <h3 className="text-gray-600 font-bold mb-4">利用回数ランキング (TOP10)</h3>
-                    <div className="flex-1 w-full min-h-[250px]">
+                    <div className="flex-1 w-full min-h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart layout="vertical" data={summaryData.rankingChartData} margin={{ left: 20 }}>
                           <CartesianGrid strokeDasharray="3 3" horizontal={false} />
@@ -306,7 +316,7 @@ export default function AnalysisPage() {
                   {/* 欠席理由分析 */}
                   <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
                     <h3 className="text-gray-600 font-bold mb-4">欠席理由の内訳</h3>
-                    <div className="flex-1 w-full min-h-[250px]">
+                    <div className="flex-1 w-full min-h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
@@ -385,7 +395,7 @@ export default function AnalysisPage() {
                   {/* 利用推移 */}
                   <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
                     <h3 className="text-gray-600 font-bold mb-4">{userData.user?.lastName}さんの利用推移</h3>
-                    <div className="flex-1 w-full min-h-[250px]">
+                    <div className="flex-1 w-full min-h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={userData.monthlyChartData}>
                           <CartesianGrid strokeDasharray="3 3" />
@@ -403,7 +413,7 @@ export default function AnalysisPage() {
                   {/* 欠席理由の内訳 */}
                   <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
                     <h3 className="text-gray-600 font-bold mb-4">欠席理由の内訳</h3>
-                    <div className="flex-1 w-full min-h-[250px]">
+                    <div className="flex-1 w-full min-h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
