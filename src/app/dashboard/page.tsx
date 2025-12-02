@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, limit, documentId } from 'firebase/firestore';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 
@@ -22,11 +22,12 @@ type TodaySummary = {
   date: string;
   weather: string;
   userCount: number;
-  events: string[];
+  scheduledUserNames: { name: string; service: string }[]; // 名前とサービス種別
+  googleEvents: string[]; // Googleカレンダーの予定
 };
 
 type PreviousDayData = {
-  dateStr: string; // YYYY/MM/DD
+  dateStr: string;
   countHoukago: number;
   countKyuko: number;
   countAbsence: number;
@@ -34,9 +35,18 @@ type PreviousDayData = {
     id: string;
     userName: string;
     status: string;
-    time?: string; // 10:00 - 17:00
-    reason?: string; // 欠席理由
+    time?: string;
+    reason?: string;
   }[];
+};
+
+// ヘルパー: 配列をチャンクに分割
+const chunkArray = (array: string[], size: number) => {
+  const chunked = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunked.push(array.slice(i, i + size));
+  }
+  return chunked;
 };
 
 // --- コンポーネント: アラートパネル ---
@@ -53,7 +63,8 @@ const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean
         </div>
         <div>
           <h3 className="text-green-800 font-bold">状況は正常です</h3>
-          <p className="text-green-600 text-sm">記録漏れや欠席回数超過はありません。</p>
+          {/* ★ 修正: 文言を変更 */}
+          <p className="text-green-600 text-sm">欠席が4回に達した利用者はいません。</p>
         </div>
       </div>
     );
@@ -101,25 +112,45 @@ const TodayPanel = ({ summary }: { summary: TodaySummary }) => {
           <p className="text-3xl font-extrabold text-gray-800">{summary.date}</p>
           <p className="text-gray-500 text-sm font-medium bg-gray-100 px-2 py-1 rounded">天気: {summary.weather}</p>
         </div>
-        <div className="bg-blue-50 rounded-xl p-4 text-center mb-4">
-          <p className="text-xs text-blue-400 font-bold mb-1">利用予定</p>
-          <p className="text-4xl font-bold text-blue-600">{summary.userCount}<span className="text-lg text-blue-400 ml-1">名</span></p>
+        
+        <div className="bg-blue-50 rounded-xl p-4 mb-4">
+          <div className="text-center border-b border-blue-100 pb-2 mb-2">
+            <p className="text-xs text-blue-400 font-bold mb-1">利用予定</p>
+            <p className="text-4xl font-bold text-blue-600">{summary.userCount}<span className="text-lg text-blue-400 ml-1">名</span></p>
+          </div>
+          
+          {/* ★ 追加: 利用者一覧 */}
+          <div className="max-h-[150px] overflow-y-auto custom-scrollbar pr-1">
+            <p className="text-[10px] text-blue-400 font-bold mb-1 text-center">- 予定者一覧 -</p>
+            {summary.scheduledUserNames.length > 0 ? (
+              <div className="flex flex-wrap gap-1 justify-center">
+                {summary.scheduledUserNames.map((u, i) => (
+                  <span key={i} className="text-xs bg-white text-blue-700 px-2 py-1 rounded border border-blue-100 shadow-sm">
+                    {u.name}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-center text-gray-400">なし</p>
+            )}
+          </div>
         </div>
       </div>
       
       <div className="border-t border-gray-100 pt-4">
-        <p className="text-xs text-gray-400 mb-2 font-bold">今日の予定・イベント</p>
-        {summary.events.length > 0 ? (
+        <p className="text-xs text-gray-400 mb-2 font-bold">今日の予定・イベント (Google Calendar)</p>
+        {/* ★ 修正: Googleカレンダーの内容を表示 */}
+        {summary.googleEvents.length > 0 ? (
           <ul className="space-y-2">
-            {summary.events.map((ev, i) => (
-              <li key={i} className="flex items-start text-sm text-gray-700">
-                <span className="inline-block w-2 h-2 bg-blue-400 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
+            {summary.googleEvents.map((ev, i) => (
+              <li key={i} className="flex items-start text-sm text-gray-700 bg-gray-50 p-2 rounded">
+                <span className="inline-block w-2 h-2 bg-green-500 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
                 {ev}
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-gray-400 italic">特になし</p>
+          <p className="text-sm text-gray-400 italic">予定はありません</p>
         )}
       </div>
     </div>
@@ -137,7 +168,6 @@ const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loa
         前回の実績 <span className="text-gray-800 ml-2 text-base normal-case">({data.dateStr})</span>
       </h3>
 
-      {/* 数字情報 */}
       <div className="flex gap-2 mb-4 text-xs font-bold text-center">
         <div className="flex-1 bg-blue-50 text-blue-700 py-2 rounded">
           放課後<br/><span className="text-lg">{data.countHoukago}</span>
@@ -150,8 +180,7 @@ const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loa
         </div>
       </div>
 
-      {/* リスト (スクロール) */}
-      <div className="flex-1 overflow-y-auto max-h-[250px] border-t border-gray-100 pt-2 space-y-2 pr-1 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto max-h-[300px] border-t border-gray-100 pt-2 space-y-2 pr-1 custom-scrollbar">
         {data.records.map((rec) => (
           <div key={rec.id} className="text-sm flex justify-between items-start border-b border-gray-50 pb-2 last:border-0">
             <span className="font-bold text-gray-700 w-24 truncate">{rec.userName}</span>
@@ -205,7 +234,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [todaySummary, setTodaySummary] = useState<TodaySummary>({
-    date: '', weather: '-', userCount: 0, events: []
+    date: '', weather: '-', userCount: 0, scheduledUserNames: [], googleEvents: []
   });
   const [prevDayData, setPrevDayData] = useState<PreviousDayData | null>(null);
 
@@ -216,7 +245,6 @@ export default function DashboardPage() {
         const now = new Date();
         const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         
-        // JST日付
         const todayJst = new Date(now.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
         const y = todayJst.getFullYear();
         const mStr = String(todayJst.getMonth() + 1).padStart(2, '0');
@@ -228,7 +256,7 @@ export default function DashboardPage() {
         // ==========================================
         const alertList: AlertItem[] = [];
 
-        // A. 欠席回数上限チェック
+        // A. 欠席回数上限
         const absQuery = query(
           collection(db, 'attendanceRecords'),
           where('month', '==', currentMonth),
@@ -246,18 +274,18 @@ export default function DashboardPage() {
             alertList.push({
               id: `abs-${uid}`,
               type: 'ABSENCE_LIMIT',
-              message: `${data.name} さんの欠席が上限(4回)に達しました`,
+              message: `${data.name} さんの欠席が4回に達しました`,
               detail: `${data.count}回`,
               link: '/absence-management'
             });
           }
         });
 
-        // B. 記録漏れチェック (今月分で、今日以前の日付、かつ欠席じゃないのに時間が空)
+        // B. 記録漏れ
         const recordQuery = query(
           collection(db, 'attendanceRecords'),
           where('month', '==', currentMonth),
-          where('date', '<', todayStr) // 今日は除外
+          where('date', '<', todayStr)
         );
         const recordSnap = await getDocs(recordQuery);
         recordSnap.forEach(doc => {
@@ -269,7 +297,7 @@ export default function DashboardPage() {
                 type: 'MISSING_RECORD',
                 message: `${d.date} ${d.userName} さんの記録漏れ`,
                 detail: !d.arrivalTime ? '来所時間なし' : '退所時間なし',
-                link: '/attendance' // 修正画面へ飛ばせればベスト
+                link: '/attendance'
               });
             }
           }
@@ -278,21 +306,67 @@ export default function DashboardPage() {
         setAlerts(alertList);
 
         // ==========================================
-        // 2. 本日の情報
+        // 2. 本日の情報 (利用者 & Googleカレンダー)
         // ==========================================
-        // 予定人数
+        // A. 利用予定者と人数
         const eventQuery = query(
           collection(db, 'events'),
           where('dateKeyJst', '==', todayStr)
         );
         const eventSnap = await getDocs(eventQuery);
+        
         let userCount = 0;
+        const scheduledUserIds: string[] = [];
+        
         eventSnap.forEach(doc => {
-          const type = doc.data().type;
-          if (type === '放課後' || type === '休校日') userCount++;
+          const d = doc.data();
+          if (d.type === '放課後' || d.type === '休校日') {
+            userCount++;
+            scheduledUserIds.push(d.userId);
+          }
         });
 
-        // 天気
+        // ユーザー名を取得 (IDから)
+        let scheduledUserNames: { name: string; service: string }[] = [];
+        if (scheduledUserIds.length > 0) {
+          // Firestoreの 'in' クエリは最大10件制限があるため、チャンク分割して取得
+          const userChunks = chunkArray(scheduledUserIds, 10);
+          const userDocsPromises = userChunks.map(ids => 
+            getDocs(query(collection(db, 'users'), where(documentId(), 'in', ids)))
+          );
+          const userSnapshots = await Promise.all(userDocsPromises);
+          
+          const userMap = new Map();
+          userSnapshots.forEach(snap => {
+            snap.forEach(doc => {
+              const u = doc.data();
+              userMap.set(doc.id, `${u.lastName} ${u.firstName}`);
+            });
+          });
+
+          // 名前順にソートしてリスト化
+          scheduledUserNames = scheduledUserIds
+            .map(id => ({ name: userMap.get(id) || '不明', service: '' }))
+            .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+        }
+
+        // B. Googleカレンダー (iCal API経由)
+        let googleEvents: string[] = [];
+        try {
+          const timeMin = new Date(`${todayStr}T00:00:00`).toISOString();
+          const timeMax = new Date(`${todayStr}T23:59:59`).toISOString();
+          const calRes = await fetch(`/api/calendar?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
+          if (calRes.ok) {
+            const calData = await calRes.json();
+            if (calData.items) {
+              googleEvents = calData.items.map((item: any) => item.summary);
+            }
+          }
+        } catch (calError) {
+          console.error("Calendar fetch error:", calError);
+        }
+
+        // C. 天気
         let weather = '-';
         try {
           const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=34.6937&longitude=135.5023&daily=weather_code&timezone=Asia%2FTokyo&start_date=${todayStr}&end_date=${todayStr}`);
@@ -310,13 +384,13 @@ export default function DashboardPage() {
           date: `${mStr}/${dStr}`,
           weather,
           userCount,
-          events: [] 
+          scheduledUserNames,
+          googleEvents 
         });
 
         // ==========================================
-        // 3. 前回の利用実績 (昨日以前で最新のデータ)
+        // 3. 前回の利用実績
         // ==========================================
-        // 最新の日付を1つ探す
         const prevDateQuery = query(
           collection(db, 'attendanceRecords'),
           where('date', '<', todayStr),
@@ -326,9 +400,8 @@ export default function DashboardPage() {
         const prevDateSnap = await getDocs(prevDateQuery);
         
         if (!prevDateSnap.empty) {
-          const targetDateStr = prevDateSnap.docs[0].data().date; // "2025-11-30" など
+          const targetDateStr = prevDateSnap.docs[0].data().date;
           
-          // その日の全データを取得
           const prevRecordsQuery = query(
             collection(db, 'attendanceRecords'),
             where('date', '==', targetDateStr)
@@ -342,14 +415,12 @@ export default function DashboardPage() {
               userName: d.userName,
               status: d.usageStatus,
               time: d.arrivalTime && d.departureTime ? `${d.arrivalTime}-${d.departureTime}` : d.arrivalTime || '時間未定',
-              reason: d.reason || d.notes // 欠席理由
+              reason: d.reason || d.notes
             };
           });
 
-          // 名前順ソート
           recordsData.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
 
-          // 集計
           let cHoukago = 0, cKyuko = 0, cAbsence = 0;
           recordsData.forEach(r => {
             if (r.status === '放課後') cHoukago++;
@@ -381,28 +452,21 @@ export default function DashboardPage() {
   return (
     <AppLayout pageTitle="ダッシュボード">
       <div className="max-w-6xl mx-auto space-y-6">
-        
-        {/* 1. アラートパネル (最重要) */}
         <AlertPanel alerts={alerts} loading={loading} />
 
-        {/* 2. 状況パネル (2カラム) */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-auto lg:h-[400px]">
-          {/* 左: 本日 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-auto lg:h-[450px]">
           <div className="h-full">
             <TodayPanel summary={todaySummary} />
           </div>
-          {/* 右: 前回の実績 */}
           <div className="h-full">
             <PreviousDayPanel data={prevDayData} loading={loading} />
           </div>
         </div>
 
-        {/* 3. クイックアクセス (下部・横いっぱい) */}
         <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
           <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-4">業務メニュー</h3>
           <QuickAccess />
         </div>
-
       </div>
     </AppLayout>
   );
