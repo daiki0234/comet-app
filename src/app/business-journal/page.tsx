@@ -404,9 +404,9 @@ export default function BusinessJournalPage() {
                     <td className="border p-2 text-xs leading-relaxed whitespace-normal align-top">
                       {row.userNames}
                     </td>
-                    <td className="border p-2 text-center bg-blue-50 font-semibold align-top">{row.countHoukago || ''}</td>
-                    <td className="border p-2 text-center bg-orange-50 font-semibold align-top">{row.countKyuko || ''}</td>
-                    <td className="border p-2 text-center bg-red-50 font-semibold align-top">{row.countAbsence || ''}</td>
+                    <td className="border p-2 text-center bg-blue-50 font-semibold align-top">{row.countHoukago}</td>
+                    <td className="border p-2 text-center bg-orange-50 font-semibold align-top">{row.countKyuko}</td>
+                    <td className="border p-2 text-center bg-red-50 font-semibold align-top">{row.countAbsence}</td>
                     <td className="border p-2 align-top"></td>
                   </tr>
                 ))
