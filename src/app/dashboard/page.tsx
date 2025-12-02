@@ -8,26 +8,44 @@ import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 
 // --- 型定義 ---
-type AbsenceAlert = {
-  userId: string;
-  userName: string;
-  count: number;
+type AlertType = 'ABSENCE_LIMIT' | 'MISSING_RECORD';
+
+type AlertItem = {
+  id: string;
+  type: AlertType;
+  message: string;
+  detail?: string;
+  link?: string;
 };
 
 type TodaySummary = {
   date: string;
   weather: string;
-  userCount: number; // 今日の利用予定人数
-  events: string[];  // 今日のイベント
+  userCount: number;
+  events: string[];
+};
+
+type PreviousDayData = {
+  dateStr: string; // YYYY/MM/DD
+  countHoukago: number;
+  countKyuko: number;
+  countAbsence: number;
+  records: {
+    id: string;
+    userName: string;
+    status: string;
+    time?: string; // 10:00 - 17:00
+    reason?: string; // 欠席理由
+  }[];
 };
 
 // --- コンポーネント: アラートパネル ---
-const AlertPanel = ({ alerts, loading }: { alerts: AbsenceAlert[], loading: boolean }) => {
-  if (loading) return <div className="bg-gray-100 h-24 rounded-xl animate-pulse" />;
+const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean }) => {
+  if (loading) return <div className="bg-gray-100 h-24 rounded-xl animate-pulse mb-6" />;
 
   if (alerts.length === 0) {
     return (
-      <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded-r-xl shadow-sm flex items-center">
+      <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded-r-xl shadow-sm flex items-center mb-6">
         <div className="p-2 bg-green-100 rounded-full mr-3">
           <svg className="w-6 h-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -35,42 +53,40 @@ const AlertPanel = ({ alerts, loading }: { alerts: AbsenceAlert[], loading: bool
         </div>
         <div>
           <h3 className="text-green-800 font-bold">状況は正常です</h3>
-          <p className="text-green-600 text-sm">欠席回数上限（4回）に達している利用者はいません。</p>
+          <p className="text-green-600 text-sm">記録漏れや欠席回数超過はありません。</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl shadow-sm">
+    <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl shadow-sm mb-6">
       <div className="flex items-center mb-3">
         <div className="p-2 bg-red-100 rounded-full mr-3">
           <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
         </div>
-        <h3 className="text-red-800 font-bold text-lg">要確認：欠席回数の上限アラート</h3>
+        <h3 className="text-red-800 font-bold text-lg">要確認アラート ({alerts.length}件)</h3>
       </div>
-      <div className="bg-white rounded-lg border border-red-100 overflow-hidden">
-        <table className="min-w-full text-sm">
-          <thead className="bg-red-50">
-            <tr>
-              <th className="px-4 py-2 text-left text-red-700 font-bold">利用者名</th>
-              <th className="px-4 py-2 text-center text-red-700 font-bold">今月の欠席</th>
-              <th className="px-4 py-2 text-right text-red-700 font-bold">ステータス</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-red-100">
-            {alerts.map((user) => (
-              <tr key={user.userId}>
-                <td className="px-4 py-3 font-medium text-gray-800">{user.userName}</td>
-                <td className="px-4 py-3 text-center font-bold text-red-600">{user.count}回</td>
-                <td className="px-4 py-3 text-right text-xs text-gray-500">振替不可の可能性</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ul className="space-y-2">
+        {alerts.map((alert) => (
+          <li key={alert.id} className="bg-white p-3 rounded border border-red-100 flex justify-between items-center text-sm shadow-sm">
+            <div className="flex items-center">
+              <span className={`px-2 py-1 rounded text-xs font-bold text-white mr-3 ${alert.type === 'ABSENCE_LIMIT' ? 'bg-orange-500' : 'bg-red-500'}`}>
+                {alert.type === 'ABSENCE_LIMIT' ? '欠席上限' : '記録漏れ'}
+              </span>
+              <span className="text-gray-800 font-medium">{alert.message}</span>
+              {alert.detail && <span className="ml-2 text-gray-500 text-xs">({alert.detail})</span>}
+            </div>
+            {alert.link && (
+              <Link href={alert.link} className="text-blue-600 hover:underline text-xs font-bold whitespace-nowrap ml-2">
+                確認する &rarr;
+              </Link>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 };
@@ -78,21 +94,21 @@ const AlertPanel = ({ alerts, loading }: { alerts: AbsenceAlert[], loading: bool
 // --- コンポーネント: 本日の状況 ---
 const TodayPanel = ({ summary }: { summary: TodaySummary }) => {
   return (
-    <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
-      <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-4">本日の状況</h3>
-      <div className="flex items-center justify-between mb-6">
-        <div>
+    <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 h-full flex flex-col justify-between">
+      <div>
+        <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-4">本日の状況</h3>
+        <div className="flex items-end justify-between mb-4">
           <p className="text-3xl font-extrabold text-gray-800">{summary.date}</p>
-          <p className="text-gray-500 text-sm mt-1">大阪の天気: {summary.weather}</p>
+          <p className="text-gray-500 text-sm font-medium bg-gray-100 px-2 py-1 rounded">天気: {summary.weather}</p>
         </div>
-        <div className="text-right">
-          <p className="text-xs text-gray-400 mb-1">利用予定</p>
-          <p className="text-4xl font-bold text-blue-600">{summary.userCount}<span className="text-lg text-gray-500 ml-1">名</span></p>
+        <div className="bg-blue-50 rounded-xl p-4 text-center mb-4">
+          <p className="text-xs text-blue-400 font-bold mb-1">利用予定</p>
+          <p className="text-4xl font-bold text-blue-600">{summary.userCount}<span className="text-lg text-blue-400 ml-1">名</span></p>
         </div>
       </div>
       
       <div className="border-t border-gray-100 pt-4">
-        <p className="text-xs text-gray-400 mb-2">今日の予定・イベント</p>
+        <p className="text-xs text-gray-400 mb-2 font-bold">今日の予定・イベント</p>
         {summary.events.length > 0 ? (
           <ul className="space-y-2">
             {summary.events.map((ev, i) => (
@@ -110,6 +126,49 @@ const TodayPanel = ({ summary }: { summary: TodaySummary }) => {
   );
 };
 
+// --- コンポーネント: 前回の利用実績 ---
+const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loading: boolean }) => {
+  if (loading) return <div className="bg-white h-full p-6 rounded-2xl shadow-ios border border-gray-200 animate-pulse" />;
+  if (!data) return <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 text-gray-400">履歴なし</div>;
+
+  return (
+    <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 h-full flex flex-col">
+      <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-3">
+        前回の実績 <span className="text-gray-800 ml-2 text-base normal-case">({data.dateStr})</span>
+      </h3>
+
+      {/* 数字情報 */}
+      <div className="flex gap-2 mb-4 text-xs font-bold text-center">
+        <div className="flex-1 bg-blue-50 text-blue-700 py-2 rounded">
+          放課後<br/><span className="text-lg">{data.countHoukago}</span>
+        </div>
+        <div className="flex-1 bg-orange-50 text-orange-700 py-2 rounded">
+          休校日<br/><span className="text-lg">{data.countKyuko}</span>
+        </div>
+        <div className="flex-1 bg-red-50 text-red-700 py-2 rounded">
+          欠席<br/><span className="text-lg">{data.countAbsence}</span>
+        </div>
+      </div>
+
+      {/* リスト (スクロール) */}
+      <div className="flex-1 overflow-y-auto max-h-[250px] border-t border-gray-100 pt-2 space-y-2 pr-1 custom-scrollbar">
+        {data.records.map((rec) => (
+          <div key={rec.id} className="text-sm flex justify-between items-start border-b border-gray-50 pb-2 last:border-0">
+            <span className="font-bold text-gray-700 w-24 truncate">{rec.userName}</span>
+            <span className="text-right flex-1 ml-2">
+              {rec.status === '欠席' ? (
+                <span className="text-red-500 text-xs bg-red-50 px-2 py-0.5 rounded">{rec.reason || '理由なし'}</span>
+              ) : (
+                <span className="text-gray-600 font-mono text-xs">{rec.time}</span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 // --- コンポーネント: クイックアクセス ---
 const QuickAccess = () => {
   const menus = [
@@ -122,7 +181,7 @@ const QuickAccess = () => {
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+    <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
       {menus.map((menu) => (
         <Link 
           key={menu.title} 
@@ -133,8 +192,8 @@ const QuickAccess = () => {
             ${menu.color}
           `}
         >
-          <span className="text-3xl mb-2">{menu.icon}</span>
-          <span className="text-xs font-bold">{menu.title}</span>
+          <span className="text-2xl mb-1">{menu.icon}</span>
+          <span className="text-xs font-bold text-center">{menu.title}</span>
         </Link>
       ))}
     </div>
@@ -144,10 +203,11 @@ const QuickAccess = () => {
 export default function DashboardPage() {
   const { currentUser } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [alerts, setAlerts] = useState<AbsenceAlert[]>([]);
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [todaySummary, setTodaySummary] = useState<TodaySummary>({
     date: '', weather: '-', userCount: 0, events: []
   });
+  const [prevDayData, setPrevDayData] = useState<PreviousDayData | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -155,36 +215,72 @@ export default function DashboardPage() {
       try {
         const now = new Date();
         const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-        // JSTでの今日の日付文字列 (YYYY-MM-DD)
+        
+        // JST日付
         const todayJst = new Date(now.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
         const y = todayJst.getFullYear();
-        const m = String(todayJst.getMonth() + 1).padStart(2, '0');
-        const d = String(todayJst.getDate()).padStart(2, '0');
-        const todayStr = `${y}-${m}-${d}`;
+        const mStr = String(todayJst.getMonth() + 1).padStart(2, '0');
+        const dStr = String(todayJst.getDate()).padStart(2, '0');
+        const todayStr = `${y}-${mStr}-${dStr}`;
 
-        // 1. アラート取得 (欠席4回以上)
+        // ==========================================
+        // 1. アラート収集
+        // ==========================================
+        const alertList: AlertItem[] = [];
+
+        // A. 欠席回数上限チェック
         const absQuery = query(
           collection(db, 'attendanceRecords'),
           where('month', '==', currentMonth),
           where('usageStatus', '==', '欠席')
         );
         const absSnap = await getDocs(absQuery);
-        
         const counts: Record<string, { name: string; count: number }> = {};
         absSnap.forEach(doc => {
           const d = doc.data();
           if (!counts[d.userId]) counts[d.userId] = { name: d.userName, count: 0 };
           counts[d.userId].count++;
         });
+        Object.entries(counts).forEach(([uid, data]) => {
+          if (data.count >= 4) {
+            alertList.push({
+              id: `abs-${uid}`,
+              type: 'ABSENCE_LIMIT',
+              message: `${data.name} さんの欠席が上限(4回)に達しました`,
+              detail: `${data.count}回`,
+              link: '/absence-management'
+            });
+          }
+        });
 
-        const alertList = Object.entries(counts)
-          .map(([uid, data]) => ({ userId: uid, userName: data.name, count: data.count }))
-          .filter(item => item.count >= 4);
-        
+        // B. 記録漏れチェック (今月分で、今日以前の日付、かつ欠席じゃないのに時間が空)
+        const recordQuery = query(
+          collection(db, 'attendanceRecords'),
+          where('month', '==', currentMonth),
+          where('date', '<', todayStr) // 今日は除外
+        );
+        const recordSnap = await getDocs(recordQuery);
+        recordSnap.forEach(doc => {
+          const d = doc.data();
+          if (d.usageStatus !== '欠席') {
+            if (!d.arrivalTime || !d.departureTime) {
+              alertList.push({
+                id: `miss-${doc.id}`,
+                type: 'MISSING_RECORD',
+                message: `${d.date} ${d.userName} さんの記録漏れ`,
+                detail: !d.arrivalTime ? '来所時間なし' : '退所時間なし',
+                link: '/attendance' // 修正画面へ飛ばせればベスト
+              });
+            }
+          }
+        });
+
         setAlerts(alertList);
 
-        // 2. 本日の利用予定者数 (簡易的にeventsコレクションから取得)
-        // ※正確にはカレンダーロジックと同じものが必要ですが、ここでは軽量化のためFirestoreのみ参照
+        // ==========================================
+        // 2. 本日の情報
+        // ==========================================
+        // 予定人数
         const eventQuery = query(
           collection(db, 'events'),
           where('dateKeyJst', '==', todayStr)
@@ -196,14 +292,13 @@ export default function DashboardPage() {
           if (type === '放課後' || type === '休校日') userCount++;
         });
 
-        // 3. 今日の天気 (Open-Meteo API)
+        // 天気
         let weather = '-';
         try {
           const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=34.6937&longitude=135.5023&daily=weather_code&timezone=Asia%2FTokyo&start_date=${todayStr}&end_date=${todayStr}`);
           const wData = await res.json();
           if (wData.daily && wData.daily.weather_code) {
             const code = wData.daily.weather_code[0];
-            // 簡易コード変換
             if (code === 0) weather = '晴';
             else if (code <= 3) weather = '曇';
             else if (code <= 67) weather = '雨';
@@ -212,14 +307,69 @@ export default function DashboardPage() {
         } catch(e) {}
 
         setTodaySummary({
-          date: `${m}/${d}`,
+          date: `${mStr}/${dStr}`,
           weather,
           userCount,
-          events: [] // 必要ならここにお知らせ等を入れる
+          events: [] 
         });
 
+        // ==========================================
+        // 3. 前回の利用実績 (昨日以前で最新のデータ)
+        // ==========================================
+        // 最新の日付を1つ探す
+        const prevDateQuery = query(
+          collection(db, 'attendanceRecords'),
+          where('date', '<', todayStr),
+          orderBy('date', 'desc'),
+          limit(1)
+        );
+        const prevDateSnap = await getDocs(prevDateQuery);
+        
+        if (!prevDateSnap.empty) {
+          const targetDateStr = prevDateSnap.docs[0].data().date; // "2025-11-30" など
+          
+          // その日の全データを取得
+          const prevRecordsQuery = query(
+            collection(db, 'attendanceRecords'),
+            where('date', '==', targetDateStr)
+          );
+          const prevRecordsSnap = await getDocs(prevRecordsQuery);
+          
+          const recordsData = prevRecordsSnap.docs.map(doc => {
+            const d = doc.data();
+            return {
+              id: doc.id,
+              userName: d.userName,
+              status: d.usageStatus,
+              time: d.arrivalTime && d.departureTime ? `${d.arrivalTime}-${d.departureTime}` : d.arrivalTime || '時間未定',
+              reason: d.reason || d.notes // 欠席理由
+            };
+          });
+
+          // 名前順ソート
+          recordsData.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
+
+          // 集計
+          let cHoukago = 0, cKyuko = 0, cAbsence = 0;
+          recordsData.forEach(r => {
+            if (r.status === '放課後') cHoukago++;
+            else if (r.status === '休校日') cKyuko++;
+            else if (r.status === '欠席') cAbsence++;
+          });
+
+          setPrevDayData({
+            dateStr: targetDateStr,
+            countHoukago: cHoukago,
+            countKyuko: cKyuko,
+            countAbsence: cAbsence,
+            records: recordsData
+          });
+        } else {
+          setPrevDayData(null);
+        }
+
       } catch (e) {
-        console.error("Fetch error:", e);
+        console.error("Dashboard Fetch error:", e);
       } finally {
         setLoading(false);
       }
@@ -232,20 +382,25 @@ export default function DashboardPage() {
     <AppLayout pageTitle="ダッシュボード">
       <div className="max-w-6xl mx-auto space-y-6">
         
-        {/* 1. 最重要: アラートパネル */}
+        {/* 1. アラートパネル (最重要) */}
         <AlertPanel alerts={alerts} loading={loading} />
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* 2. 本日の状況 (左カラム) */}
-          <div className="lg:col-span-1">
+        {/* 2. 状況パネル (2カラム) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-auto lg:h-[400px]">
+          {/* 左: 本日 */}
+          <div className="h-full">
             <TodayPanel summary={todaySummary} />
           </div>
-
-          {/* 3. クイックアクセス (右カラム・広め) */}
-          <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
-            <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-4">業務メニュー</h3>
-            <QuickAccess />
+          {/* 右: 前回の実績 */}
+          <div className="h-full">
+            <PreviousDayPanel data={prevDayData} loading={loading} />
           </div>
+        </div>
+
+        {/* 3. クイックアクセス (下部・横いっぱい) */}
+        <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
+          <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-4">業務メニュー</h3>
+          <QuickAccess />
         </div>
 
       </div>
