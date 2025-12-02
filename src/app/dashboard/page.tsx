@@ -22,8 +22,8 @@ type TodaySummary = {
   date: string;
   weather: string;
   userCount: number;
-  scheduledUserNames: { name: string; service: string }[]; // 名前とサービス種別
-  googleEvents: string[]; // Googleカレンダーの予定
+  scheduledUserNames: { name: string; service: string }[]; 
+  googleEvents: string[]; 
 };
 
 type PreviousDayData = {
@@ -40,12 +40,9 @@ type PreviousDayData = {
   }[];
 };
 
-// ヘルパー: 配列をチャンクに分割
 const chunkArray = (array: string[], size: number) => {
   const chunked = [];
-  for (let i = 0; i < array.length; i += size) {
-    chunked.push(array.slice(i, i + size));
-  }
+  for (let i = 0; i < array.length; i += size) chunked.push(array.slice(i, i + size));
   return chunked;
 };
 
@@ -63,7 +60,6 @@ const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean
         </div>
         <div>
           <h3 className="text-green-800 font-bold">状況は正常です</h3>
-          {/* ★ 修正: 文言を変更 */}
           <p className="text-green-600 text-sm">欠席が4回に達した利用者はいません。</p>
         </div>
       </div>
@@ -105,53 +101,55 @@ const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean
 // --- コンポーネント: 本日の状況 ---
 const TodayPanel = ({ summary }: { summary: TodaySummary }) => {
   return (
-    <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 h-full flex flex-col justify-between">
-      <div>
-        <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-4">本日の状況</h3>
-        <div className="flex items-end justify-between mb-4">
-          <p className="text-3xl font-extrabold text-gray-800">{summary.date}</p>
-          <p className="text-gray-500 text-sm font-medium bg-gray-100 px-2 py-1 rounded">天気: {summary.weather}</p>
+    <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 h-full flex flex-col">
+      <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-4">本日の状況</h3>
+      
+      {/* 日付・天気 */}
+      <div className="flex items-end justify-between mb-4">
+        <p className="text-3xl font-extrabold text-gray-800">{summary.date}</p>
+        <p className="text-gray-500 text-sm font-medium bg-gray-100 px-2 py-1 rounded">天気: {summary.weather}</p>
+      </div>
+      
+      {/* 利用予定 */}
+      <div className="bg-blue-50 rounded-xl p-4 mb-4 flex-shrink-0">
+        <div className="text-center border-b border-blue-100 pb-2 mb-2">
+          <p className="text-xs text-blue-400 font-bold mb-1">利用予定</p>
+          <p className="text-4xl font-bold text-blue-600">{summary.userCount}<span className="text-lg text-blue-400 ml-1">名</span></p>
         </div>
         
-        <div className="bg-blue-50 rounded-xl p-4 mb-4">
-          <div className="text-center border-b border-blue-100 pb-2 mb-2">
-            <p className="text-xs text-blue-400 font-bold mb-1">利用予定</p>
-            <p className="text-4xl font-bold text-blue-600">{summary.userCount}<span className="text-lg text-blue-400 ml-1">名</span></p>
-          </div>
-          
-          {/* ★ 追加: 利用者一覧 */}
-          <div className="max-h-[150px] overflow-y-auto custom-scrollbar pr-1">
-            <p className="text-[10px] text-blue-400 font-bold mb-1 text-center">- 予定者一覧 -</p>
-            {summary.scheduledUserNames.length > 0 ? (
-              <div className="flex flex-wrap gap-1 justify-center">
-                {summary.scheduledUserNames.map((u, i) => (
-                  <span key={i} className="text-xs bg-white text-blue-700 px-2 py-1 rounded border border-blue-100 shadow-sm">
-                    {u.name}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-center text-gray-400">なし</p>
-            )}
-          </div>
+        {/* 利用者一覧 (スクロール) */}
+        <div className="max-h-[100px] overflow-y-auto custom-scrollbar pr-1">
+          {summary.scheduledUserNames.length > 0 ? (
+            <div className="flex flex-wrap gap-1 justify-center">
+              {summary.scheduledUserNames.map((u, i) => (
+                <span key={i} className="text-xs bg-white text-blue-700 px-2 py-1 rounded border border-blue-100 shadow-sm">
+                  {u.name}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-center text-gray-400">なし</p>
+          )}
         </div>
       </div>
       
-      <div className="border-t border-gray-100 pt-4">
-        <p className="text-xs text-gray-400 mb-2 font-bold">今日の予定・イベント (Google Calendar)</p>
-        {/* ★ 修正: Googleカレンダーの内容を表示 */}
-        {summary.googleEvents.length > 0 ? (
-          <ul className="space-y-2">
-            {summary.googleEvents.map((ev, i) => (
-              <li key={i} className="flex items-start text-sm text-gray-700 bg-gray-50 p-2 rounded">
-                <span className="inline-block w-2 h-2 bg-green-500 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
-                {ev}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-gray-400 italic">予定はありません</p>
-        )}
+      {/* 予定リスト (Google Calendar) - スクロール対応 */}
+      <div className="border-t border-gray-100 pt-4 flex-1 min-h-0 flex flex-col">
+        <p className="text-xs text-gray-400 mb-2 font-bold flex-shrink-0">今日の予定 (Google Calendar)</p>
+        <div className="overflow-y-auto custom-scrollbar pr-1 flex-1 max-h-[150px]">
+          {summary.googleEvents.length > 0 ? (
+            <ul className="space-y-2">
+              {summary.googleEvents.map((ev, i) => (
+                <li key={i} className="flex items-start text-sm text-gray-700 bg-gray-50 p-2 rounded">
+                  <span className="inline-block w-2 h-2 bg-green-500 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
+                  {ev}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-gray-400 italic">予定はありません</p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -168,7 +166,7 @@ const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loa
         前回の実績 <span className="text-gray-800 ml-2 text-base normal-case">({data.dateStr})</span>
       </h3>
 
-      <div className="flex gap-2 mb-4 text-xs font-bold text-center">
+      <div className="flex gap-2 mb-4 text-xs font-bold text-center flex-shrink-0">
         <div className="flex-1 bg-blue-50 text-blue-700 py-2 rounded">
           放課後<br/><span className="text-lg">{data.countHoukago}</span>
         </div>
@@ -180,15 +178,31 @@ const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loa
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto max-h-[300px] border-t border-gray-100 pt-2 space-y-2 pr-1 custom-scrollbar">
+      {/* リスト (スクロール) */}
+      <div className="flex-1 overflow-y-auto border-t border-gray-100 pt-2 space-y-2 pr-1 custom-scrollbar max-h-[350px]">
         {data.records.map((rec) => (
-          <div key={rec.id} className="text-sm flex justify-between items-start border-b border-gray-50 pb-2 last:border-0">
-            <span className="font-bold text-gray-700 w-24 truncate">{rec.userName}</span>
-            <span className="text-right flex-1 ml-2">
+          <div key={rec.id} className="text-sm flex flex-col sm:flex-row sm:justify-between sm:items-center border-b border-gray-50 pb-2 last:border-0">
+            <div className="flex items-center mb-1 sm:mb-0">
+              <span className="font-bold text-gray-700 mr-2">{rec.userName}</span>
+              {/* ★ 追加: ステータス表示 */}
+              {rec.status !== '欠席' && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                  rec.status === '放課後' 
+                    ? 'bg-blue-50 text-blue-600 border-blue-200' 
+                    : 'bg-orange-50 text-orange-600 border-orange-200'
+                }`}>
+                  {rec.status}
+                </span>
+              )}
+            </div>
+            
+            <span className="text-right text-xs">
               {rec.status === '欠席' ? (
-                <span className="text-red-500 text-xs bg-red-50 px-2 py-0.5 rounded">{rec.reason || '理由なし'}</span>
+                <span className="text-red-500 bg-red-50 px-2 py-0.5 rounded inline-block">{rec.reason || '理由なし'}</span>
               ) : (
-                <span className="text-gray-600 font-mono text-xs">{rec.time}</span>
+                <span className="text-gray-500 font-mono bg-gray-50 px-2 py-0.5 rounded inline-block">
+                  {rec.time}
+                </span>
               )}
             </span>
           </div>
@@ -210,7 +224,7 @@ const QuickAccess = () => {
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
       {menus.map((menu) => (
         <Link 
           key={menu.title} 
@@ -222,7 +236,7 @@ const QuickAccess = () => {
           `}
         >
           <span className="text-2xl mb-1">{menu.icon}</span>
-          <span className="text-xs font-bold text-center">{menu.title}</span>
+          <span className="text-xs font-bold text-center whitespace-nowrap">{menu.title}</span>
         </Link>
       ))}
     </div>
@@ -251,17 +265,11 @@ export default function DashboardPage() {
         const dStr = String(todayJst.getDate()).padStart(2, '0');
         const todayStr = `${y}-${mStr}-${dStr}`;
 
-        // ==========================================
         // 1. アラート収集
-        // ==========================================
         const alertList: AlertItem[] = [];
-
+        
         // A. 欠席回数上限
-        const absQuery = query(
-          collection(db, 'attendanceRecords'),
-          where('month', '==', currentMonth),
-          where('usageStatus', '==', '欠席')
-        );
+        const absQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('usageStatus', '==', '欠席'));
         const absSnap = await getDocs(absQuery);
         const counts: Record<string, { name: string; count: number }> = {};
         absSnap.forEach(doc => {
@@ -271,53 +279,28 @@ export default function DashboardPage() {
         });
         Object.entries(counts).forEach(([uid, data]) => {
           if (data.count >= 4) {
-            alertList.push({
-              id: `abs-${uid}`,
-              type: 'ABSENCE_LIMIT',
-              message: `${data.name} さんの欠席が4回に達しました`,
-              detail: `${data.count}回`,
-              link: '/absence-management'
-            });
+            alertList.push({ id: `abs-${uid}`, type: 'ABSENCE_LIMIT', message: `${data.name} さんの欠席が4回に達しました`, detail: `${data.count}回`, link: '/absence-management' });
           }
         });
 
         // B. 記録漏れ
-        const recordQuery = query(
-          collection(db, 'attendanceRecords'),
-          where('month', '==', currentMonth),
-          where('date', '<', todayStr)
-        );
+        const recordQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('date', '<', todayStr));
         const recordSnap = await getDocs(recordQuery);
         recordSnap.forEach(doc => {
           const d = doc.data();
           if (d.usageStatus !== '欠席') {
             if (!d.arrivalTime || !d.departureTime) {
-              alertList.push({
-                id: `miss-${doc.id}`,
-                type: 'MISSING_RECORD',
-                message: `${d.date} ${d.userName} さんの記録漏れ`,
-                detail: !d.arrivalTime ? '来所時間なし' : '退所時間なし',
-                link: '/attendance'
-              });
+              alertList.push({ id: `miss-${doc.id}`, type: 'MISSING_RECORD', message: `${d.date} ${d.userName} さんの記録漏れ`, detail: !d.arrivalTime ? '来所時間なし' : '退所時間なし', link: '/attendance' });
             }
           }
         });
-
         setAlerts(alertList);
 
-        // ==========================================
-        // 2. 本日の情報 (利用者 & Googleカレンダー)
-        // ==========================================
-        // A. 利用予定者と人数
-        const eventQuery = query(
-          collection(db, 'events'),
-          where('dateKeyJst', '==', todayStr)
-        );
+        // 2. 本日の情報
+        const eventQuery = query(collection(db, 'events'), where('dateKeyJst', '==', todayStr));
         const eventSnap = await getDocs(eventQuery);
-        
         let userCount = 0;
         const scheduledUserIds: string[] = [];
-        
         eventSnap.forEach(doc => {
           const d = doc.data();
           if (d.type === '放課後' || d.type === '休校日') {
@@ -326,31 +309,18 @@ export default function DashboardPage() {
           }
         });
 
-        // ユーザー名を取得 (IDから)
         let scheduledUserNames: { name: string; service: string }[] = [];
         if (scheduledUserIds.length > 0) {
-          // Firestoreの 'in' クエリは最大10件制限があるため、チャンク分割して取得
           const userChunks = chunkArray(scheduledUserIds, 10);
-          const userDocsPromises = userChunks.map(ids => 
-            getDocs(query(collection(db, 'users'), where(documentId(), 'in', ids)))
-          );
+          const userDocsPromises = userChunks.map(ids => getDocs(query(collection(db, 'users'), where(documentId(), 'in', ids))));
           const userSnapshots = await Promise.all(userDocsPromises);
-          
           const userMap = new Map();
           userSnapshots.forEach(snap => {
-            snap.forEach(doc => {
-              const u = doc.data();
-              userMap.set(doc.id, `${u.lastName} ${u.firstName}`);
-            });
+            snap.forEach(doc => { const u = doc.data(); userMap.set(doc.id, `${u.lastName} ${u.firstName}`); });
           });
-
-          // 名前順にソートしてリスト化
-          scheduledUserNames = scheduledUserIds
-            .map(id => ({ name: userMap.get(id) || '不明', service: '' }))
-            .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+          scheduledUserNames = scheduledUserIds.map(id => ({ name: userMap.get(id) || '不明', service: '' })).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
         }
 
-        // B. Googleカレンダー (iCal API経由)
         let googleEvents: string[] = [];
         try {
           const timeMin = new Date(`${todayStr}T00:00:00`).toISOString();
@@ -358,54 +328,29 @@ export default function DashboardPage() {
           const calRes = await fetch(`/api/calendar?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
           if (calRes.ok) {
             const calData = await calRes.json();
-            if (calData.items) {
-              googleEvents = calData.items.map((item: any) => item.summary);
-            }
+            if (calData.items) googleEvents = calData.items.map((item: any) => item.summary);
           }
-        } catch (calError) {
-          console.error("Calendar fetch error:", calError);
-        }
+        } catch (calError) { console.error("Calendar fetch error:", calError); }
 
-        // C. 天気
         let weather = '-';
         try {
           const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=34.6937&longitude=135.5023&daily=weather_code&timezone=Asia%2FTokyo&start_date=${todayStr}&end_date=${todayStr}`);
           const wData = await res.json();
           if (wData.daily && wData.daily.weather_code) {
             const code = wData.daily.weather_code[0];
-            if (code === 0) weather = '晴';
-            else if (code <= 3) weather = '曇';
-            else if (code <= 67) weather = '雨';
-            else weather = 'その他';
+            if (code === 0) weather = '晴'; else if (code <= 3) weather = '曇'; else if (code <= 67) weather = '雨'; else weather = 'その他';
           }
         } catch(e) {}
 
-        setTodaySummary({
-          date: `${mStr}/${dStr}`,
-          weather,
-          userCount,
-          scheduledUserNames,
-          googleEvents 
-        });
+        setTodaySummary({ date: `${mStr}/${dStr}`, weather, userCount, scheduledUserNames, googleEvents });
 
-        // ==========================================
         // 3. 前回の利用実績
-        // ==========================================
-        const prevDateQuery = query(
-          collection(db, 'attendanceRecords'),
-          where('date', '<', todayStr),
-          orderBy('date', 'desc'),
-          limit(1)
-        );
+        const prevDateQuery = query(collection(db, 'attendanceRecords'), where('date', '<', todayStr), orderBy('date', 'desc'), limit(1));
         const prevDateSnap = await getDocs(prevDateQuery);
         
         if (!prevDateSnap.empty) {
           const targetDateStr = prevDateSnap.docs[0].data().date;
-          
-          const prevRecordsQuery = query(
-            collection(db, 'attendanceRecords'),
-            where('date', '==', targetDateStr)
-          );
+          const prevRecordsQuery = query(collection(db, 'attendanceRecords'), where('date', '==', targetDateStr));
           const prevRecordsSnap = await getDocs(prevRecordsQuery);
           
           const recordsData = prevRecordsSnap.docs.map(doc => {
@@ -418,32 +363,19 @@ export default function DashboardPage() {
               reason: d.reason || d.notes
             };
           });
-
           recordsData.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
 
           let cHoukago = 0, cKyuko = 0, cAbsence = 0;
           recordsData.forEach(r => {
-            if (r.status === '放課後') cHoukago++;
-            else if (r.status === '休校日') cKyuko++;
-            else if (r.status === '欠席') cAbsence++;
+            if (r.status === '放課後') cHoukago++; else if (r.status === '休校日') cKyuko++; else if (r.status === '欠席') cAbsence++;
           });
 
-          setPrevDayData({
-            dateStr: targetDateStr,
-            countHoukago: cHoukago,
-            countKyuko: cKyuko,
-            countAbsence: cAbsence,
-            records: recordsData
-          });
+          setPrevDayData({ dateStr: targetDateStr, countHoukago: cHoukago, countKyuko: cKyuko, countAbsence: cAbsence, records: recordsData });
         } else {
           setPrevDayData(null);
         }
 
-      } catch (e) {
-        console.error("Dashboard Fetch error:", e);
-      } finally {
-        setLoading(false);
-      }
+      } catch (e) { console.error("Dashboard Fetch error:", e); } finally { setLoading(false); }
     };
 
     fetchData();
@@ -454,13 +386,9 @@ export default function DashboardPage() {
       <div className="max-w-6xl mx-auto space-y-6">
         <AlertPanel alerts={alerts} loading={loading} />
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-auto lg:h-[450px]">
-          <div className="h-full">
-            <TodayPanel summary={todaySummary} />
-          </div>
-          <div className="h-full">
-            <PreviousDayPanel data={prevDayData} loading={loading} />
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+          <TodayPanel summary={todaySummary} />
+          <PreviousDayPanel data={prevDayData} loading={loading} />
         </div>
 
         <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
