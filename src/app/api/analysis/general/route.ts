@@ -8,7 +8,7 @@ export async function POST(request: Request) {
   try {
     // ★★★ 修正: あなたの設定に合わせて GEMINI_API_KEY を読み込むように変更 ★★★
     // (念のため GOOGLE_API_KEY も探すようにしておきます)
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       console.error("[API] Error: GEMINI_API_KEY is not set in environment variables.");
