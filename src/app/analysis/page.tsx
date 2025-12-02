@@ -25,18 +25,15 @@ type User = { id: string; lastName: string; firstName: string; };
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 
-// 日付操作ヘルパー
 const toDateInputStr = (d: Date) => d.toISOString().split('T')[0];
 
 export default function AnalysisPage() {
   const [activeTab, setActiveTab] = useState<'summary' | 'user' | 'training'>('summary');
   const [loading, setLoading] = useState(false);
   
-  // データ保持
   const [allRecords, setAllRecords] = useState<AttendanceRecord[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   
-  // 期間指定フィルター (デフォルト: 過去30日)
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
@@ -44,28 +41,19 @@ export default function AnalysisPage() {
   });
   const [endDate, setEndDate] = useState(() => toDateInputStr(new Date()));
 
-  // ユーザー選択
   const [selectedUserId, setSelectedUserId] = useState('');
-
-  // AIコメント
   const [aiComment, setAiComment] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
 
-  // --- 初期データ取得 ---
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        // 1. ユーザー一覧
         const userSnap = await getDocs(collection(db, 'users'));
         const userList = userSnap.docs.map(d => ({ id: d.id, ...d.data() } as User));
-        
-        // ★ 安全策: 名前がない場合のエラー回避
         userList.sort((a, b) => (a.lastName || '').localeCompare((b.lastName || ''), 'ja'));
-        
         setUsers(userList);
 
-        // 2. 出欠データ
         const now = new Date();
         const pastDate = new Date();
         pastDate.setFullYear(now.getFullYear() - 1);
@@ -90,7 +78,6 @@ export default function AnalysisPage() {
     fetchData();
   }, []);
 
-  // --- AI分析実行 ---
   const handleRunAI = async (type: 'summary' | 'user', contextData: any) => {
     setIsAiLoading(true);
     setAiComment('');
@@ -110,31 +97,22 @@ export default function AnalysisPage() {
     }
   };
 
-  // ==========================================
-  // ① サマリー分析ロジック
-  // ==========================================
   const summaryData = useMemo(() => {
     if (allRecords.length === 0) return null;
 
-    // フィルタリング
     const filtered = allRecords.filter(r => r.date >= startDate && r.date <= endDate);
 
     // A. 月別推移 & 利用率
     const monthlyStats: Record<string, { month: string; houkago: number; kyuko: number; absence: number }> = {};
-    
     filtered.forEach(rec => {
       const m = rec.month;
-      // monthデータがない場合はスキップ
       if (!m) return;
-
       if (!monthlyStats[m]) monthlyStats[m] = { month: m, houkago: 0, kyuko: 0, absence: 0 };
-      
       if (rec.usageStatus === '放課後') monthlyStats[m].houkago++;
       else if (rec.usageStatus === '休校日') monthlyStats[m].kyuko++;
       else if (rec.usageStatus === '欠席') monthlyStats[m].absence++;
     });
 
-    // ★ 安全策: 月の並び替えでのエラー回避
     const monthlyChartData = Object.values(monthlyStats)
       .sort((a, b) => (a.month || '').localeCompare((b.month || '')))
       .map(d => {
@@ -145,14 +123,27 @@ export default function AnalysisPage() {
       });
 
     // B. 個人別ランキング (利用回数)
-    const userRanking: Record<string, number> = {};
+    const usageRanking: Record<string, number> = {};
+    // ★ 追加: 個人別ランキング (欠席回数)
+    const absenceRanking: Record<string, number> = {};
+
     filtered.forEach(rec => {
-      if (rec.usageStatus !== '欠席' && rec.userName) {
-        userRanking[rec.userName] = (userRanking[rec.userName] || 0) + 1;
+      if (!rec.userName) return;
+      if (rec.usageStatus === '欠席') {
+        absenceRanking[rec.userName] = (absenceRanking[rec.userName] || 0) + 1;
+      } else {
+        usageRanking[rec.userName] = (usageRanking[rec.userName] || 0) + 1;
       }
     });
-    // TOP10を抽出
-    const rankingChartData = Object.entries(userRanking)
+
+    // 利用回数TOP10
+    const usageRankingData = Object.entries(usageRanking)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    // ★ 欠席回数TOP10
+    const absenceRankingData = Object.entries(absenceRanking)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
@@ -169,33 +160,25 @@ export default function AnalysisPage() {
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
 
-    return { monthlyChartData, rankingChartData, absenceChartData, totalCount: filtered.length };
+    return { monthlyChartData, usageRankingData, absenceRankingData, absenceChartData, totalCount: filtered.length };
   }, [allRecords, startDate, endDate]);
 
 
-  // ==========================================
-  // ② ユーザー分析ロジック
-  // ==========================================
   const userData = useMemo(() => {
     if (!selectedUserId || allRecords.length === 0) return null;
 
     const myRecords = allRecords.filter(r => r.userId === selectedUserId);
     const user = users.find(u => u.id === selectedUserId);
     
-    // A. 月別利用推移
     const monthlyStats: Record<string, { month: string; usage: number; absence: number }> = {};
     myRecords.forEach(rec => {
-      if (!rec.month) return; // monthがない場合はスキップ
-
+      if (!rec.month) return;
       if (!monthlyStats[rec.month]) monthlyStats[rec.month] = { month: rec.month, usage: 0, absence: 0 };
       if (rec.usageStatus === '欠席') monthlyStats[rec.month].absence++;
       else monthlyStats[rec.month].usage++;
     });
-    
-    // ★ 安全策: 月の並び替えでのエラー回避
     const monthlyChartData = Object.values(monthlyStats).sort((a, b) => (a.month || '').localeCompare((b.month || '')));
 
-    // B. 欠席理由の内訳
     const reasonStats: Record<string, number> = {};
     myRecords.forEach(rec => {
       if (rec.usageStatus === '欠席') {
@@ -213,7 +196,7 @@ export default function AnalysisPage() {
     <AppLayout pageTitle="AI分析">
       <div className="flex flex-col h-full space-y-6">
         
-        {/* タブ切り替え */}
+        {/* タブ */}
         <div className="flex space-x-1 bg-gray-100 p-1 rounded-xl w-fit">
           {['summary', 'user', 'training'].map((tab) => (
             <button
@@ -229,7 +212,7 @@ export default function AnalysisPage() {
         </div>
 
         {/* ========================================== */}
-        {/* ① サマリー分析画面 */}
+        {/* ① サマリー分析 */}
         {/* ========================================== */}
         {activeTab === 'summary' && (
           <div className="space-y-6 animate-in fade-in zoom-in duration-300">
@@ -237,19 +220,9 @@ export default function AnalysisPage() {
             <div className="flex flex-wrap justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-200 gap-4">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold text-gray-600">期間指定:</span>
-                <input 
-                  type="date" 
-                  value={startDate} 
-                  onChange={(e) => setStartDate(e.target.value)} 
-                  className="border p-2 rounded-md text-sm" 
-                />
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border p-2 rounded-md text-sm" />
                 <span className="text-gray-400">~</span>
-                <input 
-                  type="date" 
-                  value={endDate} 
-                  onChange={(e) => setEndDate(e.target.value)} 
-                  className="border p-2 rounded-md text-sm" 
-                />
+                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border p-2 rounded-md text-sm" />
               </div>
               <button 
                 onClick={() => handleRunAI('summary', summaryData)}
@@ -260,24 +233,20 @@ export default function AnalysisPage() {
               </button>
             </div>
 
-            {/* AIコメント表示エリア */}
             {aiComment && (
               <div className="bg-purple-50 border border-purple-200 p-6 rounded-2xl shadow-sm">
-                <h3 className="text-purple-800 font-bold mb-2 flex items-center">
-                  <span className="text-2xl mr-2">🤖</span> AIコンサルタントからの分析レポート
-                </h3>
-                <div className="text-gray-700 text-sm leading-relaxed whitespace-pre-wrap bg-white p-4 rounded-xl border border-purple-100">
-                  {aiComment}
-                </div>
+                <h3 className="text-purple-800 font-bold mb-2 flex items-center"><span className="text-2xl mr-2">🤖</span> AIコンサルタントからの分析レポート</h3>
+                <div className="text-gray-700 text-sm leading-relaxed whitespace-pre-wrap bg-white p-4 rounded-xl border border-purple-100">{aiComment}</div>
               </div>
             )}
 
             {summaryData && summaryData.totalCount > 0 ? (
               <>
-                {/* 1段目: 月別推移 */}
-                <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
+                {/* 1段目: 月別推移 (エラー対策のため固定高さ) */}
+                <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
                   <h3 className="text-gray-600 font-bold mb-4">月別コマ数・欠席数・利用率推移</h3>
-                  <div className="flex-1 w-full min-h-[300px]">
+                  {/* ★ 修正: w-full h-[300px] で高さを固定 */}
+                  <div className="w-full h-[300px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <ComposedChart data={summaryData.monthlyChartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -295,49 +264,69 @@ export default function AnalysisPage() {
                   </div>
                 </div>
 
-                {/* 2段目: ランキング & 欠席理由 */}
+                {/* 2段目: ランキング2種 (エラー対策のため固定高さ) */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* 個人別ランキング */}
-                  <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
+                  {/* 利用回数ランキング */}
+                  <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
                     <h3 className="text-gray-600 font-bold mb-4">利用回数ランキング (TOP10)</h3>
-                    <div className="flex-1 w-full min-h-[300px]">
+                    {/* ★ 修正: 高さ固定 */}
+                    <div className="w-full h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart layout="vertical" data={summaryData.rankingChartData} margin={{ left: 20 }}>
+                        <BarChart layout="vertical" data={summaryData.usageRankingData} margin={{ left: 20 }}>
                           <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                           <XAxis type="number" />
                           <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 11}} />
                           <Tooltip />
-                          <Bar dataKey="count" name="回数" fill="#8884d8" radius={[0, 4, 4, 0]} barSize={20} />
+                          <Bar dataKey="count" name="回数" fill="#3B82F6" radius={[0, 4, 4, 0]} barSize={20} />
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
                   </div>
 
-                  {/* 欠席理由分析 */}
-                  <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
-                    <h3 className="text-gray-600 font-bold mb-4">欠席理由の内訳</h3>
-                    <div className="flex-1 w-full min-h-[300px]">
+                  {/* ★ 追加: 欠席回数ランキング */}
+                  <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
+                    <h3 className="text-gray-600 font-bold mb-4">欠席回数ランキング (TOP10)</h3>
+                    {/* ★ 修正: 高さ固定 */}
+                    <div className="w-full h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={summaryData.absenceChartData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={60}
-                            outerRadius={80}
-                            fill="#8884d8"
-                            paddingAngle={2}
-                            dataKey="value"
-                            label={({name, percent}) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
-                          >
-                            {summaryData.absenceChartData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                          </Pie>
+                        <BarChart layout="vertical" data={summaryData.absenceRankingData} margin={{ left: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                          <XAxis type="number" />
+                          <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 11}} />
                           <Tooltip />
-                        </PieChart>
+                          <Bar dataKey="count" name="欠席回数" fill="#EF4444" radius={[0, 4, 4, 0]} barSize={20} />
+                        </BarChart>
                       </ResponsiveContainer>
                     </div>
+                  </div>
+                </div>
+
+                {/* 3段目: 欠席理由 (エラー対策のため固定高さ) */}
+                <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
+                  <h3 className="text-gray-600 font-bold mb-4">欠席理由の内訳</h3>
+                  {/* ★ 修正: 高さ固定 */}
+                  <div className="w-full h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={summaryData.absenceChartData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={80}
+                          fill="#8884d8"
+                          paddingAngle={2}
+                          dataKey="value"
+                          label={({name, percent}) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
+                        >
+                          {summaryData.absenceChartData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
               </>
@@ -350,106 +339,83 @@ export default function AnalysisPage() {
         )}
 
         {/* ========================================== */}
-        {/* ② ユーザー分析画面 */}
+        {/* ② ユーザー分析 */}
         {/* ========================================== */}
         {activeTab === 'user' && (
           <div className="space-y-6 animate-in fade-in zoom-in duration-300">
             <div className="flex flex-wrap justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-200 gap-4">
               <div className="flex items-center gap-2 w-full md:w-auto">
                 <span className="text-sm font-bold text-gray-600">利用者選択:</span>
-                <select 
-                  value={selectedUserId} 
-                  onChange={(e) => { setSelectedUserId(e.target.value); setAiComment(''); }}
-                  className="p-2 border rounded-md text-sm flex-1"
-                >
+                <select value={selectedUserId} onChange={(e) => { setSelectedUserId(e.target.value); setAiComment(''); }} className="p-2 border rounded-md text-sm flex-1">
                   <option value="">選択してください</option>
-                  {users.map(u => (
-                    <option key={u.id} value={u.id}>{u.lastName} {u.firstName}</option>
-                  ))}
+                  {users.map(u => (<option key={u.id} value={u.id}>{u.lastName} {u.firstName}</option>))}
                 </select>
               </div>
-              <button 
-                onClick={() => handleRunAI('user', userData)}
-                disabled={isAiLoading || !userData}
-                className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-md transition-transform active:scale-95 disabled:bg-gray-300"
-              >
-                {isAiLoading ? 'AI思考中...' : '✨ AI分析を実行'}
-              </button>
+              <button onClick={() => handleRunAI('user', userData)} disabled={isAiLoading || !userData} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-md transition-transform active:scale-95 disabled:bg-gray-300">{isAiLoading ? 'AI思考中...' : '✨ AI分析を実行'}</button>
             </div>
 
-            {/* AIコメントエリア */}
             {aiComment && (
               <div className="bg-purple-50 border border-purple-200 p-6 rounded-2xl shadow-sm">
-                <h3 className="text-purple-800 font-bold mb-2 flex items-center">
-                  <span className="text-2xl mr-2">🤖</span> AI児発管からのアドバイス
-                </h3>
-                <div className="text-gray-700 text-sm leading-relaxed whitespace-pre-wrap bg-white p-4 rounded-xl border border-purple-100">
-                  {aiComment}
-                </div>
+                <h3 className="text-purple-800 font-bold mb-2 flex items-center"><span className="text-2xl mr-2">🤖</span> AI児発管からのアドバイス</h3>
+                <div className="text-gray-700 text-sm leading-relaxed whitespace-pre-wrap bg-white p-4 rounded-xl border border-purple-100">{aiComment}</div>
               </div>
             )}
 
             {userData ? (
-              <>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* 利用推移 */}
-                  <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
-                    <h3 className="text-gray-600 font-bold mb-4">{userData.user?.lastName}さんの利用推移</h3>
-                    <div className="flex-1 w-full min-h-[300px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={userData.monthlyChartData}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="month" tick={{fontSize: 10}} />
-                          <YAxis />
-                          <Tooltip />
-                          <Legend />
-                          <Line type="monotone" dataKey="usage" name="利用回数" stroke="#3B82F6" strokeWidth={2} />
-                          <Line type="monotone" dataKey="absence" name="欠席回数" stroke="#EF4444" strokeWidth={2} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  {/* 欠席理由の内訳 */}
-                  <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
-                    <h3 className="text-gray-600 font-bold mb-4">欠席理由の内訳</h3>
-                    <div className="flex-1 w-full min-h-[300px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={userData.reasonChartData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={60}
-                            outerRadius={80}
-                            fill="#8884d8"
-                            paddingAngle={5}
-                            dataKey="value"
-                            label={({name}) => name}
-                          >
-                            {userData.reasonChartData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip />
-                          <Legend />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
+                  <h3 className="text-gray-600 font-bold mb-4">{userData.user?.lastName}さんの利用推移</h3>
+                  {/* ★ 修正: 高さ固定 */}
+                  <div className="w-full h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={userData.monthlyChartData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="month" tick={{fontSize: 10}} />
+                        <YAxis />
+                        <Tooltip />
+                        <Legend />
+                        <Line type="monotone" dataKey="usage" name="利用回数" stroke="#3B82F6" strokeWidth={2} />
+                        <Line type="monotone" dataKey="absence" name="欠席回数" stroke="#EF4444" strokeWidth={2} />
+                      </LineChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
-              </>
-            ) : (
-              <div className="text-center py-20 text-gray-400 bg-gray-50 rounded-2xl border border-dashed border-gray-300">
-                利用者を選択すると分析データが表示されます
+
+                <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 flex flex-col">
+                  <h3 className="text-gray-600 font-bold mb-4">欠席理由の内訳</h3>
+                  {/* ★ 修正: 高さ固定 */}
+                  <div className="w-full h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={userData.reasonChartData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={80}
+                          fill="#8884d8"
+                          paddingAngle={5}
+                          dataKey="value"
+                          label={({name}) => name}
+                        >
+                          {userData.reasonChartData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
               </div>
+            ) : (
+              <div className="text-center py-20 text-gray-400 bg-gray-50 rounded-2xl border border-dashed border-gray-300">利用者を選択すると分析データが表示されます</div>
             )}
           </div>
         )}
 
-        {/* ========================================== */}
-        {/* ③ トレーニング分析 (工事中) */}
-        {/* ========================================== */}
+        {/* ③ トレーニング分析 */}
         {activeTab === 'training' && (
           <div className="flex flex-col items-center justify-center h-96 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-300 text-gray-400 animate-in fade-in">
             <span className="text-6xl mb-4">🚧</span>
@@ -457,7 +423,6 @@ export default function AnalysisPage() {
             <p className="mt-2 text-sm">個別支援計画と連動した成長分析機能を実装予定です。</p>
           </div>
         )}
-
       </div>
     </AppLayout>
   );
