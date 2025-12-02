@@ -182,7 +182,7 @@ export default function BusinessJournalPage() {
         const noteEvents: string[] = [];
 
         rawEvents.forEach(evt => {
-          if (evt.includes('休み') || evt.includes('休所')) {
+          if (evt.includes('休み') || evt.includes('休所') || evt.includes('有休')) {
             noteEvents.push(evt);
           } else if (
             evt.includes('モニタリング') ||
