@@ -25,7 +25,7 @@ type AlertItem = {
 
 type TodaySummary = {
   date: string;
-  dateObj: Date; // PDF用にDate型も保持
+  dateObj: Date; 
   weather: string;
   userCount: number;
   scheduledUserNames: { name: string; service: string }[]; 
@@ -52,7 +52,6 @@ const chunkArray = (array: string[], size: number) => {
   return chunked;
 };
 
-// フォント読み込みヘルパー
 function arrayBufferToBase64(buffer: ArrayBuffer) {
   let binary = '';
   const bytes = new Uint8Array(buffer);
@@ -126,7 +125,6 @@ const TodayPanel = ({ summary, onPrint }: { summary: TodaySummary, onPrint: () =
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <p className="text-3xl font-extrabold text-gray-800">{summary.date}</p>
-            {/* ★ PDF作成ボタン */}
             <button 
               onClick={onPrint}
               title="サービス提供記録PDFを作成"
@@ -147,7 +145,7 @@ const TodayPanel = ({ summary, onPrint }: { summary: TodaySummary, onPrint: () =
           </div>
           
           {/* 利用者一覧 */}
-          <div className="max-h-[150px] overflow-y-auto custom-scrollbar pr-1">
+          <div className="max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
             <p className="text-[10px] text-blue-400 font-bold mb-1 text-center">- 予定者一覧 -</p>
             {summary.scheduledUserNames.length > 0 ? (
               <div className="flex flex-wrap gap-1 justify-center">
@@ -166,18 +164,21 @@ const TodayPanel = ({ summary, onPrint }: { summary: TodaySummary, onPrint: () =
       
       <div className="border-t border-gray-100 pt-4">
         <p className="text-xs text-gray-400 mb-2 font-bold">今日の予定・イベント (Google Calendar)</p>
-        {summary.googleEvents.length > 0 ? (
-          <ul className="space-y-2">
-            {summary.googleEvents.map((ev, i) => (
-              <li key={i} className="flex items-start text-sm text-gray-700 bg-gray-50 p-2 rounded">
-                <span className="inline-block w-2 h-2 bg-green-500 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
-                {ev}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-gray-400 italic">予定はありません</p>
-        )}
+        {/* 内容が多い場合はスクロール */}
+        <div className="max-h-[150px] overflow-y-auto custom-scrollbar">
+          {summary.googleEvents.length > 0 ? (
+            <ul className="space-y-2">
+              {summary.googleEvents.map((ev, i) => (
+                <li key={i} className="flex items-start text-sm text-gray-700 bg-gray-50 p-2 rounded">
+                  <span className="inline-block w-2 h-2 bg-green-500 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
+                  {ev}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-gray-400 italic">予定はありません</p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -206,7 +207,7 @@ const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loa
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto max-h-[300px] border-t border-gray-100 pt-2 space-y-2 pr-1 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto max-h-[400px] border-t border-gray-100 pt-2 space-y-2 pr-1 custom-scrollbar">
         {data.records.map((rec) => (
           <div key={rec.id} className="text-sm flex flex-col sm:flex-row sm:justify-between sm:items-center border-b border-gray-50 pb-2 last:border-0">
             <div className="flex items-center mb-1 sm:mb-0">
@@ -294,7 +295,6 @@ export default function DashboardPage() {
         // 1. アラート収集
         const alertList: AlertItem[] = [];
         
-        // A. 欠席回数上限
         const absQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('usageStatus', '==', '欠席'));
         const absSnap = await getDocs(absQuery);
         const counts: Record<string, { name: string; count: number }> = {};
@@ -309,7 +309,6 @@ export default function DashboardPage() {
           }
         });
 
-        // B. 記録漏れ
         const recordQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('date', '<', todayStr));
         const recordSnap = await getDocs(recordQuery);
         recordSnap.forEach(doc => {
@@ -326,7 +325,7 @@ export default function DashboardPage() {
         const eventQuery = query(collection(db, 'events'), where('dateKeyJst', '==', todayStr));
         const eventSnap = await getDocs(eventQuery);
         let userCount = 0;
-        const scheduledUsersMap: Record<string, string> = {}; // id -> service type
+        const scheduledUsersMap: Record<string, string> = {}; 
         
         eventSnap.forEach(doc => {
           const d = doc.data();
@@ -416,7 +415,6 @@ export default function DashboardPage() {
     fetchData();
   }, []);
 
-  // --- PDF出力機能 ---
   const handlePrintDailySheet = async () => {
     if (todaySummary.scheduledUserNames.length === 0) return toast.error("本日の利用予定者がいません");
     const loadingToast = toast.loading("PDFを生成中...");
@@ -424,7 +422,6 @@ export default function DashboardPage() {
     try {
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
-      // フォント読み込み
       try {
         const fontUrl = '/fonts/NotoSansJP-Regular.ttf';
         const fontRes = await fetch(fontUrl);
@@ -441,22 +438,19 @@ export default function DashboardPage() {
         toast.error("フォント読み込みに失敗しました", { id: loadingToast });
       }
 
-      // タイトル
       pdf.setFontSize(16);
       const dateStr = todaySummary.dateObj.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
       pdf.text(`サービス提供記録 (${dateStr})`, 105, 15, { align: 'center' });
 
-      // データ作成
       const tableBody = todaySummary.scheduledUserNames.map(u => [
         u.name,
         u.service === '放課後' ? '放' : u.service === '休校日' ? '休' : u.service,
-        '', // 来所時間 (空欄)
-        '', // 退所時間 (空欄)
-        '', // 備考
-        ''  // 確認印
+        '', 
+        '', 
+        '', 
+        ''  
       ]);
 
-      // テーブル描画
       autoTable(pdf, {
         startY: 25,
         head: [['氏名', '区分', '来所', '退所', '備考', '確認印']],
@@ -464,12 +458,12 @@ export default function DashboardPage() {
         styles: { font: 'NotoSansJP', fontSize: 10, cellPadding: 3, lineColor: [0,0,0], lineWidth: 0.1, valign: 'middle' },
         headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
         columnStyles: {
-          0: { cellWidth: 50 }, // 氏名
-          1: { cellWidth: 15, halign: 'center' }, // 区分
-          2: { cellWidth: 25 }, // 来所
-          3: { cellWidth: 25 }, // 退所
-          4: { cellWidth: 40 }, // 備考
-          5: { cellWidth: 25 }  // 印
+          0: { cellWidth: 50 }, 
+          1: { cellWidth: 15, halign: 'center' }, 
+          2: { cellWidth: 25 }, 
+          3: { cellWidth: 25 }, 
+          4: { cellWidth: 40 }, 
+          5: { cellWidth: 25 }  
         },
         theme: 'grid',
       });
@@ -488,7 +482,8 @@ export default function DashboardPage() {
       <div className="max-w-6xl mx-auto space-y-6">
         <AlertPanel alerts={alerts} loading={loading} />
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-auto lg:h-[450px]">
+        {/* ★ 修正: 高さ固定を削除 (h-autoのみ) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
           <div className="h-full">
             <TodayPanel summary={todaySummary} onPrint={handlePrintDailySheet} />
           </div>
