@@ -6,6 +6,11 @@ import { db } from '@/lib/firebase/firebase';
 import { collection, query, where, getDocs, orderBy, limit, documentId } from 'firebase/firestore';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
+import toast from 'react-hot-toast';
+
+// PDF用
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // --- 型定義 ---
 type AlertType = 'ABSENCE_LIMIT' | 'MISSING_RECORD';
@@ -20,6 +25,7 @@ type AlertItem = {
 
 type TodaySummary = {
   date: string;
+  dateObj: Date; // PDF用にDate型も保持
   weather: string;
   userCount: number;
   scheduledUserNames: { name: string; service: string }[]; 
@@ -45,6 +51,17 @@ const chunkArray = (array: string[], size: number) => {
   for (let i = 0; i < array.length; i += size) chunked.push(array.slice(i, i + size));
   return chunked;
 };
+
+// フォント読み込みヘルパー
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary);
+}
 
 // --- コンポーネント: アラートパネル ---
 const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean }) => {
@@ -99,57 +116,68 @@ const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean
 };
 
 // --- コンポーネント: 本日の状況 ---
-const TodayPanel = ({ summary }: { summary: TodaySummary }) => {
+const TodayPanel = ({ summary, onPrint }: { summary: TodaySummary, onPrint: () => void }) => {
   return (
-    <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 h-full flex flex-col">
-      <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-4">本日の状況</h3>
-      
-      {/* 日付・天気 */}
-      <div className="flex items-end justify-between mb-4">
-        <p className="text-3xl font-extrabold text-gray-800">{summary.date}</p>
-        <p className="text-gray-500 text-sm font-medium bg-gray-100 px-2 py-1 rounded">天気: {summary.weather}</p>
-      </div>
-      
-      {/* 利用予定 */}
-      <div className="bg-blue-50 rounded-xl p-4 mb-4 flex-shrink-0">
-        <div className="text-center border-b border-blue-100 pb-2 mb-2">
-          <p className="text-xs text-blue-400 font-bold mb-1">利用予定</p>
-          <p className="text-4xl font-bold text-blue-600">{summary.userCount}<span className="text-lg text-blue-400 ml-1">名</span></p>
+    <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 h-full flex flex-col justify-between">
+      <div>
+        <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-4">本日の状況</h3>
+        
+        {/* 日付・PDFボタン・天気 */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <p className="text-3xl font-extrabold text-gray-800">{summary.date}</p>
+            {/* ★ PDF作成ボタン */}
+            <button 
+              onClick={onPrint}
+              title="サービス提供記録PDFを作成"
+              className="bg-gray-100 hover:bg-gray-200 text-gray-600 p-2 rounded-full transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+            </button>
+          </div>
+          <p className="text-gray-500 text-sm font-medium bg-gray-100 px-2 py-1 rounded">天気: {summary.weather}</p>
         </div>
         
-        {/* 利用者一覧 (スクロール) */}
-        <div className="max-h-[100px] overflow-y-auto custom-scrollbar pr-1">
-          {summary.scheduledUserNames.length > 0 ? (
-            <div className="flex flex-wrap gap-1 justify-center">
-              {summary.scheduledUserNames.map((u, i) => (
-                <span key={i} className="text-xs bg-white text-blue-700 px-2 py-1 rounded border border-blue-100 shadow-sm">
-                  {u.name}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-center text-gray-400">なし</p>
-          )}
+        <div className="bg-blue-50 rounded-xl p-4 mb-4">
+          <div className="text-center border-b border-blue-100 pb-2 mb-2">
+            <p className="text-xs text-blue-400 font-bold mb-1">利用予定</p>
+            <p className="text-4xl font-bold text-blue-600">{summary.userCount}<span className="text-lg text-blue-400 ml-1">名</span></p>
+          </div>
+          
+          {/* 利用者一覧 */}
+          <div className="max-h-[150px] overflow-y-auto custom-scrollbar pr-1">
+            <p className="text-[10px] text-blue-400 font-bold mb-1 text-center">- 予定者一覧 -</p>
+            {summary.scheduledUserNames.length > 0 ? (
+              <div className="flex flex-wrap gap-1 justify-center">
+                {summary.scheduledUserNames.map((u, i) => (
+                  <span key={i} className="text-xs bg-white text-blue-700 px-2 py-1 rounded border border-blue-100 shadow-sm">
+                    {u.name}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-center text-gray-400">なし</p>
+            )}
+          </div>
         </div>
       </div>
       
-      {/* 予定リスト (Google Calendar) - スクロール対応 */}
-      <div className="border-t border-gray-100 pt-4 flex-1 min-h-0 flex flex-col">
-        <p className="text-xs text-gray-400 mb-2 font-bold flex-shrink-0">今日の予定 (Google Calendar)</p>
-        <div className="overflow-y-auto custom-scrollbar pr-1 flex-1 max-h-[150px]">
-          {summary.googleEvents.length > 0 ? (
-            <ul className="space-y-2">
-              {summary.googleEvents.map((ev, i) => (
-                <li key={i} className="flex items-start text-sm text-gray-700 bg-gray-50 p-2 rounded">
-                  <span className="inline-block w-2 h-2 bg-green-500 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
-                  {ev}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-gray-400 italic">予定はありません</p>
-          )}
-        </div>
+      <div className="border-t border-gray-100 pt-4">
+        <p className="text-xs text-gray-400 mb-2 font-bold">今日の予定・イベント (Google Calendar)</p>
+        {summary.googleEvents.length > 0 ? (
+          <ul className="space-y-2">
+            {summary.googleEvents.map((ev, i) => (
+              <li key={i} className="flex items-start text-sm text-gray-700 bg-gray-50 p-2 rounded">
+                <span className="inline-block w-2 h-2 bg-green-500 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
+                {ev}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-gray-400 italic">予定はありません</p>
+        )}
       </div>
     </div>
   );
@@ -166,7 +194,7 @@ const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loa
         前回の実績 <span className="text-gray-800 ml-2 text-base normal-case">({data.dateStr})</span>
       </h3>
 
-      <div className="flex gap-2 mb-4 text-xs font-bold text-center flex-shrink-0">
+      <div className="flex gap-2 mb-4 text-xs font-bold text-center">
         <div className="flex-1 bg-blue-50 text-blue-700 py-2 rounded">
           放課後<br/><span className="text-lg">{data.countHoukago}</span>
         </div>
@@ -178,13 +206,11 @@ const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loa
         </div>
       </div>
 
-      {/* リスト (スクロール) */}
-      <div className="flex-1 overflow-y-auto border-t border-gray-100 pt-2 space-y-2 pr-1 custom-scrollbar max-h-[350px]">
+      <div className="flex-1 overflow-y-auto max-h-[300px] border-t border-gray-100 pt-2 space-y-2 pr-1 custom-scrollbar">
         {data.records.map((rec) => (
           <div key={rec.id} className="text-sm flex flex-col sm:flex-row sm:justify-between sm:items-center border-b border-gray-50 pb-2 last:border-0">
             <div className="flex items-center mb-1 sm:mb-0">
               <span className="font-bold text-gray-700 mr-2">{rec.userName}</span>
-              {/* ★ 追加: ステータス表示 */}
               {rec.status !== '欠席' && (
                 <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
                   rec.status === '放課後' 
@@ -224,7 +250,7 @@ const QuickAccess = () => {
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+    <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
       {menus.map((menu) => (
         <Link 
           key={menu.title} 
@@ -248,7 +274,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [todaySummary, setTodaySummary] = useState<TodaySummary>({
-    date: '', weather: '-', userCount: 0, scheduledUserNames: [], googleEvents: []
+    date: '', dateObj: new Date(), weather: '-', userCount: 0, scheduledUserNames: [], googleEvents: []
   });
   const [prevDayData, setPrevDayData] = useState<PreviousDayData | null>(null);
 
@@ -300,25 +326,34 @@ export default function DashboardPage() {
         const eventQuery = query(collection(db, 'events'), where('dateKeyJst', '==', todayStr));
         const eventSnap = await getDocs(eventQuery);
         let userCount = 0;
-        const scheduledUserIds: string[] = [];
+        const scheduledUsersMap: Record<string, string> = {}; // id -> service type
+        
         eventSnap.forEach(doc => {
           const d = doc.data();
           if (d.type === '放課後' || d.type === '休校日') {
             userCount++;
-            scheduledUserIds.push(d.userId);
+            scheduledUsersMap[d.userId] = d.type;
           }
         });
 
         let scheduledUserNames: { name: string; service: string }[] = [];
+        const scheduledUserIds = Object.keys(scheduledUsersMap);
+
         if (scheduledUserIds.length > 0) {
           const userChunks = chunkArray(scheduledUserIds, 10);
           const userDocsPromises = userChunks.map(ids => getDocs(query(collection(db, 'users'), where(documentId(), 'in', ids))));
           const userSnapshots = await Promise.all(userDocsPromises);
-          const userMap = new Map();
+          
           userSnapshots.forEach(snap => {
-            snap.forEach(doc => { const u = doc.data(); userMap.set(doc.id, `${u.lastName} ${u.firstName}`); });
+            snap.forEach(doc => { 
+              const u = doc.data();
+              scheduledUserNames.push({
+                name: `${u.lastName} ${u.firstName}`,
+                service: scheduledUsersMap[doc.id]
+              });
+            });
           });
-          scheduledUserNames = scheduledUserIds.map(id => ({ name: userMap.get(id) || '不明', service: '' })).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+          scheduledUserNames.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
         }
 
         let googleEvents: string[] = [];
@@ -342,7 +377,7 @@ export default function DashboardPage() {
           }
         } catch(e) {}
 
-        setTodaySummary({ date: `${mStr}/${dStr}`, weather, userCount, scheduledUserNames, googleEvents });
+        setTodaySummary({ date: `${mStr}/${dStr}`, dateObj: todayJst, weather, userCount, scheduledUserNames, googleEvents });
 
         // 3. 前回の利用実績
         const prevDateQuery = query(collection(db, 'attendanceRecords'), where('date', '<', todayStr), orderBy('date', 'desc'), limit(1));
@@ -381,14 +416,85 @@ export default function DashboardPage() {
     fetchData();
   }, []);
 
+  // --- PDF出力機能 ---
+  const handlePrintDailySheet = async () => {
+    if (todaySummary.scheduledUserNames.length === 0) return toast.error("本日の利用予定者がいません");
+    const loadingToast = toast.loading("PDFを生成中...");
+
+    try {
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+      // フォント読み込み
+      try {
+        const fontUrl = '/fonts/NotoSansJP-Regular.ttf';
+        const fontRes = await fetch(fontUrl);
+        if (!fontRes.ok) throw new Error("フォントファイルが見つかりません");
+        const fontBuffer = await fontRes.arrayBuffer();
+        const fontBase64 = arrayBufferToBase64(fontBuffer);
+
+        pdf.addFileToVFS('NotoSansJP.ttf', fontBase64);
+        pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'normal');
+        pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'bold');
+        pdf.setFont('NotoSansJP');
+      } catch (err) {
+        console.error("Font error:", err);
+        toast.error("フォント読み込みに失敗しました", { id: loadingToast });
+      }
+
+      // タイトル
+      pdf.setFontSize(16);
+      const dateStr = todaySummary.dateObj.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
+      pdf.text(`サービス提供記録 (${dateStr})`, 105, 15, { align: 'center' });
+
+      // データ作成
+      const tableBody = todaySummary.scheduledUserNames.map(u => [
+        u.name,
+        u.service === '放課後' ? '放' : u.service === '休校日' ? '休' : u.service,
+        '', // 来所時間 (空欄)
+        '', // 退所時間 (空欄)
+        '', // 備考
+        ''  // 確認印
+      ]);
+
+      // テーブル描画
+      autoTable(pdf, {
+        startY: 25,
+        head: [['氏名', '区分', '来所', '退所', '備考', '確認印']],
+        body: tableBody,
+        styles: { font: 'NotoSansJP', fontSize: 10, cellPadding: 3, lineColor: [0,0,0], lineWidth: 0.1, valign: 'middle' },
+        headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
+        columnStyles: {
+          0: { cellWidth: 50 }, // 氏名
+          1: { cellWidth: 15, halign: 'center' }, // 区分
+          2: { cellWidth: 25 }, // 来所
+          3: { cellWidth: 25 }, // 退所
+          4: { cellWidth: 40 }, // 備考
+          5: { cellWidth: 25 }  // 印
+        },
+        theme: 'grid',
+      });
+
+      pdf.save(`サービス提供記録_${todaySummary.date.replace('/', '-')}.pdf`);
+      toast.success("PDFをダウンロードしました", { id: loadingToast });
+
+    } catch (e: any) {
+      console.error(e);
+      toast.error(`生成失敗: ${e.message}`, { id: loadingToast });
+    }
+  };
+
   return (
     <AppLayout pageTitle="ダッシュボード">
       <div className="max-w-6xl mx-auto space-y-6">
         <AlertPanel alerts={alerts} loading={loading} />
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-          <TodayPanel summary={todaySummary} />
-          <PreviousDayPanel data={prevDayData} loading={loading} />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-auto lg:h-[450px]">
+          <div className="h-full">
+            <TodayPanel summary={todaySummary} onPrint={handlePrintDailySheet} />
+          </div>
+          <div className="h-full">
+            <PreviousDayPanel data={prevDayData} loading={loading} />
+          </div>
         </div>
 
         <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
