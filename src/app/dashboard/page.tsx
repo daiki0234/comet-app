@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
-import { collection, query, where, getDocs, orderBy, limit, documentId } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
@@ -46,12 +46,7 @@ type PreviousDayData = {
   }[];
 };
 
-const chunkArray = (array: string[], size: number) => {
-  const chunked = [];
-  for (let i = 0; i < array.length; i += size) chunked.push(array.slice(i, i + size));
-  return chunked;
-};
-
+// フォント読み込みヘルパー
 function arrayBufferToBase64(buffer: ArrayBuffer) {
   let binary = '';
   const bytes = new Uint8Array(buffer);
@@ -115,13 +110,14 @@ const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean
 };
 
 // --- コンポーネント: 本日の状況 ---
-const TodayPanel = ({ summary, onPrint }: { summary: TodaySummary, onPrint: () => void }) => {
+const TodayPanel = ({ summary, onPrint, loading }: { summary: TodaySummary, onPrint: () => void, loading: boolean }) => {
+  if (loading) return <div className="bg-white h-full p-6 rounded-2xl shadow-ios border border-gray-200 animate-pulse" />;
+
   return (
     <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 h-full flex flex-col justify-between">
       <div>
         <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-4">本日の状況</h3>
         
-        {/* 日付・PDFボタン・天気 */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <p className="text-3xl font-extrabold text-gray-800">{summary.date}</p>
@@ -144,7 +140,6 @@ const TodayPanel = ({ summary, onPrint }: { summary: TodaySummary, onPrint: () =
             <p className="text-4xl font-bold text-blue-600">{summary.userCount}<span className="text-lg text-blue-400 ml-1">名</span></p>
           </div>
           
-          {/* 利用者一覧 */}
           <div className="max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
             <p className="text-[10px] text-blue-400 font-bold mb-1 text-center">- 予定者一覧 -</p>
             {summary.scheduledUserNames.length > 0 ? (
@@ -164,7 +159,6 @@ const TodayPanel = ({ summary, onPrint }: { summary: TodaySummary, onPrint: () =
       
       <div className="border-t border-gray-100 pt-4">
         <p className="text-xs text-gray-400 mb-2 font-bold">今日の予定・イベント (Google Calendar)</p>
-        {/* 内容が多い場合はスクロール */}
         <div className="max-h-[150px] overflow-y-auto custom-scrollbar">
           {summary.googleEvents.length > 0 ? (
             <ul className="space-y-2">
@@ -187,7 +181,7 @@ const TodayPanel = ({ summary, onPrint }: { summary: TodaySummary, onPrint: () =
 // --- コンポーネント: 前回の利用実績 ---
 const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loading: boolean }) => {
   if (loading) return <div className="bg-white h-full p-6 rounded-2xl shadow-ios border border-gray-200 animate-pulse" />;
-  if (!data) return <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 text-gray-400">履歴なし</div>;
+  if (!data) return <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 h-full flex items-center justify-center text-gray-400">履歴なし</div>;
 
   return (
     <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 h-full flex flex-col">
@@ -222,7 +216,6 @@ const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loa
                 </span>
               )}
             </div>
-            
             <span className="text-right text-xs">
               {rec.status === '欠席' ? (
                 <span className="text-red-500 bg-red-50 px-2 py-0.5 rounded inline-block">{rec.reason || '理由なし'}</span>
@@ -272,7 +265,12 @@ const QuickAccess = () => {
 
 export default function DashboardPage() {
   const { currentUser } = useAuth();
-  const [loading, setLoading] = useState(true);
+  
+  // 個別のローディング状態を作成
+  const [loadingAlerts, setLoadingAlerts] = useState(true);
+  const [loadingToday, setLoadingToday] = useState(true);
+  const [loadingPrev, setLoadingPrev] = useState(true);
+
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [todaySummary, setTodaySummary] = useState<TodaySummary>({
     date: '', dateObj: new Date(), weather: '-', userCount: 0, scheduledUserNames: [], googleEvents: []
@@ -280,8 +278,7 @@ export default function DashboardPage() {
   const [prevDayData, setPrevDayData] = useState<PreviousDayData | null>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
+    const loadDashboard = async () => {
       try {
         const now = new Date();
         const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -292,127 +289,133 @@ export default function DashboardPage() {
         const dStr = String(todayJst.getDate()).padStart(2, '0');
         const todayStr = `${y}-${mStr}-${dStr}`;
 
-        // 1. アラート収集
-        const alertList: AlertItem[] = [];
-        
-        const absQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('usageStatus', '==', '欠席'));
-        const absSnap = await getDocs(absQuery);
-        const counts: Record<string, { name: string; count: number }> = {};
-        absSnap.forEach(doc => {
+        // 0. まずユーザー辞書を作成 (これを共通利用することで高速化)
+        const userSnap = await getDocs(collection(db, 'users'));
+        const userMap = new Map<string, { name: string }>();
+        userSnap.forEach(doc => {
           const d = doc.data();
-          if (!counts[d.userId]) counts[d.userId] = { name: d.userName, count: 0 };
-          counts[d.userId].count++;
-        });
-        Object.entries(counts).forEach(([uid, data]) => {
-          if (data.count >= 4) {
-            alertList.push({ id: `abs-${uid}`, type: 'ABSENCE_LIMIT', message: `${data.name} さんの欠席が4回に達しました`, detail: `${data.count}回`, link: '/absence-management' });
-          }
+          userMap.set(doc.id, { name: `${d.lastName} ${d.firstName}` });
         });
 
-        const recordQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('date', '<', todayStr));
-        const recordSnap = await getDocs(recordQuery);
-        recordSnap.forEach(doc => {
-          const d = doc.data();
-          if (d.usageStatus !== '欠席') {
-            if (!d.arrivalTime || !d.departureTime) {
-              alertList.push({ id: `miss-${doc.id}`, type: 'MISSING_RECORD', message: `${d.date} ${d.userName} さんの記録漏れ`, detail: !d.arrivalTime ? '来所時間なし' : '退所時間なし', link: '/attendance' });
-            }
-          }
-        });
-        setAlerts(alertList);
-
-        // 2. 本日の情報
-        const eventQuery = query(collection(db, 'events'), where('dateKeyJst', '==', todayStr));
-        const eventSnap = await getDocs(eventQuery);
-        let userCount = 0;
-        const scheduledUsersMap: Record<string, string> = {}; 
-        
-        eventSnap.forEach(doc => {
-          const d = doc.data();
-          if (d.type === '放課後' || d.type === '休校日') {
-            userCount++;
-            scheduledUsersMap[d.userId] = d.type;
-          }
-        });
-
-        let scheduledUserNames: { name: string; service: string }[] = [];
-        const scheduledUserIds = Object.keys(scheduledUsersMap);
-
-        if (scheduledUserIds.length > 0) {
-          const userChunks = chunkArray(scheduledUserIds, 10);
-          const userDocsPromises = userChunks.map(ids => getDocs(query(collection(db, 'users'), where(documentId(), 'in', ids))));
-          const userSnapshots = await Promise.all(userDocsPromises);
+        // 1. アラート取得関数
+        const loadAlerts = async () => {
+          const alertList: AlertItem[] = [];
           
-          userSnapshots.forEach(snap => {
-            snap.forEach(doc => { 
-              const u = doc.data();
-              scheduledUserNames.push({
-                name: `${u.lastName} ${u.firstName}`,
-                service: scheduledUsersMap[doc.id]
-              });
-            });
+          // 欠席4回
+          const absQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('usageStatus', '==', '欠席'));
+          const absSnap = await getDocs(absQuery);
+          const counts: Record<string, number> = {};
+          absSnap.forEach(doc => { const d = doc.data(); counts[d.userId] = (counts[d.userId] || 0) + 1; });
+          Object.entries(counts).forEach(([uid, count]) => {
+            if (count >= 4) {
+              const uName = userMap.get(uid)?.name || '不明';
+              alertList.push({ id: `abs-${uid}`, type: 'ABSENCE_LIMIT', message: `${uName} さんの欠席が4回に達しました`, detail: `${count}回`, link: '/absence-management' });
+            }
+          });
+
+          // 記録漏れ
+          const recordQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('date', '<', todayStr));
+          const recordSnap = await getDocs(recordQuery);
+          recordSnap.forEach(doc => {
+            const d = doc.data();
+            if (d.usageStatus !== '欠席') {
+              if (!d.arrivalTime || !d.departureTime) {
+                alertList.push({ id: `miss-${doc.id}`, type: 'MISSING_RECORD', message: `${d.date} ${d.userName} さんの記録漏れ`, detail: !d.arrivalTime ? '来所時間なし' : '退所時間なし', link: '/attendance' });
+              }
+            }
+          });
+          setAlerts(alertList);
+          setLoadingAlerts(false);
+        };
+
+        // 2. 本日の情報取得関数
+        const loadToday = async () => {
+          const eventQuery = query(collection(db, 'events'), where('dateKeyJst', '==', todayStr));
+          const eventSnap = await getDocs(eventQuery);
+          
+          const scheduledUserNames: { name: string; service: string }[] = [];
+          let userCount = 0;
+
+          eventSnap.forEach(doc => {
+            const d = doc.data();
+            if (d.type === '放課後' || d.type === '休校日') {
+              userCount++;
+              const uName = userMap.get(d.userId)?.name || '不明';
+              scheduledUserNames.push({ name: uName, service: d.type });
+            }
           });
           scheduledUserNames.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
-        }
 
-        let googleEvents: string[] = [];
-        try {
-          const timeMin = new Date(`${todayStr}T00:00:00`).toISOString();
-          const timeMax = new Date(`${todayStr}T23:59:59`).toISOString();
-          const calRes = await fetch(`/api/calendar?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
-          if (calRes.ok) {
-            const calData = await calRes.json();
-            if (calData.items) googleEvents = calData.items.map((item: any) => item.summary);
+          // 並行してAPI等取得
+          const [calRes, weatherRes] = await Promise.allSettled([
+            fetch(`/api/calendar?timeMin=${encodeURIComponent(`${todayStr}T00:00:00`)}&timeMax=${encodeURIComponent(`${todayStr}T23:59:59`)}`),
+            fetch(`https://api.open-meteo.com/v1/forecast?latitude=34.6937&longitude=135.5023&daily=weather_code&timezone=Asia%2FTokyo&start_date=${todayStr}&end_date=${todayStr}`)
+          ]);
+
+          let googleEvents: string[] = [];
+          if (calRes.status === 'fulfilled' && calRes.value.ok) {
+            const data = await calRes.value.json();
+            if (data.items) googleEvents = data.items.map((item: any) => item.summary);
           }
-        } catch (calError) { console.error("Calendar fetch error:", calError); }
 
-        let weather = '-';
-        try {
-          const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=34.6937&longitude=135.5023&daily=weather_code&timezone=Asia%2FTokyo&start_date=${todayStr}&end_date=${todayStr}`);
-          const wData = await res.json();
-          if (wData.daily && wData.daily.weather_code) {
-            const code = wData.daily.weather_code[0];
-            if (code === 0) weather = '晴'; else if (code <= 3) weather = '曇'; else if (code <= 67) weather = '雨'; else weather = 'その他';
+          let weather = '-';
+          if (weatherRes.status === 'fulfilled' && weatherRes.value.ok) {
+            const data = await weatherRes.value.json();
+            if (data.daily?.weather_code) {
+              const code = data.daily.weather_code[0];
+              if (code === 0) weather = '晴'; else if (code <= 3) weather = '曇'; else if (code <= 67) weather = '雨'; else weather = 'その他';
+            }
           }
-        } catch(e) {}
 
-        setTodaySummary({ date: `${mStr}/${dStr}`, dateObj: todayJst, weather, userCount, scheduledUserNames, googleEvents });
+          setTodaySummary({ date: `${mStr}/${dStr}`, dateObj: todayJst, weather, userCount, scheduledUserNames, googleEvents });
+          setLoadingToday(false);
+        };
 
-        // 3. 前回の利用実績
-        const prevDateQuery = query(collection(db, 'attendanceRecords'), where('date', '<', todayStr), orderBy('date', 'desc'), limit(1));
-        const prevDateSnap = await getDocs(prevDateQuery);
-        
-        if (!prevDateSnap.empty) {
-          const targetDateStr = prevDateSnap.docs[0].data().date;
-          const prevRecordsQuery = query(collection(db, 'attendanceRecords'), where('date', '==', targetDateStr));
-          const prevRecordsSnap = await getDocs(prevRecordsQuery);
+        // 3. 前回の実績取得関数
+        const loadPrevious = async () => {
+          const prevDateQuery = query(collection(db, 'attendanceRecords'), where('date', '<', todayStr), orderBy('date', 'desc'), limit(1));
+          const prevDateSnap = await getDocs(prevDateQuery);
           
-          const recordsData = prevRecordsSnap.docs.map(doc => {
-            const d = doc.data();
-            return {
-              id: doc.id,
-              userName: d.userName,
-              status: d.usageStatus,
-              time: d.arrivalTime && d.departureTime ? `${d.arrivalTime}-${d.departureTime}` : d.arrivalTime || '時間未定',
-              reason: d.reason || d.notes
-            };
-          });
-          recordsData.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
+          if (!prevDateSnap.empty) {
+            const targetDateStr = prevDateSnap.docs[0].data().date;
+            const prevRecordsQuery = query(collection(db, 'attendanceRecords'), where('date', '==', targetDateStr));
+            const prevRecordsSnap = await getDocs(prevRecordsQuery);
+            
+            const recordsData = prevRecordsSnap.docs.map(doc => {
+              const d = doc.data();
+              return {
+                id: doc.id,
+                userName: d.userName,
+                status: d.usageStatus,
+                time: d.arrivalTime && d.departureTime ? `${d.arrivalTime}-${d.departureTime}` : d.arrivalTime || '時間未定',
+                reason: d.reason || d.notes
+              };
+            });
+            recordsData.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
 
-          let cHoukago = 0, cKyuko = 0, cAbsence = 0;
-          recordsData.forEach(r => {
-            if (r.status === '放課後') cHoukago++; else if (r.status === '休校日') cKyuko++; else if (r.status === '欠席') cAbsence++;
-          });
+            let cHoukago = 0, cKyuko = 0, cAbsence = 0;
+            recordsData.forEach(r => {
+              if (r.status === '放課後') cHoukago++; else if (r.status === '休校日') cKyuko++; else if (r.status === '欠席') cAbsence++;
+            });
 
-          setPrevDayData({ dateStr: targetDateStr, countHoukago: cHoukago, countKyuko: cKyuko, countAbsence: cAbsence, records: recordsData });
-        } else {
-          setPrevDayData(null);
-        }
+            setPrevDayData({ dateStr: targetDateStr, countHoukago: cHoukago, countKyuko: cKyuko, countAbsence: cAbsence, records: recordsData });
+          } else {
+            setPrevDayData(null);
+          }
+          setLoadingPrev(false);
+        };
 
-      } catch (e) { console.error("Dashboard Fetch error:", e); } finally { setLoading(false); }
+        // ★ 並列実行！ (どれか遅くても他は止まらない)
+        // ユーザー辞書作成は一瞬なので待機してから、重い処理をヨーイドン
+        Promise.all([loadAlerts(), loadToday(), loadPrevious()]);
+
+      } catch (e) {
+        console.error("Dashboard Load Error:", e);
+        setLoadingAlerts(false); setLoadingToday(false); setLoadingPrev(false);
+      }
     };
 
-    fetchData();
+    loadDashboard();
   }, []);
 
   const handlePrintDailySheet = async () => {
@@ -435,7 +438,6 @@ export default function DashboardPage() {
         pdf.setFont('NotoSansJP');
       } catch (err) {
         console.error("Font error:", err);
-        toast.error("フォント読み込みに失敗しました", { id: loadingToast });
       }
 
       pdf.setFontSize(16);
@@ -445,10 +447,7 @@ export default function DashboardPage() {
       const tableBody = todaySummary.scheduledUserNames.map(u => [
         u.name,
         u.service === '放課後' ? '放' : u.service === '休校日' ? '休' : u.service,
-        '', 
-        '', 
-        '', 
-        ''  
+        '', '', '', ''  
       ]);
 
       autoTable(pdf, {
@@ -457,14 +456,7 @@ export default function DashboardPage() {
         body: tableBody,
         styles: { font: 'NotoSansJP', fontSize: 10, cellPadding: 3, lineColor: [0,0,0], lineWidth: 0.1, valign: 'middle' },
         headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
-        columnStyles: {
-          0: { cellWidth: 50 }, 
-          1: { cellWidth: 15, halign: 'center' }, 
-          2: { cellWidth: 25 }, 
-          3: { cellWidth: 25 }, 
-          4: { cellWidth: 40 }, 
-          5: { cellWidth: 25 }  
-        },
+        columnStyles: { 0: { cellWidth: 50 }, 1: { cellWidth: 15, halign: 'center' }, 2: { cellWidth: 25 }, 3: { cellWidth: 25 }, 4: { cellWidth: 40 }, 5: { cellWidth: 25 } },
         theme: 'grid',
       });
 
@@ -480,15 +472,14 @@ export default function DashboardPage() {
   return (
     <AppLayout pageTitle="ダッシュボード">
       <div className="max-w-6xl mx-auto space-y-6">
-        <AlertPanel alerts={alerts} loading={loading} />
+        <AlertPanel alerts={alerts} loading={loadingAlerts} />
 
-        {/* ★ 修正: 高さ固定を削除 (h-autoのみ) */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
           <div className="h-full">
-            <TodayPanel summary={todaySummary} onPrint={handlePrintDailySheet} />
+            <TodayPanel summary={todaySummary} onPrint={handlePrintDailySheet} loading={loadingToday} />
           </div>
           <div className="h-full">
-            <PreviousDayPanel data={prevDayData} loading={loading} />
+            <PreviousDayPanel data={prevDayData} loading={loadingPrev} />
           </div>
         </div>
 
