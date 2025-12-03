@@ -23,6 +23,10 @@ export async function POST(request: Request) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
+    // ★★★ 追加: 今日の日付を取得してAIに伝える ★★★
+    const now = new Date();
+    const todayStr = now.toLocaleDateString('ja-JP'); // 例: "2025/12/3"
+
     let prompt = '';
 
     if (type === 'summary') {
@@ -30,12 +34,17 @@ export async function POST(request: Request) {
       あなたは放課後等デイサービスの熟練した経営コンサルタントです。
       以下の事業所データ（月別推移、曜日別傾向、ランキング、欠席理由）を深く分析し、各セクションごとの洞察をJSON形式で出力してください。
 
+      【前提条件】
+      ・本日は「${todayStr}」です。
+      ・最新月（当月）のデータは集計途中のため、過去の月と単純な回数比較をして「減少した」と評価しないでください。
+      ・当月に関しては、現在の日付時点での進捗として捉え、月末に向けて稼働率を上げるためのアクション（空き枠への誘導など）を提案してください。
+
       【分析対象データ】
       ${context}
 
       【指示】
       以下のキーを持つJSONオブジェクトのみを出力してください（Markdown記法は不要）。
-      1. "overall": 全体的な傾向と、経営視点での総評（200文字程度）
+      1. "overall": 全体的な傾向と、経営視点での総評（200文字程度）。当月が月初のなら、今月の目標やスタートダッシュについて言及すること。
       2. "trends": 「月別コマ数・利用率推移」に対する分析。季節変動や稼働率の変化について（150文字程度）
       3. "dayOfWeek": 「曜日別欠席率」に対する分析。特定の曜日に欠席が集中している理由の仮説と対策（150文字程度）
       4. "ranking": 「利用・欠席ランキング」に対する分析。特定児童への依存度やケアが必要な児童について（150文字程度）
@@ -45,6 +54,11 @@ export async function POST(request: Request) {
       prompt = `
       あなたは放課後等デイサービスのベテラン児童発達支援管理責任者です。
       以下の利用者データ（利用推移、欠席理由）を深く分析し、個別支援計画や保護者面談に使える助言をJSON形式で出力してください。
+
+      【前提条件】
+      ・本日は「${todayStr}」です。
+      ・最新月（当月）の利用回数が少なくても、月初の段階であれば「利用が減った」と判断しないでください。
+      ・当月に関しては、予定通り利用できているか、あるいは今後の予約状況を気にかけるようなコメントにしてください。
 
       【分析対象データ】
       ${context}
@@ -64,7 +78,7 @@ export async function POST(request: Request) {
     const response = await result.response;
     const text = response.text();
     
-    // JSONパース処理 (Markdownの ```json 等が含まれている場合の除去)
+    // JSONパース処理
     let jsonStr = text.replace(/^```json\s*/, '').replace(/\s*```$/, '');
     
     try {
@@ -73,7 +87,6 @@ export async function POST(request: Request) {
       return NextResponse.json(jsonResponse);
     } catch (e) {
       console.error("JSON Parse Error:", jsonStr);
-      // フォールバック用のJSONを返す
       return NextResponse.json({ 
         overall: "分析データの生成に失敗しました（形式エラー）。",
         trends: "再読み込みしてください。",
