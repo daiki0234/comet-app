@@ -380,13 +380,28 @@ export default function CalendarPage() {
     } catch (e) { alert("PDF生成失敗"); } finally { setIsPrintingSingle(false); setIsModalOpen(false); }
   };
 
-  const handlePrintAll = async () => {
-    if (dailyScheduledUsers.length === 0 || !selectedDate) return;
+const handlePrintAll = async () => {
+    if (!selectedDate) return;
+
+    // ★★★ 修正点: PDF出力対象を「放課後」か「休校日」だけに絞り込む ★★★
+    const targetUsers = dailyScheduledUsers.filter(event => 
+      event.type === '放課後' || event.type === '休校日'
+    );
+
+    if (targetUsers.length === 0) {
+      alert('印刷対象（放課後・休校日）の利用者がいません。');
+      return;
+    }
+
     setIsPrinting(true);
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'b5' });
     
-    const records: (PseudoRecord | null)[] = dailyScheduledUsers.map(event => ({
-      userName: event.userName, date: (event.dateKeyJst ?? ''), usageStatus: event.type as any, notes: '',
+    // ★ 絞り込んだ targetUsers を使用
+    const records: (PseudoRecord | null)[] = targetUsers.map(event => ({
+      userName: event.userName, 
+      date: (event.dateKeyJst ?? ''), 
+      usageStatus: event.type as any, 
+      notes: '',
     }));
     
     if (records.length % 2 !== 0) records.push(null);
@@ -397,7 +412,15 @@ export default function CalendarPage() {
       tempDiv.style.width = '182mm'; tempDiv.style.position = 'absolute'; tempDiv.style.left = '-2000px';
       document.body.appendChild(tempDiv);
       const root = createRoot(tempDiv);
-      root.render(<React.StrictMode><ServiceRecordSheet record={toSheetRecord(pair[0])} /><ServiceRecordSheet record={toSheetRecord(pair[1])} /></React.StrictMode>);
+      
+      // ★ 型エラー回避のため null チェックを入れてレンダリング
+      root.render(
+        <React.StrictMode>
+          <ServiceRecordSheet record={toSheetRecord(pair[0])} />
+          <ServiceRecordSheet record={toSheetRecord(pair[1])} />
+        </React.StrictMode>
+      );
+      
       await new Promise(r => setTimeout(r, 500)); 
       if (i > 0) pdf.addPage();
       const canvas = await html2canvas(tempDiv, { scale: 3 });
@@ -407,7 +430,6 @@ export default function CalendarPage() {
     pdf.save(`${jstDateKey(selectedDate)}_サービス提供記録.pdf`);
     setIsPrinting(false);
   };
-
   const ymdJST = (d: Date) => {
     const j = new Date(d.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
     return `${j.getFullYear()}-${pad2(j.getMonth() + 1)}-${pad2(j.getDate())}`;
