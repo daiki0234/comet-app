@@ -3,14 +3,16 @@
 import React, { useEffect, useState } from 'react';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, limit, documentId } from 'firebase/firestore';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
 
-// PDF用
+// ★ PDF用ライブラリ (カレンダーページと同じ構成に変更)
 import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import html2canvas from 'html2canvas';
+import { createRoot } from 'react-dom/client';
+import { ServiceRecordSheet } from '@/components/ServiceRecordSheet';
 
 // --- 型定義 ---
 type AlertType = 'ABSENCE_LIMIT' | 'MISSING_RECORD';
@@ -46,16 +48,34 @@ type PreviousDayData = {
   }[];
 };
 
-// フォント読み込みヘルパー
-function arrayBufferToBase64(buffer: ArrayBuffer) {
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return window.btoa(binary);
-}
+// ★ 提供記録用の型定義 (カレンダーページから移植)
+type PseudoRecord = { userName: string; date: string; usageStatus: '放課後' | '休校日' | '欠席'; notes?: string; };
+type SheetRecord = React.ComponentProps<typeof ServiceRecordSheet>['record'];
+type SheetRecordNonNull = NonNullable<SheetRecord>;
+
+const toSheetRecord = (r: PseudoRecord | null): SheetRecord => {
+  if (!r || r.usageStatus == null) return null; 
+  const conv: SheetRecordNonNull = {
+    userName: r.userName,
+    date: r.date,
+    usageStatus: r.usageStatus, 
+    notes: r.notes ?? "",
+  };
+  return conv;
+};
+
+// ヘルパー
+const chunkArray = (array: string[], size: number) => {
+  const chunked = [];
+  for (let i = 0; i < array.length; i += size) chunked.push(array.slice(i, i + size));
+  return chunked;
+};
+
+// 2桁埋め
+const pad2 = (n: number) => n.toString().padStart(2, "0");
+// YYYY-MM-DD形式への変換
+const toDateStr = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
 
 // --- コンポーネント: アラートパネル ---
 const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean }) => {
@@ -110,9 +130,7 @@ const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean
 };
 
 // --- コンポーネント: 本日の状況 ---
-const TodayPanel = ({ summary, onPrint, loading }: { summary: TodaySummary, onPrint: () => void, loading: boolean }) => {
-  if (loading) return <div className="bg-white h-full p-6 rounded-2xl shadow-ios border border-gray-200 animate-pulse" />;
-
+const TodayPanel = ({ summary, onPrint }: { summary: TodaySummary, onPrint: () => void }) => {
   return (
     <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 h-full flex flex-col justify-between">
       <div>
@@ -121,9 +139,10 @@ const TodayPanel = ({ summary, onPrint, loading }: { summary: TodaySummary, onPr
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <p className="text-3xl font-extrabold text-gray-800">{summary.date}</p>
+            {/* PDF作成ボタン */}
             <button 
               onClick={onPrint}
-              title="サービス提供記録PDFを作成"
+              title="サービス提供記録PDFを作成 (カレンダーと同じ形式)"
               className="bg-gray-100 hover:bg-gray-200 text-gray-600 p-2 rounded-full transition-colors"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -140,7 +159,7 @@ const TodayPanel = ({ summary, onPrint, loading }: { summary: TodaySummary, onPr
             <p className="text-4xl font-bold text-blue-600">{summary.userCount}<span className="text-lg text-blue-400 ml-1">名</span></p>
           </div>
           
-          <div className="max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
+          <div className="max-h-[150px] overflow-y-auto custom-scrollbar pr-1">
             <p className="text-[10px] text-blue-400 font-bold mb-1 text-center">- 予定者一覧 -</p>
             {summary.scheduledUserNames.length > 0 ? (
               <div className="flex flex-wrap gap-1 justify-center">
@@ -159,20 +178,18 @@ const TodayPanel = ({ summary, onPrint, loading }: { summary: TodaySummary, onPr
       
       <div className="border-t border-gray-100 pt-4">
         <p className="text-xs text-gray-400 mb-2 font-bold">今日の予定・イベント (Google Calendar)</p>
-        <div className="max-h-[150px] overflow-y-auto custom-scrollbar">
-          {summary.googleEvents.length > 0 ? (
-            <ul className="space-y-2">
-              {summary.googleEvents.map((ev, i) => (
-                <li key={i} className="flex items-start text-sm text-gray-700 bg-gray-50 p-2 rounded">
-                  <span className="inline-block w-2 h-2 bg-green-500 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
-                  {ev}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-gray-400 italic">予定はありません</p>
-          )}
-        </div>
+        {summary.googleEvents.length > 0 ? (
+          <ul className="space-y-2">
+            {summary.googleEvents.map((ev, i) => (
+              <li key={i} className="flex items-start text-sm text-gray-700 bg-gray-50 p-2 rounded">
+                <span className="inline-block w-2 h-2 bg-green-500 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
+                {ev}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-gray-400 italic">予定はありません</p>
+        )}
       </div>
     </div>
   );
@@ -201,7 +218,7 @@ const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loa
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto max-h-[400px] border-t border-gray-100 pt-2 space-y-2 pr-1 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto max-h-[300px] border-t border-gray-100 pt-2 space-y-2 pr-1 custom-scrollbar">
         {data.records.map((rec) => (
           <div key={rec.id} className="text-sm flex flex-col sm:flex-row sm:justify-between sm:items-center border-b border-gray-50 pb-2 last:border-0">
             <div className="flex items-center mb-1 sm:mb-0">
@@ -216,6 +233,7 @@ const PreviousDayPanel = ({ data, loading }: { data: PreviousDayData | null, loa
                 </span>
               )}
             </div>
+            
             <span className="text-right text-xs">
               {rec.status === '欠席' ? (
                 <span className="text-red-500 bg-red-50 px-2 py-0.5 rounded inline-block">{rec.reason || '理由なし'}</span>
@@ -265,12 +283,7 @@ const QuickAccess = () => {
 
 export default function DashboardPage() {
   const { currentUser } = useAuth();
-  
-  // 個別のローディング状態を作成
-  const [loadingAlerts, setLoadingAlerts] = useState(true);
-  const [loadingToday, setLoadingToday] = useState(true);
-  const [loadingPrev, setLoadingPrev] = useState(true);
-
+  const [loading, setLoading] = useState(true);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [todaySummary, setTodaySummary] = useState<TodaySummary>({
     date: '', dateObj: new Date(), weather: '-', userCount: 0, scheduledUserNames: [], googleEvents: []
@@ -278,7 +291,8 @@ export default function DashboardPage() {
   const [prevDayData, setPrevDayData] = useState<PreviousDayData | null>(null);
 
   useEffect(() => {
-    const loadDashboard = async () => {
+    const fetchData = async () => {
+      setLoading(true);
       try {
         const now = new Date();
         const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -289,198 +303,198 @@ export default function DashboardPage() {
         const dStr = String(todayJst.getDate()).padStart(2, '0');
         const todayStr = `${y}-${mStr}-${dStr}`;
 
-        // 0. まずユーザー辞書を作成 (これを共通利用することで高速化)
-        const userSnap = await getDocs(collection(db, 'users'));
-        const userMap = new Map<string, { name: string }>();
-        userSnap.forEach(doc => {
+        const alertList: AlertItem[] = [];
+        
+        const absQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('usageStatus', '==', '欠席'));
+        const absSnap = await getDocs(absQuery);
+        const counts: Record<string, { name: string; count: number }> = {};
+        absSnap.forEach(doc => {
           const d = doc.data();
-          userMap.set(doc.id, { name: `${d.lastName} ${d.firstName}` });
+          if (!counts[d.userId]) counts[d.userId] = { name: d.userName, count: 0 };
+          counts[d.userId].count++;
+        });
+        Object.entries(counts).forEach(([uid, data]) => {
+          if (data.count >= 4) {
+            alertList.push({ id: `abs-${uid}`, type: 'ABSENCE_LIMIT', message: `${data.name} さんの欠席が4回に達しました`, detail: `${data.count}回`, link: '/absence-management' });
+          }
         });
 
-        // 1. アラート取得関数
-        const loadAlerts = async () => {
-          const alertList: AlertItem[] = [];
+        const recordQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('date', '<', todayStr));
+        const recordSnap = await getDocs(recordQuery);
+        recordSnap.forEach(doc => {
+          const d = doc.data();
+          if (d.usageStatus !== '欠席') {
+            if (!d.arrivalTime || !d.departureTime) {
+              alertList.push({ id: `miss-${doc.id}`, type: 'MISSING_RECORD', message: `${d.date} ${d.userName} さんの記録漏れ`, detail: !d.arrivalTime ? '来所時間なし' : '退所時間なし', link: '/attendance' });
+            }
+          }
+        });
+        setAlerts(alertList);
+
+        const eventQuery = query(collection(db, 'events'), where('dateKeyJst', '==', todayStr));
+        const eventSnap = await getDocs(eventQuery);
+        let userCount = 0;
+        const scheduledUsersMap: Record<string, string> = {}; 
+        
+        eventSnap.forEach(doc => {
+          const d = doc.data();
+          if (d.type === '放課後' || d.type === '休校日') {
+            userCount++;
+            scheduledUsersMap[d.userId] = d.type;
+          }
+        });
+
+        let scheduledUserNames: { name: string; service: string }[] = [];
+        const scheduledUserIds = Object.keys(scheduledUsersMap);
+
+        if (scheduledUserIds.length > 0) {
+          const userChunks = chunkArray(scheduledUserIds, 10);
+          const userDocsPromises = userChunks.map(ids => getDocs(query(collection(db, 'users'), where(documentId(), 'in', ids))));
+          const userSnapshots = await Promise.all(userDocsPromises);
           
-          // 欠席4回
-          const absQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('usageStatus', '==', '欠席'));
-          const absSnap = await getDocs(absQuery);
-          const counts: Record<string, number> = {};
-          absSnap.forEach(doc => { const d = doc.data(); counts[d.userId] = (counts[d.userId] || 0) + 1; });
-          Object.entries(counts).forEach(([uid, count]) => {
-            if (count >= 4) {
-              const uName = userMap.get(uid)?.name || '不明';
-              alertList.push({ id: `abs-${uid}`, type: 'ABSENCE_LIMIT', message: `${uName} さんの欠席が4回に達しました`, detail: `${count}回`, link: '/absence-management' });
-            }
-          });
-
-          // 記録漏れ
-          const recordQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('date', '<', todayStr));
-          const recordSnap = await getDocs(recordQuery);
-          recordSnap.forEach(doc => {
-            const d = doc.data();
-            if (d.usageStatus !== '欠席') {
-              if (!d.arrivalTime || !d.departureTime) {
-                alertList.push({ id: `miss-${doc.id}`, type: 'MISSING_RECORD', message: `${d.date} ${d.userName} さんの記録漏れ`, detail: !d.arrivalTime ? '来所時間なし' : '退所時間なし', link: '/attendance' });
-              }
-            }
-          });
-          setAlerts(alertList);
-          setLoadingAlerts(false);
-        };
-
-        // 2. 本日の情報取得関数
-        const loadToday = async () => {
-          const eventQuery = query(collection(db, 'events'), where('dateKeyJst', '==', todayStr));
-          const eventSnap = await getDocs(eventQuery);
-          
-          const scheduledUserNames: { name: string; service: string }[] = [];
-          let userCount = 0;
-
-          eventSnap.forEach(doc => {
-            const d = doc.data();
-            if (d.type === '放課後' || d.type === '休校日') {
-              userCount++;
-              const uName = userMap.get(d.userId)?.name || '不明';
-              scheduledUserNames.push({ name: uName, service: d.type });
-            }
+          userSnapshots.forEach(snap => {
+            snap.forEach(doc => { 
+              const u = doc.data();
+              scheduledUserNames.push({
+                name: `${u.lastName} ${u.firstName}`,
+                service: scheduledUsersMap[doc.id]
+              });
+            });
           });
           scheduledUserNames.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+        }
 
-          // 並行してAPI等取得
-          const [calRes, weatherRes] = await Promise.allSettled([
-            fetch(`/api/calendar?timeMin=${encodeURIComponent(`${todayStr}T00:00:00`)}&timeMax=${encodeURIComponent(`${todayStr}T23:59:59`)}`),
-            fetch(`https://api.open-meteo.com/v1/forecast?latitude=34.6937&longitude=135.5023&daily=weather_code&timezone=Asia%2FTokyo&start_date=${todayStr}&end_date=${todayStr}`)
-          ]);
-
-          let googleEvents: string[] = [];
-          if (calRes.status === 'fulfilled' && calRes.value.ok) {
-            const data = await calRes.value.json();
-            if (data.items) googleEvents = data.items.map((item: any) => item.summary);
+        let googleEvents: string[] = [];
+        try {
+          const timeMin = new Date(`${todayStr}T00:00:00`).toISOString();
+          const timeMax = new Date(`${todayStr}T23:59:59`).toISOString();
+          const calRes = await fetch(`/api/calendar?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
+          if (calRes.ok) {
+            const calData = await calRes.json();
+            if (calData.items) googleEvents = calData.items.map((item: any) => item.summary);
           }
+        } catch (calError) { console.error("Calendar fetch error:", calError); }
 
-          let weather = '-';
-          if (weatherRes.status === 'fulfilled' && weatherRes.value.ok) {
-            const data = await weatherRes.value.json();
-            if (data.daily?.weather_code) {
-              const code = data.daily.weather_code[0];
-              if (code === 0) weather = '晴'; else if (code <= 3) weather = '曇'; else if (code <= 67) weather = '雨'; else weather = 'その他';
-            }
+        let weather = '-';
+        try {
+          const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=34.6937&longitude=135.5023&daily=weather_code&timezone=Asia%2FTokyo&start_date=${todayStr}&end_date=${todayStr}`);
+          const wData = await res.json();
+          if (wData.daily && wData.daily.weather_code) {
+            const code = wData.daily.weather_code[0];
+            if (code === 0) weather = '晴'; else if (code <= 3) weather = '曇'; else if (code <= 67) weather = '雨'; else weather = 'その他';
           }
+        } catch(e) {}
 
-          setTodaySummary({ date: `${mStr}/${dStr}`, dateObj: todayJst, weather, userCount, scheduledUserNames, googleEvents });
-          setLoadingToday(false);
-        };
+        setTodaySummary({ date: `${mStr}/${dStr}`, dateObj: todayJst, weather, userCount, scheduledUserNames, googleEvents });
 
-        // 3. 前回の実績取得関数
-        const loadPrevious = async () => {
-          const prevDateQuery = query(collection(db, 'attendanceRecords'), where('date', '<', todayStr), orderBy('date', 'desc'), limit(1));
-          const prevDateSnap = await getDocs(prevDateQuery);
+        const prevDateQuery = query(collection(db, 'attendanceRecords'), where('date', '<', todayStr), orderBy('date', 'desc'), limit(1));
+        const prevDateSnap = await getDocs(prevDateQuery);
+        
+        if (!prevDateSnap.empty) {
+          const targetDateStr = prevDateSnap.docs[0].data().date;
+          const prevRecordsQuery = query(collection(db, 'attendanceRecords'), where('date', '==', targetDateStr));
+          const prevRecordsSnap = await getDocs(prevRecordsQuery);
           
-          if (!prevDateSnap.empty) {
-            const targetDateStr = prevDateSnap.docs[0].data().date;
-            const prevRecordsQuery = query(collection(db, 'attendanceRecords'), where('date', '==', targetDateStr));
-            const prevRecordsSnap = await getDocs(prevRecordsQuery);
-            
-            const recordsData = prevRecordsSnap.docs.map(doc => {
-              const d = doc.data();
-              return {
-                id: doc.id,
-                userName: d.userName,
-                status: d.usageStatus,
-                time: d.arrivalTime && d.departureTime ? `${d.arrivalTime}-${d.departureTime}` : d.arrivalTime || '時間未定',
-                reason: d.reason || d.notes
-              };
-            });
-            recordsData.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
+          const recordsData = prevRecordsSnap.docs.map(doc => {
+            const d = doc.data();
+            return {
+              id: doc.id,
+              userName: d.userName,
+              status: d.usageStatus,
+              time: d.arrivalTime && d.departureTime ? `${d.arrivalTime}-${d.departureTime}` : d.arrivalTime || '時間未定',
+              reason: d.reason || d.notes
+            };
+          });
+          recordsData.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
 
-            let cHoukago = 0, cKyuko = 0, cAbsence = 0;
-            recordsData.forEach(r => {
-              if (r.status === '放課後') cHoukago++; else if (r.status === '休校日') cKyuko++; else if (r.status === '欠席') cAbsence++;
-            });
+          let cHoukago = 0, cKyuko = 0, cAbsence = 0;
+          recordsData.forEach(r => {
+            if (r.status === '放課後') cHoukago++; else if (r.status === '休校日') cKyuko++; else if (r.status === '欠席') cAbsence++;
+          });
 
-            setPrevDayData({ dateStr: targetDateStr, countHoukago: cHoukago, countKyuko: cKyuko, countAbsence: cAbsence, records: recordsData });
-          } else {
-            setPrevDayData(null);
-          }
-          setLoadingPrev(false);
-        };
+          setPrevDayData({ dateStr: targetDateStr, countHoukago: cHoukago, countKyuko: cKyuko, countAbsence: cAbsence, records: recordsData });
+        } else {
+          setPrevDayData(null);
+        }
 
-        // ★ 並列実行！ (どれか遅くても他は止まらない)
-        // ユーザー辞書作成は一瞬なので待機してから、重い処理をヨーイドン
-        Promise.all([loadAlerts(), loadToday(), loadPrevious()]);
-
-      } catch (e) {
-        console.error("Dashboard Load Error:", e);
-        setLoadingAlerts(false); setLoadingToday(false); setLoadingPrev(false);
-      }
+      } catch (e) { console.error("Dashboard Fetch error:", e); } finally { setLoading(false); }
     };
 
-    loadDashboard();
+    fetchData();
   }, []);
 
+  // --- ★★★ カレンダーページと同じPDF生成ロジック ★★★ ---
   const handlePrintDailySheet = async () => {
     if (todaySummary.scheduledUserNames.length === 0) return toast.error("本日の利用予定者がいません");
     const loadingToast = toast.loading("PDFを生成中...");
 
     try {
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      // 1. データ準備
+      const recordsToPrint: (PseudoRecord | null)[] = todaySummary.scheduledUserNames.map(u => ({
+        userName: u.name,
+        date: toDateStr(todaySummary.dateObj), // YYYY-MM-DD
+        usageStatus: u.service as '放課後' | '休校日', 
+        notes: '',
+      }));
 
-      try {
-        const fontUrl = '/fonts/NotoSansJP-Regular.ttf';
-        const fontRes = await fetch(fontUrl);
-        if (!fontRes.ok) throw new Error("フォントファイルが見つかりません");
-        const fontBuffer = await fontRes.arrayBuffer();
-        const fontBase64 = arrayBufferToBase64(fontBuffer);
-
-        pdf.addFileToVFS('NotoSansJP.ttf', fontBase64);
-        pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'normal');
-        pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'bold');
-        pdf.setFont('NotoSansJP');
-      } catch (err) {
-        console.error("Font error:", err);
+      if (recordsToPrint.length % 2 !== 0) {
+        recordsToPrint.push(null);
       }
 
-      pdf.setFontSize(16);
-      const dateStr = todaySummary.dateObj.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
-      pdf.text(`サービス提供記録 (${dateStr})`, 105, 15, { align: 'center' });
+      // 2. PDF初期化 (B5 縦)
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'b5' });
 
-      const tableBody = todaySummary.scheduledUserNames.map(u => [
-        u.name,
-        u.service === '放課後' ? '放' : u.service === '休校日' ? '休' : u.service,
-        '', '', '', ''  
-      ]);
+      // 3. ペアごとにループして描画
+      for (let i = 0; i < recordsToPrint.length; i += 2) {
+        const pair = [recordsToPrint[i], recordsToPrint[i+1]];
+        
+        const tempDiv = document.createElement('div');
+        tempDiv.style.width = '182mm';
+        tempDiv.style.position = 'absolute';
+        tempDiv.style.left = '-2000px';
+        document.body.appendChild(tempDiv);
 
-      autoTable(pdf, {
-        startY: 25,
-        head: [['氏名', '区分', '来所', '退所', '備考', '確認印']],
-        body: tableBody,
-        styles: { font: 'NotoSansJP', fontSize: 10, cellPadding: 3, lineColor: [0,0,0], lineWidth: 0.1, valign: 'middle' },
-        headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
-        columnStyles: { 0: { cellWidth: 50 }, 1: { cellWidth: 15, halign: 'center' }, 2: { cellWidth: 25 }, 3: { cellWidth: 25 }, 4: { cellWidth: 40 }, 5: { cellWidth: 25 } },
-        theme: 'grid',
-      });
+        const root = createRoot(tempDiv);
+        
+        // Reactコンポーネント (ServiceRecordSheet) をレンダリング
+        await new Promise<void>((resolve) => {
+          root.render(
+            <React.StrictMode>
+              <ServiceRecordSheet record={toSheetRecord(pair[0])} />
+              <ServiceRecordSheet record={toSheetRecord(pair[1])} />
+            </React.StrictMode>
+          );
+          setTimeout(resolve, 500); // レンダリング待ち
+        });
 
-      pdf.save(`サービス提供記録_${todaySummary.date.replace('/', '-')}.pdf`);
+        // 画像化してPDFへ
+        const canvas = await html2canvas(tempDiv, { scale: 3 });
+        const imgData = canvas.toDataURL('image/png');
+
+        if (i > 0) pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, 0, pdf.internal.pageSize.getWidth(), pdf.internal.pageSize.getHeight(), undefined, 'FAST');
+
+        root.unmount();
+        document.body.removeChild(tempDiv);
+      }
+
+      pdf.save(`サービス提供記録_${toDateStr(todaySummary.dateObj)}.pdf`);
       toast.success("PDFをダウンロードしました", { id: loadingToast });
 
     } catch (e: any) {
-      console.error(e);
-      toast.error(`生成失敗: ${e.message}`, { id: loadingToast });
+      console.error("PDF Error:", e);
+      toast.error(`PDF生成失敗: ${e.message}`, { id: loadingToast });
     }
   };
 
   return (
     <AppLayout pageTitle="ダッシュボード">
       <div className="max-w-6xl mx-auto space-y-6">
-        <AlertPanel alerts={alerts} loading={loadingAlerts} />
+        <AlertPanel alerts={alerts} loading={loading} />
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-          <div className="h-full">
-            <TodayPanel summary={todaySummary} onPrint={handlePrintDailySheet} loading={loadingToday} />
-          </div>
-          <div className="h-full">
-            <PreviousDayPanel data={prevDayData} loading={loadingPrev} />
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+          <TodayPanel summary={todaySummary} onPrint={handlePrintDailySheet} />
+          <PreviousDayPanel data={prevDayData} loading={loading} />
         </div>
 
         <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
