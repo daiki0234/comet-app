@@ -70,7 +70,7 @@ type User = { id: string; lastName: string; firstName: string; allergies?: strin
 type EventData = {
   id: string;
   userId: string;
-  date?: any;               
+  date?: any;                
   dateKeyJst?: string;      
   type: ScheduleStatus; 
 };
@@ -135,6 +135,10 @@ export default function CalendarPage() {
   const [activeTab, setActiveTab] = useState('management');
   const [users, setUsers] = useState<User[]>([]);
   const [allEvents, setAllEvents] = useState<EventData[]>([]);
+  
+  // ★ 追加: 営業日(休所日)のデータ
+  const [businessDays, setBusinessDays] = useState<Record<string, string>>({});
+
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDateForModal, setSelectedDateForModal] = useState<Date | null>(null);
@@ -215,6 +219,16 @@ export default function CalendarPage() {
       });
 
       setAllEvents(eventsData);
+
+      // ★ 追加: 営業日データの取得
+      const busSnapshot = await getDocs(collection(db, 'businessDays'));
+      const busData: Record<string, string> = {};
+      busSnapshot.forEach(doc => {
+        const d = doc.data();
+        busData[d.date] = d.status; // status: 'OPEN' | 'CLOSED'
+      });
+      setBusinessDays(busData);
+
     } catch (error) {
       console.error("データの初期読み込みに失敗しました:", error);
       alert("カレンダーデータの読み込みに失敗しました。");
@@ -298,12 +312,17 @@ export default function CalendarPage() {
   };
 
   const handleDateClickForScheduling = (clickedDate: Date) => {
+    // ★ 追加: 休所日チェック (利用者予定管理)
+    const dateKey = toDateString(clickedDate);
+    if (businessDays[dateKey] === 'CLOSED') {
+      return; // 休所日なら何もしない
+    }
+
     if (!selectedUserId) {
       alert('先に利用者を選択してください。');
       return;
     }
     setSelectedDateForModal(clickedDate);
-    const dateKey = toDateString(clickedDate);
     const existingEvent = userSchedule.find(event => (event.dateKeyJst ?? event.date) === dateKey);
     setEventType(existingEvent ? existingEvent.type : '放課後');
     setIsModalOpen(true);
@@ -322,8 +341,8 @@ export default function CalendarPage() {
     try {
       await setDoc(docRef, {
         userId: selectedUserId,
-        dateKeyJst: dateKey,       
-        type: eventType,           
+        dateKeyJst: dateKey,        
+        type: eventType,            
         date: serverTimestamp(), 
       }, { merge: true });
 
@@ -380,10 +399,9 @@ export default function CalendarPage() {
     } catch (e) { alert("PDF生成失敗"); } finally { setIsPrintingSingle(false); setIsModalOpen(false); }
   };
 
-const handlePrintAll = async () => {
+  const handlePrintAll = async () => {
     if (!selectedDate) return;
 
-    // ★★★ 修正点: PDF出力対象を「放課後」か「休校日」だけに絞り込む ★★★
     const targetUsers = dailyScheduledUsers.filter(event => 
       event.type === '放課後' || event.type === '休校日'
     );
@@ -396,7 +414,6 @@ const handlePrintAll = async () => {
     setIsPrinting(true);
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'b5' });
     
-    // ★ 絞り込んだ targetUsers を使用
     const records: (PseudoRecord | null)[] = targetUsers.map(event => ({
       userName: event.userName, 
       date: (event.dateKeyJst ?? ''), 
@@ -413,7 +430,6 @@ const handlePrintAll = async () => {
       document.body.appendChild(tempDiv);
       const root = createRoot(tempDiv);
       
-      // ★ 型エラー回避のため null チェックを入れてレンダリング
       root.render(
         <React.StrictMode>
           <ServiceRecordSheet record={toSheetRecord(pair[0])} />
@@ -430,6 +446,7 @@ const handlePrintAll = async () => {
     pdf.save(`${jstDateKey(selectedDate)}_サービス提供記録.pdf`);
     setIsPrinting(false);
   };
+
   const ymdJST = (d: Date) => {
     const j = new Date(d.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
     return `${j.getFullYear()}-${pad2(j.getMonth() + 1)}-${pad2(j.getDate())}`;
@@ -438,12 +455,18 @@ const handlePrintAll = async () => {
   const scheduleTileClassName = useCallback(({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month') return undefined;
     const key = ymdJST(date);
+    const dateKey = toDateString(date);
+
+    // ★ 追加: 休所日ならグレーアウト・クリック不可
+    if (businessDays[dateKey] === 'CLOSED') {
+      return 'bg-gray-400 text-gray-400 pointer-events-none cursor-not-allowed';
+    }
+
     const classes: string[] = ['comet-tile'];
     if (holidays.has(key) || date.getDay() === 0) classes.push('!text-red-600', 'font-semibold'); 
     else if (date.getDay() === 6) classes.push('!text-blue-600', 'font-semibold'); 
     else if (date.getDay() === 5) classes.push('!text-black', 'font-normal'); 
 
-    const dateKey = toDateString(date);
     const day = eventsMap.get(dateKey);
     if (day) {
       const counts: any = {};
@@ -463,7 +486,7 @@ const handlePrintAll = async () => {
       }
     }
     return classes.join(' ');
-  }, [userSchedule, selectedUserId, holidays, eventsMap]);
+  }, [userSchedule, selectedUserId, holidays, eventsMap, businessDays]); // ★ businessDaysを依存配列に追加
 
   const managementTileContent = ({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month') return null;
@@ -493,13 +516,11 @@ const handlePrintAll = async () => {
     );
   };
 
-  // ★★★ 修正箇所: ここを復活させました ★★★
   const scheduleTileContent = ({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month') return null;
     const key = toDateString(date);
     const day = eventsMap.get(key);
 
-    // 1. 全体の予定数 (Managementと同じロジックで計算)
     let totalCountsContent = null;
     if (day) {
       const counts: Record<ScheduleStatus, number> = {
@@ -537,7 +558,6 @@ const handlePrintAll = async () => {
       );
     }
 
-    // 2. 選択中利用者の予定
     let userStatusContent = null;
     if (selectedUserId) {
       const event = userSchedule.find(e => e.dateKeyJst === key);
@@ -642,7 +662,15 @@ const handlePrintAll = async () => {
 
                 <Calendar 
                   className="comet-cal" 
-                  onChange={(value) => setSelectedDate(value as Date)} 
+                  onChange={(value) => {
+                    // ★ 追加: 休所日チェック (利用管理タブ)
+                    const date = value as Date;
+                    const dateKey = toDateString(date);
+                    if (businessDays[dateKey] === 'CLOSED') {
+                      return; // 休所日なら選択しない
+                    }
+                    setSelectedDate(date);
+                  }} 
                   value={selectedDate} 
                   locale="ja-JP"
                   calendarType="hebrew"
@@ -730,8 +758,13 @@ const handlePrintAll = async () => {
                 {selectedUserId && <button onClick={() => setSelectedUserId('')} className="ml-2 text-xs text-gray-500 hover:text-red-500 underline">解除</button>}
               </div>
 
-              <Calendar className="comet-cal" onChange={(value) => { let clickedDate: Date | null = null; if (Array.isArray(value)) { clickedDate = value[0] as Date; } else { clickedDate = value as Date; } if (!clickedDate) return; setSelectedDate(clickedDate); handleDateClickForScheduling(clickedDate); }} value={selectedDate} locale="ja-JP" calendarType="hebrew" tileClassName={scheduleTileClassName} 
-              // ★★★ 修正箇所: ここを復活させました ★★★
+              <Calendar className="comet-cal" onChange={(value) => { 
+                let clickedDate: Date | null = null; 
+                if (Array.isArray(value)) { clickedDate = value[0] as Date; } else { clickedDate = value as Date; } 
+                if (!clickedDate) return; 
+                setSelectedDate(clickedDate); 
+                handleDateClickForScheduling(clickedDate); 
+              }} value={selectedDate} locale="ja-JP" calendarType="hebrew" tileClassName={scheduleTileClassName} 
               tileContent={(props) => (
                 <div className="pointer-events-none relative z-0">
                   {scheduleTileContent(props)}

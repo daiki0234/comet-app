@@ -147,17 +147,35 @@ export default function BusinessJournalPage() {
       const startStr = `${currentYear}-${pad2(currentMonth)}-01`;
       const endStr = `${currentYear}-${pad2(currentMonth)}-${pad2(daysInMonth)}`;
 
-      const [snap, googleEventsMap, weatherMap] = await Promise.all([
+      // ★★★ 修正: shiftsデータの取得を追加 ★★★
+      const [snap, googleEventsMap, weatherMap, shiftSnap] = await Promise.all([
         getDocs(query(
           collection(db, 'attendanceRecords'),
           where('date', '>=', startStr),
           where('date', '<=', endStr)
         )),
         fetchGoogleEvents(startStr, endStr),
-        fetchWeatherHistory(startStr, endStr) 
+        fetchWeatherHistory(startStr, endStr),
+        getDocs(query(
+          collection(db, 'shifts'),
+          where('date', '>=', startStr),
+          where('date', '<=', endStr)
+        ))
       ]);
 
       const allRecords = snap.docs.map(doc => doc.data());
+      
+      // ★ シフトデータを日付ごとに整理
+      const shiftsByDate: Record<string, string[]> = {};
+      shiftSnap.forEach(doc => {
+        const d = doc.data();
+        // 休み以外の人をリストアップ
+        if (d.shiftType !== '休み') {
+          if (!shiftsByDate[d.date]) shiftsByDate[d.date] = [];
+          shiftsByDate[d.date].push(d.staffName);
+        }
+      });
+
       const rows: JournalRow[] = [];
 
       for (let d = 1; d <= daysInMonth; d++) {
@@ -197,6 +215,10 @@ export default function BusinessJournalPage() {
           }
         });
 
+        // ★ その日のシフトスタッフを取得
+        const staffList = shiftsByDate[dateKey] || [];
+        staffList.sort(); // 名前順に並べ替え
+
         rows.push({
           date: dateObj,
           dateStr: dateKey,
@@ -209,7 +231,7 @@ export default function BusinessJournalPage() {
           countHoukago,
           countKyuko,
           countAbsence,
-          staffNames: '', 
+          staffNames: staffList.join('\n'), // ★ 改行区切りで表示
         });
       }
 
@@ -262,7 +284,7 @@ export default function BusinessJournalPage() {
         row.countHoukago || '',
         row.countKyuko || '',
         row.countAbsence || '',
-        row.staffNames
+        row.staffNames // ★ ここにもスタッフ名が入る
       ]);
 
       // 4. タイトル
@@ -407,7 +429,8 @@ export default function BusinessJournalPage() {
                     <td className="border p-2 text-center bg-blue-50 font-semibold align-top">{row.countHoukago}</td>
                     <td className="border p-2 text-center bg-orange-50 font-semibold align-top">{row.countKyuko}</td>
                     <td className="border p-2 text-center bg-red-50 font-semibold align-top">{row.countAbsence}</td>
-                    <td className="border p-2 align-top"></td>
+                    {/* ★ スタッフ名表示 (改行を<br/>に変換) */}
+                    <td className="border p-2 align-top text-xs whitespace-pre-wrap">{row.staffNames}</td>
                   </tr>
                 ))
               )}
