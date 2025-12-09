@@ -130,11 +130,24 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
     icon: <ChartIcon /> 
   },
     // ★★★ 追加ここまで ★★★
-    { href: '/users', label: '利用者管理', icon: <UsersIcon /> },
-    
+    { 
+      href: '/users', 
+      label: '利用者管理', 
+      icon: <UsersIcon /> 
+    },
+
+    { 
+    href: '/operations', 
+    label: '運営管理', 
+    icon: <SettingsIcon /> 
+  },
+  { 
+    href: '/masters', 
+    label: 'サービス情報マスタ', 
+    icon: <SettingsIcon /> 
+  },
     // 管理者メニュー
-    ...(isAdmin ? [
-      { href: '/masters', label: 'サービス情報マスタ', icon: <SettingsIcon /> },
+    ...(isAdmin ? [  
       { href: '/admin-settings', label: '職員管理', icon: <UsersIcon /> },
     ] : []),
   ];
