@@ -7,6 +7,7 @@ import { collection, getDocs, writeBatch, doc, query, orderBy } from 'firebase/f
 import { AppLayout } from '../../components/Layout';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
+import { generateQrCard } from '@/lib/qr-printer'; // ★ Import
 
 // Userタイプ (変更なし)
 type User = {
@@ -237,9 +238,18 @@ export default function UsersPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.jukyushaNo || '未設定'}</td>
                     <td className="px-6 py-4 whitespace-nowTBAp text-sm text-gray-500">{user.decisionEndDate || '未設定'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <Link href={`/users/${user.id}`} className="text-indigo-600 hover:text-indigo-900">
-                        詳細
-                      </Link>
+                      <div className="flex justify-end gap-2">
+                        {/* ★★★ 修正箇所: シンプルなテキストボタンに変更 ★★★ */}
+                        <Link href={`/users/${user.id}`} className="text-indigo-600 hover:text-indigo-900 font-bold">
+                          詳細
+                        </Link>
+                        <button
+                          onClick={() => generateQrCard(user.id, `${user.lastName} ${user.firstName}`)}
+                          className="text-gray-500 hover:text-blue-600 font-bold transition-colors"
+                        >
+                          QR作成
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))

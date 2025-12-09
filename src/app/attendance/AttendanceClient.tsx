@@ -201,32 +201,60 @@ export default function AttendancePage() {
     };
 
     try {
-      const url = new URL(result);
-      const params = new URLSearchParams(url.search);
-      const name = params.get('name');
-      const statusSymbol = params.get('status');
-      const type = params.get('type');
-      if (!name || !statusSymbol || !type) throw new Error('無効なQRコードです');
-
-      const targetName = name.replace(/[\s\u3000]+/g, ''); 
-      const usersRef = collection(db, "users");
-      const userSnapshot = await getDocs(usersRef);
-      let userDoc = null;
-
-      for (const doc of userSnapshot.docs) {
-        const data = doc.data();
-        const dbName = `${data.lastName}${data.firstName}`;
-        const dbNameClean = dbName.replace(/[\s\u3000]+/g, ''); 
-        if (dbNameClean === targetName) {
-          userDoc = doc;
-          break;
-        }
+      // URL解析 (comet:// または https:// 両対応)
+      // URLオブジェクトでパースできない形式(comet://など)の場合に備えて手動パースも検討
+      let params: URLSearchParams;
+      
+      try {
+        const urlObj = new URL(result);
+        params = new URLSearchParams(urlObj.search);
+      } catch (e) {
+        // comet:// などでnew URLが失敗する場合の簡易パース
+        const queryString = result.split('?')[1];
+        params = new URLSearchParams(queryString);
       }
 
-      if (!userDoc) throw new Error(`利用者未登録: ${name}`);
+      const id = params.get('id'); // ★ 新しいQRコード用
+      const name = params.get('name'); // 旧QRコード用
+      
+      const statusSymbol = params.get('status');
+      const type = params.get('type');
 
-      const userId = userDoc.id;
-      const userName = `${userDoc.data().lastName} ${userDoc.data().firstName}`;
+      if ((!id && !name) || !statusSymbol || !type) {
+        throw new Error('無効なQRコードです');
+      }
+
+      let userId = '';
+      let userName = '';
+
+      // ★ 1. IDがある場合 (新方式)
+      if (id) {
+        const userDocRef = doc(db, "users", id);
+        const userSnap = await getDoc(userDocRef);
+        if (!userSnap.exists()) throw new Error('利用者IDが見つかりません');
+        userId = userSnap.id;
+        userName = `${userSnap.data().lastName} ${userSnap.data().firstName}`;
+      } 
+      // ★ 2. 名前のみの場合 (旧方式・互換性維持)
+      else if (name) {
+        const targetName = name.replace(/[\s\u3000]+/g, ''); 
+        const usersRef = collection(db, "users");
+        const userSnapshot = await getDocs(usersRef);
+        let foundDoc = null;
+
+        for (const d of userSnapshot.docs) {
+          const data = d.data();
+          const dbName = `${data.lastName}${data.firstName}`;
+          const dbNameClean = dbName.replace(/[\s\u3000]+/g, ''); 
+          if (dbNameClean === targetName) {
+            foundDoc = d;
+            break;
+          }
+        }
+        if (!foundDoc) throw new Error(`利用者未登録: ${name}`);
+        userId = foundDoc.id;
+        userName = `${foundDoc.data().lastName} ${foundDoc.data().firstName}`;
+      }
 
       const todayStr = toDateString(new Date());
       const monthStr = todayStr.substring(0, 7);

@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { AppLayout } from '@/components/Layout';
 import toast from 'react-hot-toast';
+import { generateQrCard } from '@/lib/qr-printer'; // ★ Import
 
 // --- ★ 3. マスタの型定義 ---
 
@@ -595,8 +596,25 @@ export default function UserDetailPage({ params }: Props) {
               <button type="button" onClick={() => setActiveTab('basic')} className={`py-3 px-4 text-sm font-medium ${activeTab === 'basic' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>基本情報</button>
               <button type="button" onClick={() => setActiveTab('service')} className={`py-3 px-4 text-sm font-medium ${activeTab === 'service' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>サービス情報</button>
             </div>
+            {/* ★★★ 修正箇所: QR作成ボタンと編集ボタン ★★★ */}
             {!isEditing && (
-              <button type="button" onClick={() => setIsEditing(true)} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg">編集する</button>
+              <div className="flex gap-2">
+                 <button
+                  type="button"
+                  onClick={() => formData && generateQrCard(userId, `${formData.lastName} ${formData.firstName}`)}
+                  className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 shadow-sm transition-colors font-bold"
+                >
+                  {/* シンプルなQRコードアイコン */}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="14" width="7" height="7"></rect>
+                    <rect x="3" y="14" width="7" height="7"></rect>
+                  </svg>
+                  QR作成
+                </button>
+                <button type="button" onClick={() => setIsEditing(true)} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg">編集する</button>
+              </div>
             )}
           </div>
 
