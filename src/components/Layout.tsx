@@ -91,7 +91,7 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
     <div className="flex h-screen bg-gray-100">
       <Toaster position="top-right" reverseOrder={false} />
 
-      {/* サイドバー (relativeを追加) */}
+      {/* サイドバー */}
       <aside
         className={[
           'relative flex-shrink-0 bg-white shadow-lg flex flex-col border-r',
@@ -100,24 +100,20 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
         ].join(' ')}
       >
         {/* ロゴエリア */}
-        <div className="h-16 px-0 flex items-center justify-center border-b relative">
+        <div className="h-16 px-0 flex items-center justify-center border-b relative overflow-hidden">
           <Link 
             href="/dashboard" 
             className="flex items-center justify-center w-full h-full text-blue-600 transition-all duration-200"
           >
             {collapsed ? (
-              // 閉じた時はマークのみ
               <LogoMarkOnly className="h-8 w-auto" />
             ) : (
-              // 開いた時はフルロゴ
               <Logo className="h-9 w-auto" />
             )}
           </Link>
         </div>
 
-        {/* ★★★ 開閉ボタン (フローティング化) ★★★ 
-            absolute でサイドバーの右端境界線上に配置
-        */}
+        {/* 開閉ボタン (フローティング) */}
         <button
           onClick={() => setCollapsed(v => !v)}
           className="absolute -right-3 top-5 z-50 flex items-center justify-center w-6 h-6 bg-white border border-gray-200 rounded-full shadow-md hover:bg-gray-50 text-gray-500 transition-colors"
@@ -147,7 +143,6 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
                     </span>
                     {!collapsed && <span className="text-sm font-medium">{item.label}</span>}
                   </Link>
-                  {/* サブメニュー (閉じた時は表示しない) */}
                   {item.subMenu && isActive && !collapsed && (
                     <ul className="pl-10 mt-2 space-y-2">
                       {item.subMenu.map((subItem: any) => (
@@ -168,7 +163,8 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
 
       {/* メインエリア */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-10 px-4 md:px-6 h-14 flex items-center justify-between border-b">
+        {/* ★★★ 修正点: ヘッダー高さを h-14 から h-16 に変更してサイドバーと統一 ★★★ */}
+        <header className="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-10 px-4 md:px-6 h-16 flex items-center justify-between border-b">
           <h2 className="text-xl md:text-2xl font-bold text-gray-800 truncate">{pageTitle}</h2>
           
           <div className="flex items-center gap-4">
