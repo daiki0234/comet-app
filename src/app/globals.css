@@ -22,18 +22,18 @@ body {
   color: white !important; */
   border-radius: 8px !important;
 }
-.react-calendar__tile--active:hover {
+/* .react-calendar__tile--active:hover {
   background: #0070E0 !important;
-}
-.react-calendar__tile--now {
+} */
+/* .react-calendar__tile--now {
   background: #EBF5FF !important;
   color: #007AFF !important;
   border-radius: 8px !important;
-}
-.scheduled-day { 
+} */
+/* .scheduled-day { 
   background-color: #d1e7dd !important; 
   border-radius: 8px !important;
-}
+} */
 
 /* ★★★ ここから追加 ★★★ */
 /* カレンダーの横幅の制限を解除し、親要素に追従させる */
@@ -57,57 +57,54 @@ body {
     padding-bottom: max(env(safe-area-inset-bottom), 1rem);
   }
 }
-
-/* カレンダーフレーム */
+/* 
 .comet-cal {
   border-radius: 12px;
   background: #fff;
   padding: 8px;
   box-shadow: 0 6px 16px rgba(16,24,40,.08);
-  border: 1px solid #e5e7eb; /* gray-200 */
+  border: 1px solid #e5e7eb; 
 }
 
-/* ヘッダー（月切り替え） */
 .comet-cal .react-calendar__navigation {
   margin-bottom: 6px;
 }
+  */
+
 .comet-cal .react-calendar__navigation button {
   font-weight: 700;
   font-size: 20px;
-  color: #111827; /* gray-900 */
+  color: #111827; 
 }
 
-/* 曜日ヘッダ */
+/*
 .comet-cal .react-calendar__month-view__weekdays {
   text-transform: none;
   font-size: 14px;
-  color: #6b7280; /* gray-500 */
-}
+  color: #6b7280;
+} */
 
-/* 各日タイルの共通レイアウト */
 .comet-cal .react-calendar__tile {
-  height: 100px;            /* タイルの高さ */
+  height: 100px;           
   padding: 10px;
-  position: relative;      /* 子の絶対配置に備える */
+  position: relative;      
   overflow: hidden;
   border-radius: 10px;
   font-size: 20px;
 }
 
-/* クリック/フォーカス */
-.comet-cal .react-calendar__tile:enabled:hover {
-  background: #f3f4f6; /* gray-100 */
+/* .comet-cal .react-calendar__tile:enabled:hover {
+  background: #f3f4f6; 
 }
+  */
 
 .comet-cal .react-calendar__tile--active {
-  outline: 2px solid #2563eb; /* blue-600 */
-  /* background: #eff6ff;        blue-50 */
+  background-color: rgba(33, 144, 255, 0.7) !important;
 }
-
-/* 今日の枠線 */
+/*
 .comet-cal .react-calendar__tile--now {
-  box-shadow: inset 0 0 0 2px #22c55e; /* green-500 */
-}
+  box-shadow: inset 0 0 0 2px #22c55e; 
+} */
 
 /* 週末色（数字のみ少し薄く） */
 /* .comet-cal .react-calendar__month-view__days__day--weekend abbr {

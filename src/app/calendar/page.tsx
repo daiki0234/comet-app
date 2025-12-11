@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 import { db } from '@/lib/firebase/firebase';
-import { collection, getDocs, doc, setDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc, serverTimestamp, deleteDoc, getDoc, query, where } from 'firebase/firestore';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { AppLayout } from '@/components/Layout';
@@ -67,12 +67,15 @@ function buildEventsMap(
 }
 
 type User = { id: string; lastName: string; firstName: string; allergies?: string; serviceHoDay?: string; serviceJihatsu?: string; serviceSoudan?: string; };
+
 type EventData = {
   id: string;
   userId: string;
   date?: any;                
   dateKeyJst?: string;      
   type: ScheduleStatus; 
+  createdAt?: any;
+  updatedAt?: any;
 };
 type Event = EventData & { userName: string; user: User; };
 type PseudoRecord = { userName: string; date: string; usageStatus: '放課後' | '休校日' | '欠席'; notes?: string; };
@@ -131,12 +134,22 @@ const toDateString = (date: Date) => {
   return `${y}-${m}-${d}`;
 };
 
+const formatDateSlash = (val: any) => {
+  if (!val) return '-';
+  try {
+    const d = val.toDate ? val.toDate() : new Date(val);
+    if (isNaN(d.getTime())) return '-';
+    return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}`;
+  } catch (e) {
+    return '-';
+  }
+};
+
 export default function CalendarPage() {
   const [activeTab, setActiveTab] = useState('management');
   const [users, setUsers] = useState<User[]>([]);
   const [allEvents, setAllEvents] = useState<EventData[]>([]);
   
-  // ★ 追加: 営業日(休所日)のデータ
   const [businessDays, setBusinessDays] = useState<Record<string, string>>({});
 
   const [selectedUserId, setSelectedUserId] = useState<string>('');
@@ -145,7 +158,10 @@ export default function CalendarPage() {
   const [eventType, setEventType] = useState<ScheduleStatus>('放課後');
   const [isPrinting, setIsPrinting] = useState(false);
   const [isPrintingSingle, setIsPrintingSingle] = useState(false);
-  const [allergyModalUser, setAllergyModalUser] = useState<User | null>(null);
+  
+  // アレルギー表示を展開中のユーザーID
+  const [expandedAllergyUserId, setExpandedAllergyUserId] = useState<string | null>(null);
+
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [holidays, setHolidays] = useState<Set<string>>(new Set());
   
@@ -220,12 +236,11 @@ export default function CalendarPage() {
 
       setAllEvents(eventsData);
 
-      // ★ 追加: 営業日データの取得
       const busSnapshot = await getDocs(collection(db, 'businessDays'));
       const busData: Record<string, string> = {};
       busSnapshot.forEach(doc => {
         const d = doc.data();
-        busData[d.date] = d.status; // status: 'OPEN' | 'CLOSED'
+        busData[d.date] = d.status;
       });
       setBusinessDays(busData);
 
@@ -302,8 +317,12 @@ export default function CalendarPage() {
 
     try {
       const docRef = doc(db, "events", event.id);
-      await setDoc(docRef, { type: newStatus }, { merge: true });
+      await setDoc(docRef, { 
+        type: newStatus,
+        updatedAt: serverTimestamp() 
+      }, { merge: true });
       toast.success("予定を更新しました");
+      fetchInitialData();
     } catch (error) {
       console.error("更新エラー:", error);
       toast.error("更新に失敗しました");
@@ -312,10 +331,10 @@ export default function CalendarPage() {
   };
 
   const handleDateClickForScheduling = (clickedDate: Date) => {
-    // ★ 追加: 休所日チェック (利用者予定管理)
     const dateKey = toDateString(clickedDate);
     if (businessDays[dateKey] === 'CLOSED') {
-      return; // 休所日なら何もしない
+      toast.error('休所日のため選択できません');
+      return; 
     }
 
     if (!selectedUserId) {
@@ -339,12 +358,22 @@ export default function CalendarPage() {
     );
 
     try {
-      await setDoc(docRef, {
+      const docSnap = await getDoc(docRef);
+      const isNew = !docSnap.exists();
+
+      const payload: any = {
         userId: selectedUserId,
         dateKeyJst: dateKey,        
         type: eventType,            
         date: serverTimestamp(), 
-      }, { merge: true });
+        updatedAt: serverTimestamp(),
+      };
+
+      if (isNew) {
+        payload.createdAt = serverTimestamp();
+      }
+
+      await setDoc(docRef, payload, { merge: true });
 
       if (legacyEvent) {
         await deleteDoc(doc(db, 'events', legacyEvent.id));
@@ -457,12 +486,14 @@ export default function CalendarPage() {
     const key = ymdJST(date);
     const dateKey = toDateString(date);
 
-    // ★ 追加: 休所日ならグレーアウト・クリック不可
+    // ★ 修正: 休所日のスタイル (グレー背景 + クリック無効)
     if (businessDays[dateKey] === 'CLOSED') {
-      return 'bg-gray-400 text-gray-400 pointer-events-none cursor-not-allowed';
+      return 'bg-gray-400 text-gray-500 pointer-events-none cursor-not-allowed opacity-60 rounded-lg border-2 border-white';
     }
 
-    const classes: string[] = ['comet-tile'];
+    // ★ 修正: 日付間の余白と角丸 (border-2 border-white, rounded-lg, shadow-sm を追加)
+    const classes: string[] = ['comet-tile', 'border-2', 'border-white', 'rounded-lg', 'shadow-sm'];
+    
     if (holidays.has(key) || date.getDay() === 0) classes.push('!text-red-600', 'font-semibold'); 
     else if (date.getDay() === 6) classes.push('!text-blue-600', 'font-semibold'); 
     else if (date.getDay() === 5) classes.push('!text-black', 'font-normal'); 
@@ -486,7 +517,7 @@ export default function CalendarPage() {
       }
     }
     return classes.join(' ');
-  }, [userSchedule, selectedUserId, holidays, eventsMap, businessDays]); // ★ businessDaysを依存配列に追加
+  }, [userSchedule, selectedUserId, holidays, eventsMap, businessDays]);
 
   const managementTileContent = ({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month') return null;
@@ -587,59 +618,149 @@ export default function CalendarPage() {
           <button onClick={() => setActiveTab('schedule')} className={`py-3 px-4 text-sm font-medium ${activeTab === 'schedule' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>利用者予定管理</button>
         </div>
         
-        {isModalOpen && selectedDateForModal && (
+        {/* --- モーダル (汎用) --- */}
+        {isModalOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-[200]">
-            <div className="relative z-[201] bg-white p-6 rounded-lg shadow-xl">
-              <h3 className="text-lg font-semibold mb-4">{selectedDateForModal.toLocaleDateString()} の予定</h3>
-              <select value={eventType} onChange={(e) => setEventType(e.target.value as ScheduleStatus)} className="p-2 border rounded w-full">
-                <option value="放課後">放課後</option>
-                <option value="休校日">休校日</option>
-                <option value="キャンセル待ち">キャンセル待ち</option>
-                <option value="欠席">欠席</option>
-                <option value="取り消し">取り消し</option>
-              </select>
-              <div className="mt-6 flex flex-wrap justify-end gap-3">
-                {(eventType === '放課後' || eventType === '休校日') && (
-                  <button 
-                    onClick={handlePrintSingleRecord} 
-                    disabled={isPrintingSingle}
-                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded disabled:bg-gray-400 mr-auto"
-                  >
-                    {isPrintingSingle ? '作成中...' : '提供記録作成'}
-                  </button>
-                )}
-                <button onClick={() => setIsModalOpen(false)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded">キャンセル</button>
-                
-                {userSchedule.some(e => e.dateKeyJst === toDateString(selectedDateForModal)) && 
-                  <button 
-                    onClick={handleDeleteEvent} 
-                    className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded"
-                    disabled={isPrintingSingle} 
-                  >
-                    削除
-                  </button>
-                }
-                
-                <button 
-                  onClick={handleSaveEvent} 
-                  className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
-                  disabled={isPrintingSingle} 
-                >
-                  保存
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+            <div className="relative z-[201] bg-white p-6 rounded-lg shadow-xl w-full max-w-lg max-h-[80vh] overflow-y-auto m-4">
+              
+              {/* 閉じるボタン */}
+              <button 
+                onClick={() => setIsModalOpen(false)}
+                className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 transition-colors"
+                title="閉じる"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
 
-        {allergyModalUser && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50" onClick={() => setAllergyModalUser(null)}>
-            <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-              <h3 className="text-lg font-bold text-gray-800 mb-4">{allergyModalUser.lastName} {allergyModalUser.firstName} さんのアレルギー・持病情報</h3>
-              <p className="text-gray-600 whitespace-pre-wrap">{allergyModalUser.allergies}</p>
-              <div className="mt-6 text-right">
-                <button onClick={() => setAllergyModalUser(null)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg">閉じる</button>
-              </div>
+              {/* --- 1. 利用管理 (一覧モード) の内容 --- */}
+              {activeTab === 'management' && selectedDate && (
+                <>
+                  <div className="flex justify-between items-center mb-4 pr-8">
+                    <h3 className="text-lg font-semibold text-gray-800">{selectedDate.toLocaleDateString()} の利用予定者</h3>
+                    <button onClick={handlePrintAll} disabled={dailyScheduledUsers.length === 0 || isPrinting} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg disabled:bg-gray-400 text-sm whitespace-nowrap">
+                      {isPrinting ? '作成中...' : 'まとめて印刷'}
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {Object.keys(groupedUsers).length > 0 ? (
+                      Object.entries(groupedUsers).map(([serviceName, usersInService]) => (
+                        <div key={serviceName}>
+                          <h4 className="font-bold text-gray-700 border-l-4 border-blue-500 pl-2 mb-2">{serviceName}</h4>
+                          <ul className="space-y-2">
+                            {usersInService.map(event => (
+                              <li key={event.id} className="flex flex-col bg-gray-50 rounded-lg border border-gray-100 p-2 hover:bg-gray-100 transition-colors">
+                                <div className="flex items-center justify-between w-full">
+                                  <div className="flex items-center">
+                                    <span className="font-medium text-gray-800">{event.userName}</span>
+                                    {event.user.allergies && (
+                                      // ★ アレルギー展開ボタン
+                                      <button 
+                                        onClick={() => setExpandedAllergyUserId(expandedAllergyUserId === event.userId ? null : event.userId)}
+                                        className={`ml-2 font-bold text-lg leading-none align-middle transition-colors ${expandedAllergyUserId === event.userId ? 'text-red-700' : 'text-red-500 hover:text-red-700'}`}
+                                        title="アレルギー情報を表示"
+                                      >
+                                        ＊
+                                      </button>
+                                    )}
+                                    <div className="flex flex-col ml-4 text-[10px] text-gray-500 leading-tight">
+                                      <span>登録日：{formatDateSlash(event.createdAt || event.date)}</span>
+                                      <span>更新日：{formatDateSlash(event.updatedAt || event.date)}</span>
+                                    </div>
+                                  </div>
+                                  
+                                  <select 
+                                    value={event.type} 
+                                    onChange={(e) => handleQuickStatusChange(event, e.target.value as ScheduleStatus)}
+                                    className={`
+                                      ml-3 text-sm font-semibold border rounded p-1 cursor-pointer outline-none focus:ring-2 focus:ring-blue-300
+                                      ${USER_SCHEDULE_TEXT_CLASS[event.type as ScheduleStatus]}
+                                      bg-white border-gray-300
+                                    `}
+                                  >
+                                    <option value="放課後" className="text-blue-700">放課後</option>
+                                    <option value="休校日" className="text-yellow-700">休校日</option>
+                                    <option value="キャンセル待ち" className="text-gray-600">キャンセル待ち</option>
+                                    <option value="欠席" className="text-red-600">欠席</option>
+                                    <option value="取り消し" className="text-pink-600">取り消し</option>
+                                  </select>
+                                </div>
+
+                                {/* ★ アレルギー情報展開エリア */}
+                                {expandedAllergyUserId === event.userId && event.user.allergies && (
+                                  <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2 animate-fadeIn">
+                                    <strong>【アレルギー・持病】</strong><br/>
+                                    <span className="whitespace-pre-wrap">{event.user.allergies}</span>
+                                  </div>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-500 text-sm py-4 text-center">この日の利用予定者はいません。</p>
+                    )}
+                  </div>
+                  <div className="mt-6 text-right">
+                    <button onClick={() => setIsModalOpen(false)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded">閉じる</button>
+                  </div>
+                </>
+              )}
+
+              {/* --- 2. 利用者予定管理 (追加・削除モード) の内容 --- */}
+              {activeTab === 'schedule' && selectedDateForModal && (
+                <>
+                  <h3 className="text-lg font-semibold mb-1">{selectedDateForModal.toLocaleDateString()} の予定</h3>
+                  <div className="text-xs text-gray-500 mb-4">
+                    {(() => {
+                      const evt = userSchedule.find(e => (e.dateKeyJst ?? e.date) === toDateString(selectedDateForModal));
+                      if (!evt) return "新規登録";
+                      return `登録日: ${formatDateSlash(evt.createdAt || evt.date)} ｜ 更新日: ${formatDateSlash(evt.updatedAt || evt.date)}`;
+                    })()}
+                  </div>
+
+                  <select value={eventType} onChange={(e) => setEventType(e.target.value as ScheduleStatus)} className="p-2 border rounded w-full">
+                    <option value="放課後">放課後</option>
+                    <option value="休校日">休校日</option>
+                    <option value="キャンセル待ち">キャンセル待ち</option>
+                    <option value="欠席">欠席</option>
+                    <option value="取り消し">取り消し</option>
+                  </select>
+                  <div className="mt-6 flex flex-wrap justify-end gap-3">
+                    {(eventType === '放課後' || eventType === '休校日') && (
+                      <button 
+                        onClick={handlePrintSingleRecord} 
+                        disabled={isPrintingSingle}
+                        className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded disabled:bg-gray-400 mr-auto"
+                      >
+                        {isPrintingSingle ? '作成中...' : '提供記録作成'}
+                      </button>
+                    )}
+                    <button onClick={() => setIsModalOpen(false)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded">キャンセル</button>
+                    
+                    {userSchedule.some(e => e.dateKeyJst === toDateString(selectedDateForModal)) && 
+                      <button 
+                        onClick={handleDeleteEvent} 
+                        className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded"
+                        disabled={isPrintingSingle} 
+                      >
+                        削除
+                      </button>
+                    }
+                    
+                    <button 
+                      onClick={handleSaveEvent} 
+                      className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
+                      disabled={isPrintingSingle} 
+                    >
+                      保存
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -663,13 +784,13 @@ export default function CalendarPage() {
                 <Calendar 
                   className="comet-cal" 
                   onChange={(value) => {
-                    // ★ 追加: 休所日チェック (利用管理タブ)
                     const date = value as Date;
                     const dateKey = toDateString(date);
                     if (businessDays[dateKey] === 'CLOSED') {
-                      return; // 休所日なら選択しない
+                      return; 
                     }
                     setSelectedDate(date);
+                    setIsModalOpen(true); 
                   }} 
                   value={selectedDate} 
                   locale="ja-JP"
@@ -678,64 +799,6 @@ export default function CalendarPage() {
                   tileContent={managementTileContent}
                   onActiveStartDateChange={onActiveStartDateChange}
                 />
-              </div>
-              
-              {/* 日次リストエリア */}
-              <div className="flex-1">
-                {selectedDate ? (
-                  <>
-                    <div className="flex justify-between items-center mb-4">
-                      <h2 className="text-lg font-semibold text-gray-800">{selectedDate.toLocaleDateString()} の利用予定者</h2>
-                      <button onClick={handlePrintAll} disabled={dailyScheduledUsers.length === 0 || isPrinting} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg disabled:bg-gray-400">
-                        {isPrinting ? 'PDF生成中...' : 'まとめて印刷'}
-                      </button>
-                    </div>
-                    <div className="space-y-4">
-                      {Object.keys(groupedUsers).length > 0 ? (
-                        Object.entries(groupedUsers).map(([serviceName, usersInService]) => (
-                          <div key={serviceName}>
-                            <h4 className="font-bold text-gray-700 border-l-4 border-blue-500 pl-2 mb-2">{serviceName}</h4>
-                            <ul className="space-y-2">
-                              {usersInService.map(event => (
-                                <li key={event.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-100 hover:bg-gray-100 transition-colors">
-                                  <div className="flex items-center">
-                                    <span className="font-medium text-gray-800">{event.userName}</span>
-                                    {event.user.allergies && (
-                                      <button onClick={() => setAllergyModalUser(event.user)} className="ml-2 text-red-500 font-bold text-lg hover:text-red-700 leading-none align-middle">＊</button>
-                                    )}
-                                  </div>
-                                  
-                                  {/* クイック更新プルダウン */}
-                                  <select 
-                                    value={event.type} 
-                                    onChange={(e) => handleQuickStatusChange(event, e.target.value as ScheduleStatus)}
-                                    className={`
-                                      ml-3 text-sm font-semibold border rounded p-1 cursor-pointer outline-none focus:ring-2 focus:ring-blue-300
-                                      ${USER_SCHEDULE_TEXT_CLASS[event.type as ScheduleStatus]}
-                                      bg-white border-gray-300
-                                    `}
-                                  >
-                                    <option value="放課後" className="text-blue-700">放課後</option>
-                                    <option value="休校日" className="text-yellow-700">休校日</option>
-                                    <option value="キャンセル待ち" className="text-gray-600">キャンセル待ち</option>
-                                    <option value="欠席" className="text-red-600">欠席</option>
-                                    <option value="取り消し" className="text-pink-600">取り消し</option>
-                                  </select>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="text-gray-500 text-sm">この日の利用予定者はいません。</p>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-center text-gray-500 pt-10 h-full flex flex-col justify-center items-center">
-                    <p>カレンダーの日付を選択して、<br/>その日の利用予定者を表示します。</p>
-                  </div>
-                )}
               </div>
             </div>
           )}
