@@ -24,6 +24,9 @@ const UserXIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" heigh
 const BookIcon = ({ className = "w-5 h-5" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>;
 const ChartIcon = ({ className = "w-5 h-5" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>;
 const FileTextIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>;
+// 請求書（ファイル）っぽいアイコンを追加
+const FileTextCheckIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>;
+
 
 export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTitle: string }) {
   const pathname = usePathname();
@@ -79,6 +82,9 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
     },
     { href: '/business-journal', label: '業務日誌', icon: <BookIcon /> },
     { href: '/analysis', label: 'AI分析', icon: <ChartIcon /> },
+    // ★★★ ここに追加 ★★★
+    { href: '/billing', label: '請求管理', icon: <FileTextCheckIcon /> }, 
+    // ★★★ 追加ここまで ★★★
     { href: '/users', label: '利用者管理', icon: <UsersIcon /> },
     { href: '/operations', label: '運営管理', icon: <SettingsIcon /> },
     { href: '/masters', label: 'サービス情報マスタ', icon: <SettingsIcon /> },

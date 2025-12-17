@@ -32,7 +32,18 @@ const QrCodeScanner = dynamic(
   { ssr: false, loading: () => <div className="p-4 text-sm text-gray-500">カメラ起動中...</div> }
 );
 
-type User = { id: string; lastName: string; firstName: string; };
+// ユーザー型定義
+type User = { 
+  id: string; 
+  lastName: string; 
+  firstName: string; 
+  // ★ 自動判定フラグ
+  isFamilySupportEligible: boolean;      
+  isIndependenceSupportEligible: boolean; 
+  // その他のデータ
+  [key: string]: any;
+};
+
 type AttendanceRecord = {
   id: string;
   userId: string;
@@ -48,6 +59,9 @@ type AttendanceRecord = {
     class: 1 | 2 | 3;
     display: string;
   } | null;
+  // 加算実績フラグ
+  hasFamilySupport?: boolean;       
+  hasIndependenceSupport?: boolean; 
 };
 
 const toDateString = (date: Date) => {
@@ -63,10 +77,7 @@ export default function AttendancePage() {
   const [viewDate, setViewDate] = useState(new Date());
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   
-  // ★ 追加: ドロップダウン表示用の「全ユーザーの当月欠席回数」
   const [monthlyAbsenceCounts, setMonthlyAbsenceCounts] = useState<Record<string, number>>({});
-  
-  // 一覧表示用の「レコードごとの欠席回数（n回目）」
   const [recordAbsenceCounts, setRecordAbsenceCounts] = useState<Record<string, number>>({});
 
   const [scanResult, setScanResult] = useState('スキャン待機中...');
@@ -75,26 +86,46 @@ export default function AttendancePage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<AttendanceRecord | null>(null);
   
-  // スキャン処理中フラグ
   const [isProcessingState, setIsProcessingState] = useState(false);
   const isScanningRef = useRef(false);
 
-  // 検索用State
   const [userSearchQuery, setUserSearchQuery] = useState('');
-
-  // タブのアクティブ状態管理
   const [isTabActive, setIsTabActive] = useState(true);
 
-  // データ取得ロジック
   const fetchData = useCallback(async () => {
-    // 1. 全利用者リスト
+    // 1. 全利用者リスト取得 & 加算判定
     const usersSnapshot = await getDocs(collection(db, 'users'));
-    const usersData = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as User[];
-    // 名前順にソート
+    const usersData = usersSnapshot.docs.map(doc => {
+      const data = doc.data();
+      
+      // ★★★ 修正: appliedAdditions を参照して判定 ★★★
+      // UserDetailPageの定義に合わせて { name: string, details: string }[] を読み込む
+      const appliedAdditions = data.appliedAdditions || [];
+      
+      const hasAddition = (searchName: string) => {
+        if (!Array.isArray(appliedAdditions)) return false;
+        return appliedAdditions.some((item: any) => {
+          // item.name に "家族支援加算" などが含まれているかチェック
+          if (item.name && typeof item.name === 'string') {
+            return item.name.includes(searchName);
+          }
+          return false;
+        });
+      };
+
+      return {
+        id: doc.id,
+        ...data,
+        // ここでフラグを生成
+        isFamilySupportEligible: hasAddition('家族支援加算'),
+        isIndependenceSupportEligible: hasAddition('通所自立支援加算'),
+      };
+    }) as User[];
+
     usersData.sort((a, b) => `${a.lastName}${a.firstName}`.localeCompare(`${b.lastName}${b.firstName}`, 'ja'));
     setUsers(usersData);
 
-    // 2. 表示中日付の出欠記録を取得
+    // 2. 表示中日付の出欠記録
     const dateStr = toDateString(viewDate);
     const q = query(collection(db, "attendanceRecords"), where("date", "==", dateStr));
     const attendanceSnapshot = await getDocs(q);
@@ -102,8 +133,8 @@ export default function AttendancePage() {
     records.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
     setAttendanceRecords(records);
 
-    // 3. 今月の欠席データを全取得して集計
-    const targetMonth = dateStr.substring(0, 7); // YYYY-MM
+    // 3. 今月の欠席集計
+    const targetMonth = dateStr.substring(0, 7);
     const monthQuery = query(
       collection(db, 'attendanceRecords'),
       where('month', '==', targetMonth),
@@ -112,22 +143,18 @@ export default function AttendancePage() {
     const monthSnap = await getDocs(monthQuery);
     const allMonthAbsences = monthSnap.docs.map(d => ({ id: d.id, ...d.data() } as AttendanceRecord));
 
-    // A. 検索候補用の集計 (ユーザーごとの合計回数)
     const totalCounts: Record<string, number> = {};
     allMonthAbsences.forEach(rec => {
       totalCounts[rec.userId] = (totalCounts[rec.userId] || 0) + 1;
     });
     setMonthlyAbsenceCounts(totalCounts);
 
-    // B. 一覧表示用の集計 (その日の欠席が何回目か)
     const absentRecordsToday = records.filter(r => r.usageStatus === '欠席');
     if (absentRecordsToday.length > 0) {
       const seqCounts: Record<string, number> = {};
       absentRecordsToday.forEach(target => {
-        // その人の今月の記録を抽出して日付順に
         const myAbsences = allMonthAbsences.filter(a => a.userId === target.userId);
         myAbsences.sort((a, b) => a.date.localeCompare(b.date));
-        // 今回のレコードが何番目か探す
         const index = myAbsences.findIndex(a => a.date === target.date);
         if (index !== -1) {
           seqCounts[target.id] = index + 1;
@@ -144,7 +171,6 @@ export default function AttendancePage() {
     fetchData();
   }, [fetchData]);
 
-  // タブの切り替えを検知してカメラをOFFにする
   useEffect(() => {
     const handleVisibilityChange = () => {
       setIsTabActive(!document.hidden);
@@ -153,13 +179,10 @@ export default function AttendancePage() {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
 
-  // ★ 修正: 検索ロジック (全ユーザーから検索するように変更)
   const searchMatchedUsers = useMemo(() => {
     const queryText = userSearchQuery.trim();
     if (!queryText) return [];
-    
     const lowerQuery = queryText.toLowerCase();
-    // todaysScheduledUsers ではなく users (全利用者) から検索
     return users.filter(user => {
       const fullName = `${user.lastName || ''}${user.firstName || ''}`;
       return fullName.toLowerCase().includes(lowerQuery);
@@ -172,7 +195,6 @@ export default function AttendancePage() {
     setIsProcessingState(true);
 
     const loadingToast = toast.loading('処理中...');
-
     const statusFromSymbol = (s: string): '放課後' | '休校日' => (s === '◯' ? '放課後' : '休校日');
     const parseHHMM = (t?: string) => {
       if (!t) return null;
@@ -201,22 +223,17 @@ export default function AttendancePage() {
     };
 
     try {
-      // URL解析 (comet:// または https:// 両対応)
-      // URLオブジェクトでパースできない形式(comet://など)の場合に備えて手動パースも検討
       let params: URLSearchParams;
-      
       try {
         const urlObj = new URL(result);
         params = new URLSearchParams(urlObj.search);
       } catch (e) {
-        // comet:// などでnew URLが失敗する場合の簡易パース
         const queryString = result.split('?')[1];
         params = new URLSearchParams(queryString);
       }
 
-      const id = params.get('id'); // ★ 新しいQRコード用
-      const name = params.get('name'); // 旧QRコード用
-      
+      const id = params.get('id');
+      const name = params.get('name');
       const statusSymbol = params.get('status');
       const type = params.get('type');
 
@@ -227,21 +244,17 @@ export default function AttendancePage() {
       let userId = '';
       let userName = '';
 
-      // ★ 1. IDがある場合 (新方式)
       if (id) {
         const userDocRef = doc(db, "users", id);
         const userSnap = await getDoc(userDocRef);
         if (!userSnap.exists()) throw new Error('利用者IDが見つかりません');
         userId = userSnap.id;
         userName = `${userSnap.data().lastName} ${userSnap.data().firstName}`;
-      } 
-      // ★ 2. 名前のみの場合 (旧方式・互換性維持)
-      else if (name) {
+      } else if (name) {
         const targetName = name.replace(/[\s\u3000]+/g, ''); 
         const usersRef = collection(db, "users");
         const userSnapshot = await getDocs(usersRef);
         let foundDoc = null;
-
         for (const d of userSnapshot.docs) {
           const data = d.data();
           const dbName = `${data.lastName}${data.firstName}`;
@@ -316,7 +329,6 @@ export default function AttendancePage() {
 
   const handleScanFailure = (error: string) => {};
 
-  // 自動AI生成関数
   const generateAndSaveAdvice = async (docId: string, userId: string, date: string, notes: string) => {
     const aiToast = toast.loading('AIが相談内容を自動生成中...');
     try {
@@ -371,7 +383,6 @@ export default function AttendancePage() {
       };
 
       const docRef = await addDoc(collection(db, "attendanceRecords"), newRecord);
-
       generateAndSaveAdvice(docRef.id, newRecord.userId, newRecord.date, absenceReason);
       
       toast.success(`${user.lastName} ${user.firstName} さんを欠席として登録しました。`, { id: loadingToast });
@@ -405,6 +416,9 @@ export default function AttendancePage() {
         departureTime: editingRecord.departureTime || '',
         notes: newNotes,
         extension: ext ?? null,
+        // 加算情報の保存
+        hasFamilySupport: editingRecord.hasFamilySupport || false,
+        hasIndependenceSupport: editingRecord.hasIndependenceSupport || false,
       };
       const recordRef = doc(db, 'attendanceRecords', editingRecord.id);
       await updateDoc(recordRef, dataToUpdate);
@@ -470,10 +484,8 @@ export default function AttendancePage() {
             </div>
             <div className="space-y-3">
               
-              {/* ★★★ 修正: 検索機能付き利用者選択 (全ユーザー対象 & 回数表示付き) ★★★ */}
               <div className="relative">
                 <label className="block text-sm font-medium text-gray-700 mb-1">利用者</label>
-                
                 <input
                   type="text"
                   value={userSearchQuery}
@@ -526,7 +538,6 @@ export default function AttendancePage() {
                   </div>
                 )}
               </div>
-              {/* ★★★ 修正ここまで ★★★ */}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">欠席理由</label>
@@ -539,7 +550,6 @@ export default function AttendancePage() {
 
         {/* 右カラム（一覧） */}
         <section className="lg:col-span-2 bg-white p-4 md:p-5 rounded-2xl shadow-ios border border-gray-200">
-          {/* ... 右カラムは以前と同じなので変更なし ... */}
           <div className="flex flex-wrap items-center gap-3 mb-3">
             <label htmlFor="view-date" className="text-sm font-medium text-gray-700">表示日</label>
             <input id="view-date" type="date" value={toDateString(viewDate)} onChange={(e) => setViewDate(new Date(e.target.value))} className="h-10 px-3 border border-gray-300 rounded-lg text-sm" />
@@ -601,7 +611,51 @@ export default function AttendancePage() {
               </div>
               <div><label className="block text-sm font-medium text-gray-700">来所時間</label><input type="time" value={editingRecord.arrivalTime || ''} onChange={(e) => setEditingRecord({ ...editingRecord, arrivalTime: e.target.value })} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm" /></div>
               <div><label className="block text-sm font-medium text-gray-700">退所時間</label><input type="time" value={editingRecord.departureTime || ''} onChange={(e) => setEditingRecord({ ...editingRecord, departureTime: e.target.value })} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm" /></div>
-              <div><label className="block text-sm font-medium text-gray-700">特記事項</label><textarea value={editingRecord.notes || ''} onChange={(e) => setEditingRecord({ ...editingRecord, notes: e.target.value })} rows={3} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm"></textarea></div>
+              
+              {/* 加算チェックボックス (修正済みロジックで判定) */}
+              <div className="border-t pt-2 mt-2">
+                <p className="text-sm font-bold text-gray-700 mb-2">本日の加算実績</p>
+                <div className="space-y-2">
+                  {(() => {
+                    const targetUser = users.find(u => u.id === editingRecord.userId);
+                    const showFamily = targetUser?.isFamilySupportEligible;
+                    const showIndependence = targetUser?.isIndependenceSupportEligible;
+
+                    if (!showFamily && !showIndependence) {
+                      return <p className="text-xs text-gray-500">対象となる加算はありません。</p>;
+                    }
+
+                    return (
+                      <>
+                        {showFamily && (
+                          <label className="flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={editingRecord.hasFamilySupport || false}
+                              onChange={(e) => setEditingRecord({ ...editingRecord, hasFamilySupport: e.target.checked })}
+                              className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                            />
+                            <span className="text-sm text-gray-700">家族支援加算</span>
+                          </label>
+                        )}
+                        {showIndependence && (
+                          <label className="flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={editingRecord.hasIndependenceSupport || false}
+                              onChange={(e) => setEditingRecord({ ...editingRecord, hasIndependenceSupport: e.target.checked })}
+                              className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                            />
+                            <span className="text-sm text-gray-700">通所自立支援加算</span>
+                          </label>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <div><label className="block text-sm font-medium text-gray-700 mt-2">特記事項</label><textarea value={editingRecord.notes || ''} onChange={(e) => setEditingRecord({ ...editingRecord, notes: e.target.value })} rows={3} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm"></textarea></div>
             </div>
             <div className="flex items-center justify-between pt-6 mt-6 border-t">
               <button onClick={handleDeleteRecord} className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg">削除</button>
