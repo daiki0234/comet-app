@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { db } from '@/lib/firebase/firebase';
-import { collection, addDoc, getDocs, query, where, orderBy } from 'firebase/firestore';
+// ★ 修正: doc, updateDoc を追加
+import { collection, addDoc, getDocs, query, where, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { AppLayout } from '@/components/Layout';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
@@ -37,7 +38,7 @@ export default function RegisterAbsencePage() {
   // 検索用State
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
-  // ★★★ 追加: 欠席回数管理用State (Key: userId, Value: 回数) ★★★
+  // 欠席回数管理用State (Key: userId, Value: 回数)
   const [absenceCounts, setAbsenceCounts] = useState<Record<string, number>>({});
 
   // 1. ユーザー一覧取得
@@ -57,14 +58,13 @@ export default function RegisterAbsencePage() {
     fetchUsers();
   }, []);
 
-  // ★★★ 追加: 日付が変わったら、その月の欠席回数を全ユーザー分集計する ★★★
+  // 2. 日付が変わったら、その月の欠席回数を全ユーザー分集計する
   useEffect(() => {
     const fetchMonthlyAbsences = async () => {
       if (!absenceDate) return;
       try {
         const targetMonth = absenceDate.substring(0, 7); // "YYYY-MM"
         
-        // その月の欠席データを全て取得
         const q = query(
           collection(db, 'attendanceRecords'),
           where('month', '==', targetMonth),
@@ -72,7 +72,6 @@ export default function RegisterAbsencePage() {
         );
         const snapshot = await getDocs(q);
 
-        // 集計
         const counts: Record<string, number> = {};
         snapshot.docs.forEach(doc => {
           const uid = doc.data().userId;
@@ -86,7 +85,7 @@ export default function RegisterAbsencePage() {
     };
 
     fetchMonthlyAbsences();
-  }, [absenceDate]); // 日付が変わるたびに再計算
+  }, [absenceDate]);
 
   // 検索ロジック
   const searchMatchedUsers = useMemo(() => {
@@ -100,6 +99,36 @@ export default function RegisterAbsencePage() {
     });
   }, [userSearchQuery, users]);
 
+  // ★★★ 追加: AI生成関数 ★★★
+  const generateAndSaveAdvice = async (docId: string, userId: string, date: string, notes: string) => {
+    // ユーザー操作をブロックしないよう、トーストで状況を通知
+    const aiToast = toast.loading('AIが相談内容を自動生成中...');
+    
+    try {
+      const res = await fetch('/api/absence/generate-advice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, date, currentNote: notes })
+      });
+      
+      const data = await res.json();
+      
+      if (data.advice) {
+        // AIの回答があれば、作成したレコードに追記
+        const docRef = doc(db, 'attendanceRecords', docId);
+        await updateDoc(docRef, { aiAdvice: data.advice });
+        
+        toast.success('AI相談内容を保存しました', { id: aiToast });
+      } else {
+        toast.dismiss(aiToast);
+      }
+    } catch (e) {
+      console.error("AI Generation Error:", e);
+      // 失敗してもクリティカルではないので、エラー通知のみ
+      toast.error('AI生成に失敗しました（後で一括作成できます）', { id: aiToast });
+    }
+  };
+
   const handleAddAbsence = async () => {
     if (!absentUserId) { return toast.error('利用者を選択してください。'); }
     const user = users.find(u => u.id === absentUserId);
@@ -112,7 +141,6 @@ export default function RegisterAbsencePage() {
       const targetMonth = absenceDate.substring(0, 7);
       
       // 1. 回数制限チェック
-      // (念のため保存直前にも最新データをチェック)
       const absenceQuery = query(
         collection(db, "attendanceRecords"), 
         where("userId", "==", absentUserId), 
@@ -140,7 +168,7 @@ export default function RegisterAbsencePage() {
       const autoReason = determineAbsenceCategory(notes);
 
       // 3. 保存
-      await addDoc(collection(db, "attendanceRecords"), {
+      const docRef = await addDoc(collection(db, "attendanceRecords"), {
         userId: user.id,
         userName: `${user.lastName} ${user.firstName}`,
         date: absenceDate,
@@ -156,6 +184,9 @@ export default function RegisterAbsencePage() {
       
       toast.success(`${absenceDate} に ${user.lastName} ${user.firstName} さんを欠席登録しました。`, { id: loadingToast });
       
+      // ★★★ 追加: AI生成を開始 (awaitはせず、バックグラウンドで実行) ★★★
+      generateAndSaveAdvice(docRef.id, user.id, absenceDate, notes);
+
       // State更新 (回数も+1しておく)
       setAbsenceCounts(prev => ({
         ...prev,
