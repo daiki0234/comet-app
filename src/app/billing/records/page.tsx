@@ -1,158 +1,21 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/Layout';
 import toast from 'react-hot-toast';
 import { db } from '@/lib/firebase/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { downloadRecordsCsv } from '@/lib/billing/csv-exporter';
+import { downloadPdf, downloadMergedPdf } from '@/lib/billing/pdf-exporter';
 
-// --- 型定義 ---
-type UserData = {
-  id: string;
-  lastName: string; firstName: string;
-  jukyushaNo: string; cityNo: string;
-  daysSpecified: string; // 支給量
-  decisionEndDate: string; // 給付決定終了日
-  upperLimitAmount: string; // 負担上限月額
-  serviceHoDay: string; serviceJihatsu: string;
-};
-
-type AttendanceRecord = {
-  id: string;
-  userId: string;
-  date: string;
-  usageStatus: '放課後' | '休校日' | '欠席';
-  arrivalTime: string;
-  departureTime: string;
-};
-
-type ValidationResult = {
-  user: UserData;
-  usageCount: number; // 実績日数
-  limitCount: number; // 支給量
-  upperLimit: number; // 負担上限月額
-  estimatedCost: number; // 推定1割負担額
-  finalBurden: number; // 最終的な請求予定額 (上限と推定の小さい方)
-  
-  isOverLimit: boolean; // 日数超過フラグ
-  isExpired: boolean;   // 期限切れフラグ
-  missingFields: string[]; // 不足項目
-  
-  records: AttendanceRecord[];
-};
-
-// --- 印刷用コンポーネント (単票) ---
-const ServiceRecordSheet = ({ data, month }: { data: ValidationResult, month: string }) => {
-  if (!data) return null;
-  
-  const [year, m] = month.split('-');
-  const daysInMonth = new Date(Number(year), Number(m), 0).getDate();
-  const dateList = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-
-  const getDayOfWeek = (d: number) => {
-    const date = new Date(Number(year), Number(m) - 1, d);
-    return ['日', '月', '火', '水', '木', '金', '土'][date.getDay()];
-  };
-
-  const getRecord = (d: number) => {
-    const dateStr = `${year}-${m}-${String(d).padStart(2, '0')}`;
-    return data.records.find(r => r.date === dateStr);
-  };
-
-  return (
-    // break-after-page で改ページを強制
-    <div className="p-8 bg-white text-black text-xs font-serif w-full h-full page-break">
-      <div className="text-center font-bold text-lg mb-2 border-b-2 border-black pb-1">
-        サービス提供実績記録票
-      </div>
-      
-      <div className="flex justify-between items-end mb-2">
-        <div>
-          <span className="text-sm font-bold">{year}年 {m}月分</span>
-        </div>
-        <div className="text-right text-[10px]">
-          <div className="flex justify-end gap-4">
-            <p>受給者証番号: <span className="font-mono text-base">{data.user.jukyushaNo || '________'}</span></p>
-            <p>支給市町村: {data.user.cityNo || '_____'}</p>
-          </div>
-          <div className="flex justify-end gap-4 mt-1">
-             <p>氏名: <span className="font-bold text-sm">{data.user.lastName} {data.user.firstName} 様</span></p>
-             <p>負担上限月額: <span className="font-bold">{data.upperLimit.toLocaleString()}円</span></p>
-          </div>
-        </div>
-      </div>
-
-      <table className="w-full border-collapse border border-black text-center text-[10px]">
-        <thead>
-          <tr className="bg-gray-100">
-            <th className="border border-black p-1 w-8">日付</th>
-            <th className="border border-black p-1 w-8">曜日</th>
-            <th className="border border-black p-1">サービス提供<br/>の状況</th>
-            <th className="border border-black p-1 w-12">開始<br/>時間</th>
-            <th className="border border-black p-1 w-12">終了<br/>時間</th>
-            <th className="border border-black p-1 w-8">送迎</th>
-            <th className="border border-black p-1 w-8">給食</th>
-            <th className="border border-black p-1">利用者<br/>確認印</th>
-          </tr>
-        </thead>
-        <tbody>
-          {dateList.map(day => {
-            const rec = getRecord(day);
-            const wd = getDayOfWeek(day);
-            const isSun = wd === '日';
-            let status = '';
-            if (rec) {
-              if (rec.usageStatus === '放課後') status = '授業終了後';
-              else if (rec.usageStatus === '休校日') status = '休業日';
-              else if (rec.usageStatus === '欠席') status = '欠席時対応';
-            }
-
-            return (
-              <tr key={day} className="h-7">
-                <td className="border border-black">{day}</td>
-                <td className={`border border-black ${isSun ? 'text-red-500' : ''}`}>{wd}</td>
-                <td className="border border-black text-left px-1">{status}</td>
-                <td className="border border-black">{rec?.arrivalTime || ''}</td>
-                <td className="border border-black">{rec?.departureTime || ''}</td>
-                <td className="border border-black">{rec?.arrivalTime ? '往復' : ''}</td> 
-                <td className="border border-black"></td>
-                <td className="border border-black"></td>
-              </tr>
-            );
-          })}
-          <tr className="font-bold bg-gray-50 h-8">
-            <td colSpan={2} className="border border-black">合計</td>
-            <td className="border border-black text-left px-2">{data.usageCount}回</td>
-            <td colSpan={5} className="border border-black bg-gray-100 text-left px-2 font-normal text-[9px]">
-              ※この用紙は、ご家庭で大切に保管してください。
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      <div className="mt-4 flex justify-between items-end">
-        <div className="border border-black p-2 w-1/2">
-          <p className="mb-6">上記の内容に相違ありません。</p>
-          <div className="flex justify-end items-center gap-2">
-            <span>保護者氏名</span>
-            <div className="border-b border-black border-dashed w-32 h-6"></div>
-            <span>印</span>
-          </div>
-        </div>
-        <div className="text-right text-[10px]">
-          <p className="font-bold text-xs mb-1">Comet放課後等デイサービス</p>
-          <p>事業者番号: 1234567890</p>
-          <p>電話番号: 03-1234-5678</p>
-          <p>管理者: 山田 太郎</p>
-        </div>
-      </div>
-    </div>
-  );
-};
-
+// コンポーネント
+import { ServiceRecordSheet } from '@/components/billing/ServiceRecordSheet';
+import { ValidationResult, UserData, AttendanceRecord } from '@/types/billing';
 
 export default function BillingPage() {
+  const router = useRouter();
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     const y = now.getFullYear();
@@ -162,300 +25,274 @@ export default function BillingPage() {
 
   const [loading, setLoading] = useState(false);
   const [validations, setValidations] = useState<ValidationResult[]>([]);
-  
-  // 印刷制御用
-  const [isPrintingAll, setIsPrintingAll] = useState(false);
-  const [printTarget, setPrintTarget] = useState<ValidationResult | null>(null);
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
 
-  // ★ 追加: CSVダウンロードハンドラ
-  const handleDownloadCsv = () => {
-    if (validations.length === 0) {
-      toast.error("出力するデータがありません");
-      return;
-    }
-    
-    // エラーがある場合は確認
-    const hasError = validations.some(v => v.isOverLimit || v.isExpired || v.missingFields.length > 0);
-    if (hasError) {
-      if (!confirm("エラー項目（赤字）が含まれていますが、CSVを出力しますか？")) {
-        return;
-      }
-    }
-
-    try {
-      // 事業所番号は一旦固定値または環境変数などから。
-      // 将来的には「運営管理 > 事業所設定」から取得するようにします。
-      const officeCode = "1234567890"; 
-      
-      downloadRecordsCsv(validations, selectedMonth, officeCode);
-      toast.success("CSVをダウンロードしました");
-    } catch (e) {
-      console.error(e);
-      toast.error("CSV出力に失敗しました");
-    }
-  };
-
-  // データ集計処理
+  // データ取得
   const fetchAndValidate = async () => {
     setLoading(true);
     setValidations([]);
-    
+    setSelectedUserIds(new Set());
     try {
       const usersSnap = await getDocs(collection(db, 'users'));
-      const users = usersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserData));
-
+      const users = usersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
       const recordsRef = collection(db, 'attendanceRecords');
       const q = query(recordsRef, where('month', '==', selectedMonth));
       const recordsSnap = await getDocs(q);
-      const allRecords = recordsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord));
-
-      // 選択月の日数と末日を取得
+      const allRecords = recordsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
       const [yearStr, monthStr] = selectedMonth.split('-');
-      const monthEnd = new Date(Number(yearStr), Number(monthStr), 0); // 月末日
+      const monthEnd = new Date(Number(yearStr), Number(monthStr), 0); 
 
       const results: ValidationResult[] = users.map(user => {
-        const userRecords = allRecords.filter(r => r.userId === user.id);
+        const userData: UserData = {
+          id: user.id,
+          lastName: user.lastName || '',
+          firstName: user.firstName || '',
+          guardianLastName: user.guardianLastName || user.protectorLastName || '',
+          guardianFirstName: user.guardianFirstName || user.protectorFirstName || '',
+          jukyushaNo: user.jukyushaNo || '',
+          cityNo: user.cityNo || '',
+          daysSpecified: user.daysSpecified || '0',
+          decisionEndDate: user.decisionEndDate || '',
+          upperLimitAmount: user.upperLimitAmount || '0',
+          serviceHoDay: user.serviceHoDay || '',
+          serviceJihatsu: user.serviceJihatsu || '',
+        };
+        
+        // ユーザーごとの実績レコード
+        const userRecords: AttendanceRecord[] = allRecords.filter(r => r.userId === user.id)
+          .map(r => ({ ...r } as any));
+          
         const usageCount = userRecords.filter(r => r.usageStatus !== '欠席').length;
-        const limitCount = user.daysSpecified ? Number(user.daysSpecified) : 0;
+        const limitCount = Number(userData.daysSpecified) || 0;
+        const isExpired = userData.decisionEndDate ? new Date(userData.decisionEndDate) < monthEnd : false;
         
-        // --- 1. 期限切れチェック ---
-        const decisionEnd = user.decisionEndDate ? new Date(user.decisionEndDate) : null;
-        // 決定終了日が「月末日」より前なら期限切れ
-        const isExpired = decisionEnd ? decisionEnd < monthEnd : true; // 日付なしは一旦期限切れ扱い(要確認)
-
-        // --- 2. 負担額計算 ---
-        const upperLimit = user.upperLimitAmount ? Number(user.upperLimitAmount) : 0;
-        // ※ 概算計算: (回数 * 平均600単位 * 10円 * 10%) ※実際はマスタから計算すべきだが今は目安として
-        const estimatedTotalCost = usageCount * 600 * 10; 
-        const estimatedBurden = Math.floor(estimatedTotalCost * 0.1);
-        const finalBurden = upperLimit > 0 ? Math.min(estimatedBurden, upperLimit) : 0;
-
-        // --- 3. 必須項目チェック ---
-        const missingFields: string[] = [];
-        if (!user.jukyushaNo) missingFields.push('受給者証番号');
-        if (!user.cityNo) missingFields.push('市町村番号');
-        if (!user.daysSpecified) missingFields.push('支給量');
-        if (!user.decisionEndDate) missingFields.push('終了日');
-        if (!user.upperLimitAmount) missingFields.push('上限額');
-        
-        const isActive = user.serviceHoDay === '利用中' || user.serviceJihatsu === '利用中';
-
         return {
-          user,
+          user: userData,
           records: userRecords,
           usageCount,
           limitCount,
-          upperLimit,
-          estimatedCost: estimatedBurden,
-          finalBurden,
+          upperLimit: Number(userData.upperLimitAmount) || 0,
+          estimatedCost: 0, finalBurden: 0,
           isOverLimit: limitCount > 0 && usageCount > limitCount,
-          isExpired: isExpired,
-          missingFields,
+          isExpired,
+          missingFields: !userData.jukyushaNo ? ['受給者証'] : [],
         };
       });
 
-      // 実績がある or 利用中の人のみ表示
-      const activeResults = results.filter(r => r.records.length > 0 || r.user.serviceHoDay === '利用中');
+      // ★修正: 利用日数が1日以上ある人のみ表示（0日の人は除外）
+      // usageCount は「欠席以外」のレコード数なので、これが0なら実利用なしとみなします
+      const activeResults = results.filter(r => r.usageCount > 0);
+      
       activeResults.sort((a, b) => `${a.user.lastName}`.localeCompare(b.user.lastName, 'ja'));
       setValidations(activeResults);
-      toast.success('集計完了');
-
+      toast.success('データを読み込みました');
     } catch (e) {
       console.error(e);
-      toast.error('エラーが発生しました');
+      toast.error('エラー');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchAndValidate();
-  }, [selectedMonth]);
+  useEffect(() => { fetchAndValidate(); }, [selectedMonth]);
 
-
-  // 一括印刷ハンドラ
-  const handlePrintAll = () => {
-    setIsPrintingAll(true);
-    // レンダリング待ち
-    setTimeout(() => {
-      window.print();
-      // 印刷ダイアログが閉じたらフラグを戻したいが、
-      // window.printはブロッキングなので直後でOK、またはonafterprintイベントを使う
-      setIsPrintingAll(false);
-    }, 500);
+  // --- チェックボックス ---
+  const toggleSelectAll = () => {
+    if (selectedUserIds.size === validations.length) setSelectedUserIds(new Set());
+    else setSelectedUserIds(new Set(validations.map(v => v.user.id)));
+  };
+  const toggleSelectUser = (id: string) => {
+    const newSet = new Set(selectedUserIds);
+    if (newSet.has(id)) newSet.delete(id); else newSet.add(id);
+    setSelectedUserIds(newSet);
   };
 
-  // 個別印刷ハンドラ
-  const handlePrintSingle = (res: ValidationResult) => {
-    setPrintTarget(res);
-    setTimeout(() => {
-      window.print();
-      setPrintTarget(null); // クリア
-    }, 300);
+  // --- PDFダウンロード処理 (Single) ---
+  const handleDownloadPdf = async (res: ValidationResult) => {
+    const toastId = toast.loading('PDF生成中...');
+    try {
+      const elementId = `sheet-${res.user.id}`;
+      const fileName = `実績記録票_${res.user.lastName}${res.user.firstName}_${selectedMonth}.pdf`;
+      await downloadPdf(elementId, fileName);
+      toast.success('ダウンロード完了', { id: toastId });
+    } catch (e) {
+      console.error(e);
+      toast.error('PDF生成に失敗しました', { id: toastId });
+    }
+  };
+
+  // --- 一括PDFダウンロード ---
+  const handlePrintSelected = async () => {
+    if (selectedUserIds.size === 0) return toast.error("対象を選択してください");
+    
+    const targets = validations.filter(v => selectedUserIds.has(v.user.id));
+    if (!confirm(`${targets.length}名分の実績票を1つのPDFにまとめて出力しますか？`)) return;
+
+    const toastId = toast.loading(`PDF生成準備中...`);
+    try {
+      const elementIds = targets.map(t => `sheet-${t.user.id}`);
+      const fileName = `実績記録票_一括出力_${selectedMonth}.pdf`;
+
+      await downloadMergedPdf(elementIds, fileName, (current, total) => {
+         toast.loading(`生成中: ${current} / ${total} 枚目`, { id: toastId });
+      });
+
+      toast.success("ダウンロード完了", { id: toastId });
+    } catch (e) {
+      console.error(e);
+      toast.error("PDF生成中にエラーが発生しました", { id: toastId });
+    }
+  };
+
+  const handleFixRecord = (userId: string) => {
+    router.push(`/billing/records/${userId}?month=${selectedMonth}`);
+  };
+
+  const handleDownloadCsv = () => {
+    if (validations.length === 0) return toast.error("データなし");
+    downloadRecordsCsv(validations, selectedMonth, "1234567890");
+    toast.success("CSV出力完了");
   };
 
   return (
     <AppLayout pageTitle="請求管理・実績チェック">
       <div className="space-y-6">
-        
         {/* コントロールパネル */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-center gap-4 print:hidden">
-          <div className="flex items-center gap-4">
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex items-center gap-4 print:hidden">
             <h2 className="font-bold text-gray-700">対象年月:</h2>
-            <input
-              type="month"
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              className="text-lg font-bold p-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button onClick={fetchAndValidate} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-full" title="再集計">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
-            </button>
-          </div>
-          <div className="flex items-center gap-3">
-             <button 
-              onClick={handlePrintAll}
-              disabled={loading || validations.length === 0}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold flex items-center gap-2 shadow-md"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
-              一括印刷 ({validations.length}名)
-            </button>
-          </div>
+            <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="font-bold p-2 border rounded-lg" />
+            <button onClick={fetchAndValidate} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-full"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg></button>
         </div>
 
-        {/* --- チェック一覧テーブル --- */}
+        {/* 一覧テーブル */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden print:hidden">
+          {/* テーブルヘッダー (アクションバー) */}
           <div className="p-4 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-            <h3 className="font-bold text-gray-800">実績チェック一覧</h3>
-            <span className="text-xs text-gray-500">※印刷前に必ずエラーを確認してください</span>
+            {/* 左側: 選択状態 */}
+            <div className="flex items-center gap-3">
+              <button onClick={toggleSelectAll} className="text-xs font-bold bg-white border border-gray-300 px-3 py-1 rounded hover:bg-gray-50">
+                {selectedUserIds.size === validations.length ? '全解除' : '全選択'}
+              </button>
+              <span className="text-sm font-bold text-gray-600">
+                選択中: <span className="text-blue-600 text-lg">{selectedUserIds.size}</span> 名
+              </span>
+            </div>
+
+            {/* 右側: アクションボタン */}
+            <div className="flex items-center gap-3">
+              {/* PDF発行ボタン */}
+              <button 
+                onClick={handlePrintSelected} 
+                disabled={selectedUserIds.size === 0} 
+                className={`
+                  flex items-center gap-2 px-5 py-2 text-sm font-bold rounded-lg transition-all shadow-sm
+                  ${selectedUserIds.size > 0 
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md transform hover:-translate-y-0.5' 
+                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  }
+                `}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                選択した実績票をPDF発行
+              </button>
+
+              {/* CSV出力ボタン */}
+              <button 
+                onClick={handleDownloadCsv} 
+                disabled={loading || validations.length === 0} 
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-bold rounded-lg transition-colors"
+                title="全データをCSVで出力"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                CSV出力
+              </button>
+            </div>
           </div>
           
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left whitespace-nowrap">
-              <thead className="text-xs text-gray-700 uppercase bg-gray-100">
-                <tr>
-                  <th className="px-4 py-3">利用者名</th>
-                  <th className="px-4 py-3 text-center">受給者証期限</th>
-                  <th className="px-4 py-3 text-center">支給量</th>
-                  <th className="px-4 py-3 text-center">利用日数</th>
-                  <th className="px-4 py-3 text-right">上限額</th>
-                  <th className="px-4 py-3 text-right">請求予定額</th>
-                  <th className="px-4 py-3">状態</th>
-                  <th className="px-4 py-3 text-center">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {loading ? (
-                  <tr><td colSpan={8} className="p-8 text-center text-gray-500">集計中...</td></tr>
-                ) : validations.length === 0 ? (
-                   <tr><td colSpan={8} className="p-8 text-center text-gray-500">対象者がいません</td></tr>
-                ) : (
-                  validations.map((res) => (
-                    <tr key={res.user.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-bold text-gray-800">
-                        {res.user.lastName} {res.user.firstName}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {res.isExpired ? (
-                          <span className="bg-red-100 text-red-600 px-2 py-1 rounded font-bold text-xs">期限切れ</span>
-                        ) : (
-                          <span className="text-gray-600">{res.user.decisionEndDate}</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {res.limitCount}日
-                      </td>
-                      <td className={`px-4 py-3 text-center font-bold ${res.isOverLimit ? 'text-red-600' : 'text-blue-600'}`}>
-                        {res.usageCount}日
-                      </td>
-                      <td className="px-4 py-3 text-right text-gray-600">
-                        {res.upperLimit.toLocaleString()}
-                      </td>
-                      <td className="px-4 py-3 text-right font-bold text-gray-800">
-                        {res.finalBurden.toLocaleString()}
-                        <span className="text-[10px] text-gray-400 block font-normal">
-                          (推計1割: {res.estimatedCost.toLocaleString()})
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-1">
-                          {res.isOverLimit && <span className="text-red-600 text-xs font-bold">⚠️ 日数超過</span>}
-                          {res.isExpired && <span className="text-red-600 text-xs font-bold">⚠️ 受給者証期限切れ</span>}
-                          {res.missingFields.length > 0 && (
-                            <span className="text-red-500 text-xs">不足: {res.missingFields.join(',')}</span>
-                          )}
-                          {!res.isOverLimit && !res.isExpired && res.missingFields.length === 0 && (
-                            <span className="text-green-600 text-xs font-bold">OK</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <button onClick={() => handlePrintSingle(res)} className="text-blue-600 hover:underline text-xs">
-                          個別印刷
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-        
-       {/* --- CSV出力ボタンエリア --- */}
-        <div className="print:hidden p-6 bg-gray-50 rounded-xl border border-gray-200">
-           <h3 className="font-bold text-gray-700 mb-2">CSV出力（次ステップ）</h3>
-           <p className="text-sm text-gray-500 mb-4">全員のチェックと印刷が完了したら、国保連取り込み用のCSVを出力します。</p>
-           
-           {/* ★ 修正: ボタンを有効化し、onClickを追加 */}
-           <button 
-             onClick={handleDownloadCsv}
-             disabled={loading || validations.length === 0}
-             className="bg-gray-800 hover:bg-gray-900 text-white font-bold py-2 px-6 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-           >
-             実績記録票CSVを出力
-           </button>
+          <table className="w-full text-sm text-left whitespace-nowrap">
+            <thead className="text-xs text-gray-700 uppercase bg-gray-100">
+              <tr>
+                <th className="px-4 py-3 w-10 text-center"><input type="checkbox" checked={validations.length > 0 && selectedUserIds.size === validations.length} onChange={toggleSelectAll} className="w-4 h-4 cursor-pointer" /></th>
+                <th className="px-4 py-3">利用者名</th>
+                <th className="px-4 py-3 text-center">上限管理</th>
+                <th className="px-4 py-3 text-center">日数</th>
+                <th className="px-4 py-3 text-center">放課後利用</th>
+                <th className="px-4 py-3 text-center">休校日利用</th>
+                <th className="px-4 py-3 text-center">加算</th>
+                <th className="px-4 py-3 text-center w-48">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {validations.map((res) => {
+                const afterSchoolCount = res.records.filter(r => r.usageStatus === '放課後').length;
+                const holidayCount = res.records.filter(r => r.usageStatus === '休校日').length;
+                
+                const hasAdditional = res.records.some(r => 
+                  r.extension || r.hasFamilySupport || r.hasMedicalSupport || 
+                  r.hasIntensiveSupport || r.hasSpecialSupport || r.hasIndependenceSupport ||
+                  r.hasBathSupport || r.hasChildcareSupport || r.hasSelfRelianceSupport
+                );
+
+                return (
+                  <tr key={res.user.id} className={`hover:bg-blue-50 transition-colors ${selectedUserIds.has(res.user.id) ? 'bg-blue-50' : ''}`}>
+                    <td className="px-4 py-3 text-center"><input type="checkbox" checked={selectedUserIds.has(res.user.id)} onChange={() => toggleSelectUser(res.user.id)} className="w-4 h-4 cursor-pointer" /></td>
+                    <td className="px-4 py-3 font-bold text-gray-800 flex items-center gap-2">
+                      {res.user.lastName} {res.user.firstName}
+                      <Link href={`/users/${res.user.id}`} className="text-gray-400 hover:text-blue-600"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></Link>
+                    </td>
+                    <td className="px-4 py-3 text-center text-xs">{res.upperLimit > 0 ? <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded-full">管理あり</span> : <span className="text-gray-400">-</span>}</td>
+                    
+                    {/* 日数 */}
+                    <td className={`px-4 py-3 text-center font-bold ${res.isOverLimit ? 'text-red-600' : 'text-gray-700'}`}>{res.usageCount}日</td>
+                    
+                    {/* ★修正: 放課後利用回数 (単位: 日) */}
+                    <td className="px-4 py-3 text-center text-gray-600">
+                      {afterSchoolCount > 0 ? `${afterSchoolCount}日` : '-'}
+                    </td>
+                    
+                    {/* ★修正: 休校日利用回数 (単位: 日) */}
+                    <td className="px-4 py-3 text-center text-gray-600">
+                      {holidayCount > 0 ? `${holidayCount}日` : '-'}
+                    </td>
+                    
+                    {/* 加算有無 */}
+                    <td className="px-4 py-3 text-center text-xs">
+                      {hasAdditional ? (
+                        <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded-full font-bold">加算あり</span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </td>
+
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex justify-center gap-2">
+                        <button onClick={() => handleFixRecord(res.user.id)} className="bg-white border border-blue-600 text-blue-600 hover:bg-blue-50 text-xs font-bold px-3 py-1.5 rounded">修正</button>
+                        <button onClick={() => handleDownloadPdf(res)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded">PDF</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
 
-        {/* --- 印刷用エリア (画面には表示されない) --- */}
-       <div id="print-container">
-          <style jsx global>{`
+        {/* --- 隠し印刷エリア (HTML to PDF用) --- */}
+        <div id="print-container">
+          <style dangerouslySetInnerHTML={{ __html: `
+            @media screen { #print-container { position: absolute; left: -9999px; top: -9999px; } }
             @media print {
-              /* 1. ページ内のすべての要素を一旦非表示にする */
-              body * {
-                visibility: hidden;
-              }
-              
-              /* 2. 印刷したいエリア(#print-container)とその子要素だけを表示する */
-              #print-container, #print-container * {
-                visibility: visible;
-              }
-
-              /* 3. 印刷エリアを画面の左上に強制配置する */
-              #print-container {
-                position: absolute;
-                left: 0;
-                top: 0;
-                width: 100%;
-                margin: 0;
-                padding: 0;
-              }
-
-              /* 4. 余白設定 */
-              @page { margin: 0; size: auto; }
+              @page { size: A4 portrait; margin: 0; }
+              body > * { display: none !important; }
+              #print-container { position: absolute; left: 0; top: 0; width: 100%; display: block !important; }
+              #print-container * { visibility: visible !important; }
             }
-          `}</style>
-          
-          {/* 一括印刷モードの時: 全員分レンダリング */}
-          {isPrintingAll && validations.map((res, index) => (
-             <ServiceRecordSheet key={res.user.id} data={res} month={selectedMonth} />
+          `}} />
+          {validations.map((res) => (
+             <div key={res.user.id} className={selectedUserIds.has(res.user.id) ? 'print:block' : 'print:hidden'}>
+                <ServiceRecordSheet id={`sheet-${res.user.id}`} data={res} month={selectedMonth} />
+             </div>
           ))}
-
-          {/* 個別印刷モードの時: 対象者のみレンダリング */}
-          {!isPrintingAll && printTarget && (
-            <ServiceRecordSheet data={printTarget} month={selectedMonth} />
-          )}
         </div>
 
       </div>

@@ -2,6 +2,8 @@ export type UserData = {
   id: string;
   lastName: string;
   firstName: string;
+  guardianLastName?: string;
+  guardianFirstName?: string;
   jukyushaNo: string;
   cityNo: string;
   daysSpecified: string; // 支給量
@@ -19,20 +21,18 @@ export type AttendanceRecord = {
   arrivalTime: string;
   departureTime: string;
   
-  // 加算関係のフラグ・データ
-  extension?: {
-    minutes: number;
-    class: 1 | 2 | 3;
-    display: string;
-  } | null;
+  // 延長支援: { class: 1, ... } の形、または数値/文字列
+  extension?: any; 
   
-  hasFamilySupport?: boolean;       // 家族支援加算
-  hasIndependenceSupport?: boolean; // 通所自立支援加算
-  
-  // 今後追加するかもしれない加算（エラー防止のため定義しておくと安全）
-  hasMedicalSupport?: boolean;      // 医療連携
-  hasBathSupport?: boolean;         // 入浴支援
-  // 必要に応じて他の加算フラグもここに追加
+  // 各種加算フラグ
+  hasFamilySupport?: boolean;       // 家族支援
+  hasIndependenceSupport?: boolean; // 通所自立
+  hasMedicalSupport?: boolean;      // 医療連携 (追加)
+  hasIntensiveSupport?: boolean;    // 集中的支援 (追加)
+  hasSpecialSupport?: boolean;      // 専門的支援 (追加)
+  hasBathSupport?: boolean;         // 入浴支援 (追加)
+  hasChildcareSupport?: boolean;    // 子育てサポート (追加)
+  hasSelfRelianceSupport?: boolean; // 自立サポート (追加)
 };
 
 export type ValidationResult = {
