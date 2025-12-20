@@ -44,8 +44,8 @@ export default function PlanListPage() {
           const userName = user ? `${user.lastName} ${user.firstName}` : '不明な利用者';
           
           return {
-            id: d.id,
-            ...data,
+            ...data,    // ★修正: 先にデータを展開
+            id: d.id,   // ★修正: その後でIDを上書き (これでエラーが消えます)
             userName
           };
         });
