@@ -3,11 +3,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { db } from '@/lib/firebase/firebase';
-// ★ 修正: doc, updateDoc を追加
 import { collection, addDoc, getDocs, query, where, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { AppLayout } from '@/components/Layout';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
+import { useAutoRecord } from '@/hooks/useAutoRecord'; // ★追加
 
 type User = { id: string; lastName: string; firstName: string; };
 
@@ -24,6 +24,7 @@ const determineAbsenceCategory = (text: string): string => {
 export default function RegisterAbsencePage() {
   const router = useRouter();
   const { currentUser } = useAuth();
+  const { createRecord } = useAutoRecord(); // ★フックの使用
 
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,32 +100,25 @@ export default function RegisterAbsencePage() {
     });
   }, [userSearchQuery, users]);
 
-  // ★★★ 追加: AI生成関数 ★★★
+  // AI生成関数
   const generateAndSaveAdvice = async (docId: string, userId: string, date: string, notes: string) => {
-    // ユーザー操作をブロックしないよう、トーストで状況を通知
     const aiToast = toast.loading('AIが相談内容を自動生成中...');
-    
     try {
       const res = await fetch('/api/absence/generate-advice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, date, currentNote: notes })
       });
-      
       const data = await res.json();
-      
       if (data.advice) {
-        // AIの回答があれば、作成したレコードに追記
         const docRef = doc(db, 'attendanceRecords', docId);
         await updateDoc(docRef, { aiAdvice: data.advice });
-        
         toast.success('AI相談内容を保存しました', { id: aiToast });
       } else {
         toast.dismiss(aiToast);
       }
     } catch (e) {
       console.error("AI Generation Error:", e);
-      // 失敗してもクリティカルではないので、エラー通知のみ
       toast.error('AI生成に失敗しました（後で一括作成できます）', { id: aiToast });
     }
   };
@@ -167,27 +161,34 @@ export default function RegisterAbsencePage() {
       // 連絡内容から理由を自動判定
       const autoReason = determineAbsenceCategory(notes);
 
-      // 3. 保存
+      // 3. 保存 (実績記録票)
       const docRef = await addDoc(collection(db, "attendanceRecords"), {
         userId: user.id,
         userName: `${user.lastName} ${user.firstName}`,
         date: absenceDate,
         month: targetMonth,
         usageStatus: '欠席',
-        
         reason: autoReason, 
         notes: notes,
         staffName: currentUser?.displayName || '担当者',
-        
         createdAt: new Date(),
       });
       
+      // ★★★ 追加: 支援記録の自動生成 ★★★
+      await createRecord({
+        date: absenceDate,
+        userId: user.id,
+        userName: `${user.lastName} ${user.firstName}`,
+        status: '欠席',
+        absenceReason: notes,
+      });
+
       toast.success(`${absenceDate} に ${user.lastName} ${user.firstName} さんを欠席登録しました。`, { id: loadingToast });
       
-      // ★★★ 追加: AI生成を開始 (awaitはせず、バックグラウンドで実行) ★★★
+      // AI生成を開始
       generateAndSaveAdvice(docRef.id, user.id, absenceDate, notes);
 
-      // State更新 (回数も+1しておく)
+      // State更新
       setAbsenceCounts(prev => ({
         ...prev,
         [user.id]: (prev[user.id] || 0) + 1
@@ -238,11 +239,10 @@ export default function RegisterAbsencePage() {
                 disabled={!!absentUserId}
               />
               
-              {/* 候補リスト */}
               {!absentUserId && userSearchQuery && searchMatchedUsers.length > 0 && (
                 <ul className="absolute top-full left-0 z-10 w-full max-h-60 overflow-y-auto bg-white border border-blue-400 rounded-md shadow-lg mt-1">
                   {searchMatchedUsers.map(user => {
-                    const count = absenceCounts[user.id] || 0; // 回数を取得
+                    const count = absenceCounts[user.id] || 0; 
                     return (
                       <li
                         key={user.id}
@@ -252,12 +252,9 @@ export default function RegisterAbsencePage() {
                         }}
                         className="p-3 cursor-pointer hover:bg-blue-100 text-sm border-b last:border-b-0 flex justify-between items-center"
                       >
-                        {/* 左：氏名 */}
                         <span className="font-medium text-gray-800">
                           {user.lastName} {user.firstName}
                         </span>
-                        
-                        {/* ★ 右：欠席回数 (赤文字) */}
                         <span className={`font-bold ${count >= 4 ? 'text-red-600' : 'text-red-500'}`}>
                           欠席: {count}回
                         </span>
@@ -268,12 +265,10 @@ export default function RegisterAbsencePage() {
               )}
             </div>
 
-            {/* 選択中の表示 */}
             {absentUserId && (
               <div className="mt-2 flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
                 <span className="text-blue-700 font-bold">
                   選択中: {users.find(u => u.id === absentUserId)?.lastName} {users.find(u => u.id === absentUserId)?.firstName}
-                  {/* 選択中も回数が見えるようにする場合 */}
                   <span className="ml-2 text-sm text-red-500">
                     (今月欠席: {absenceCounts[absentUserId] || 0}回)
                   </span>
