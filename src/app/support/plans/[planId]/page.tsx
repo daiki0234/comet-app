@@ -3,10 +3,11 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/Layout';
-import { db, auth } from '@/lib/firebase/firebase';
+import { db } from '@/lib/firebase/firebase';
 import { collection, getDocs, doc, getDoc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import { UserData } from '@/types/billing';
+import { PlanPDFDownloadButton } from '@/components/pdf/PlanPDFDownloadButton';
 
 // --- 定数定義 ---
 const DAYS = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日・祝日・長期休'];
@@ -48,6 +49,9 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
   const [staffs, setStaffs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // ★追加: 児発管の名前
+  const [managerName, setManagerName] = useState('');
+
   // 基本情報
   const [basicInfo, setBasicInfo] = useState({
     creationDate: '',
@@ -87,14 +91,29 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
   useEffect(() => {
     const initData = async () => {
       try {
+        // 1. マスタデータ取得 (利用者)
         const usersSnap = await getDocs(collection(db, 'users'));
         const usersData = usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as UserData));
         setUsers(usersData);
 
-        const staffsSnap = await getDocs(collection(db, 'admins'));
-        const staffList = staffsSnap.docs.map(d => d.data().name as string).filter(Boolean);
+        // 2. 管理者(職員)一覧取得 & 児発管の特定
+        const adminsSnap = await getDocs(collection(db, 'admins'));
+        const adminDocs = adminsSnap.docs.map(d => d.data());
+        
+        // 入力者プルダウン用のリスト
+        const staffList = adminDocs.map(d => d.name as string).filter(Boolean);
         setStaffs(staffList);
 
+        // ★修正: 役職が "child_dev_manager" の職員を探す
+        const manager = adminDocs.find((d: any) => d.jobTitle === 'child_dev_manager');
+        if (manager && manager.name) {
+          console.log("児発管が見つかりました:", manager.name);
+          setManagerName(manager.name);
+        } else {
+          console.log("児発管(child_dev_manager)の設定された職員が見つかりません");
+        }
+
+        // 3. 計画書データ取得
         const docRef = doc(db, 'supportPlans', params.planId);
         const docSnap = await getDoc(docRef);
 
@@ -162,14 +181,26 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
 
   const handleTimeChange = (type: ScheduleType, dayIndex: number, field: 'start' | 'end' | 'duration', value: string) => {
     setSchedules(prev => {
-      const currentDay = prev[type][dayIndex] || { start: '', end: '', duration: '' };
-      let newDay = { ...currentDay, [field]: value };
+      const updatedScheduleType = { ...prev[type] };
+      const currentDay = updatedScheduleType[dayIndex] || { start: '', end: '', duration: '' };
+      const newDay = { ...currentDay, [field]: value };
+      
       if (field === 'start' || field === 'end') {
         if (newDay.start && newDay.end) {
           newDay.duration = calculateDurationStr(newDay.start, newDay.end);
         }
       }
-      return { ...prev, [type]: { ...prev[type], [dayIndex]: newDay } };
+
+      updatedScheduleType[dayIndex] = newDay;
+
+      // 自動反映: 月曜日(0)なら 火(1)〜金(4) にコピー
+      if (dayIndex === 0) {
+        for (let i = 1; i <= 4; i++) {
+          updatedScheduleType[i] = { ...newDay };
+        }
+      }
+
+      return { ...prev, [type]: updatedScheduleType };
     });
   };
 
@@ -241,34 +272,38 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
     }
   };
 
-  // ★追加: コピー作成処理
+  // コピー作成処理
   const handleCopy = async () => {
     if (!confirm("現在の内容をコピーして、新しい計画書を作成しますか？")) return;
-    
-    // バリデーション
     if (!basicInfo.creationDate) return toast.error("作成日を入力してください");
     if (!basicInfo.userId) return toast.error("利用者を選択してください");
 
     const toastId = toast.loading("コピー作成中...");
     try {
-        // 新規ドキュメントとして追加 (addDoc)
         const docRef = await addDoc(collection(db, 'supportPlans'), {
             ...basicInfo,
-            status: '原案', // コピー時は安全のため「原案」に戻す
+            status: '原案',
             schedules,
             remarks,
             supportTargets,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
         });
-        
         toast.success("コピーを作成しました", { id: toastId });
-        // 新しい計画書の編集画面へ遷移
         router.push(`/support/plans/${docRef.id}`);
     } catch(e) {
         console.error(e);
         toast.error("コピー作成に失敗しました", { id: toastId });
     }
+  };
+
+  // --- PDF用データの準備 ---
+  const targetUser = users.find(u => u.id === basicInfo.userId) || null;
+  const currentPlanData: any = {
+    ...basicInfo,
+    schedules,
+    remarks,
+    supportTargets,
   };
 
   if (loading) {
@@ -279,6 +314,14 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
     <AppLayout pageTitle="個別支援計画 編集">
       <div className="space-y-8 pb-32">
         
+        {/* --- ヘッダーアクション (PDFボタン) --- */}
+        <div className="flex justify-end gap-2">
+           {targetUser && (
+             // ★ managerName を渡す
+             <PlanPDFDownloadButton plan={currentPlanData} user={targetUser} managerName={managerName} />
+           )}
+        </div>
+
         {/* --- 基本情報 --- */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <h2 className="text-sm font-bold text-gray-700 mb-4 border-l-4 border-blue-500 pl-2">基本情報</h2>
@@ -364,7 +407,6 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
               </button>
 
-              {/* 1段目 */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4 pr-8">
                 <div className="flex items-center gap-2">
                   <label className="w-20 bg-red-50 text-gray-700 font-bold p-2 text-xs text-center rounded">表示順</label>
@@ -387,7 +429,6 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
                 </div>
               </div>
 
-              {/* 2段目: 支援項目 */}
               <div className="mb-4">
                 <label className="text-xs font-bold text-gray-700 block mb-1">支援項目</label>
                 <div className="flex gap-4 flex-wrap">
@@ -400,13 +441,11 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
                 </div>
               </div>
 
-              {/* 3段目: 支援目標・内容 (2カラム) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <TextAreaField label="支援目標" value={item.goal} onChange={(val:any) => handleTargetChange(item.id, 'goal', val)} height="h-24" bgColor="bg-gray-100" />
                 <TextAreaField label="支援内容" value={item.content} onChange={(val:any) => handleTargetChange(item.id, 'content', val)} height="h-24" bgColor="bg-gray-100" />
               </div>
 
-              {/* 4段目: 5領域 & 担当者 (2カラム) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div className="bg-white border border-gray-200 rounded-lg p-3">
                     <label className="text-xs font-bold text-gray-700 block mb-2">5領域との関連性</label>
@@ -429,7 +468,6 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
                 />
               </div>
 
-              {/* 5段目: 留意事項 (全幅) */}
               <div className="w-full">
                 <TextAreaField 
                     label="留意事項" 
@@ -453,7 +491,6 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
         <div className="fixed bottom-0 left-0 w-full bg-white border-t p-4 flex justify-end gap-4 z-20 shadow-lg">
            <button onClick={() => router.back()} className="px-6 py-2 bg-gray-100 rounded hover:bg-gray-200 font-bold text-gray-600">キャンセル</button>
            
-           {/* コピー作成ボタン */}
            <button onClick={handleCopy} className="px-6 py-2 bg-green-600 text-white font-bold rounded hover:bg-green-700 shadow-md flex items-center gap-2">
              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
              コピーして新規作成
@@ -466,7 +503,7 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
   );
 }
 
-// --- サブコンポーネント (Newと同一) ---
+// --- サブコンポーネント ---
 function TimeColumn({ title, type, bgColor = 'bg-white', data, remarks, onTimeChange, onRemarkChange }: any) {
   return (
     <div className={`p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-full ${bgColor}`}>

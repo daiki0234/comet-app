@@ -152,16 +152,35 @@ export default function NewPlanPage() {
     setShowSuggestions(false);
   };
 
+// 時間割の変更ハンドラ（月曜変更時は平日一括反映）
   const handleTimeChange = (type: ScheduleType, dayIndex: number, field: 'start' | 'end' | 'duration', value: string) => {
     setSchedules(prev => {
-      const currentDay = prev[type][dayIndex] || { start: '', end: '', duration: '' };
-      let newDay = { ...currentDay, [field]: value };
+      // 1. 現在のスケジュールタイプ（standardなど）のコピーを作成
+      const updatedScheduleType = { ...prev[type] };
+
+      // 2. 変更対象の曜日の新しい値を計算
+      const currentDay = updatedScheduleType[dayIndex] || { start: '', end: '', duration: '' };
+      const newDay = { ...currentDay, [field]: value };
+      
+      // 開始・終了時間が変更された場合、自動で時間を再計算
       if (field === 'start' || field === 'end') {
         if (newDay.start && newDay.end) {
           newDay.duration = calculateDurationStr(newDay.start, newDay.end);
         }
       }
-      return { ...prev, [type]: { ...prev[type], [dayIndex]: newDay } };
+
+      // 対象の曜日を更新
+      updatedScheduleType[dayIndex] = newDay;
+
+      // 3. ★自動反映ロジック: 月曜日(index 0)を変更した場合、火(1)〜金(4)にも同じ内容をコピー
+      if (dayIndex === 0) {
+        for (let i = 1; i <= 4; i++) {
+          updatedScheduleType[i] = { ...newDay };
+        }
+      }
+
+      // 4. ステート全体を更新
+      return { ...prev, [type]: updatedScheduleType };
     });
   };
 
