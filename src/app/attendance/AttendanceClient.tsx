@@ -4,19 +4,20 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import dynamic from "next/dynamic";
 import toast from "react-hot-toast";
 import Link from "next/link";
-import { db } from "@/lib/firebase/firebase";
+import { db } from '@/lib/firebase/firebase';
 import {
    collection,
-   addDoc,
    getDocs,
    query,
    where,
    updateDoc,
    doc,
    deleteDoc, 
-   setDoc, getDoc
+   setDoc, getDoc,
+   addDoc
  } from "firebase/firestore";
  import { computeExtension, stripExtensionNote } from '@/lib/attendance/extension';
+ import { useAutoRecord } from '@/hooks/useAutoRecord'; // ★追加
 
 // JSTのyyyy-mm-ddキー
 const jstDateKey = (d: Date = new Date()) => {
@@ -37,10 +38,8 @@ type User = {
   id: string; 
   lastName: string; 
   firstName: string; 
-  // ★ 自動判定フラグ
   isFamilySupportEligible: boolean;      
   isIndependenceSupportEligible: boolean; 
-  // その他のデータ
   [key: string]: any;
 };
 
@@ -59,7 +58,6 @@ type AttendanceRecord = {
     class: 1 | 2 | 3;
     display: string;
   } | null;
-  // 加算実績フラグ
   hasFamilySupport?: boolean;       
   hasIndependenceSupport?: boolean; 
 };
@@ -73,6 +71,8 @@ const toDateString = (date: Date) => {
 };
 
 export default function AttendancePage() {
+  const { createRecord } = useAutoRecord(); // ★フックを使用
+
   const [users, setUsers] = useState<User[]>([]);
   const [viewDate, setViewDate] = useState(new Date());
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
@@ -97,15 +97,10 @@ export default function AttendancePage() {
     const usersSnapshot = await getDocs(collection(db, 'users'));
     const usersData = usersSnapshot.docs.map(doc => {
       const data = doc.data();
-      
-      // ★★★ 修正: appliedAdditions を参照して判定 ★★★
-      // UserDetailPageの定義に合わせて { name: string, details: string }[] を読み込む
       const appliedAdditions = data.appliedAdditions || [];
-      
       const hasAddition = (searchName: string) => {
         if (!Array.isArray(appliedAdditions)) return false;
         return appliedAdditions.some((item: any) => {
-          // item.name に "家族支援加算" などが含まれているかチェック
           if (item.name && typeof item.name === 'string') {
             return item.name.includes(searchName);
           }
@@ -116,7 +111,6 @@ export default function AttendancePage() {
       return {
         id: doc.id,
         ...data,
-        // ここでフラグを生成
         isFamilySupportEligible: hasAddition('家族支援加算'),
         isIndependenceSupportEligible: hasAddition('通所自立支援加算'),
       };
@@ -208,18 +202,18 @@ export default function AttendancePage() {
       usage: '放課後' | '休校日' | '欠席',
       arrival?: string,
       departure?: string
-    ): { label: string; grade: '' | '1' | '2' | '3' } => {
-      if (usage === '欠席') return { label: '', grade: '' };
+    ): { label: string; grade: '' | '1' | '2' | '3'; minutes: number } => { // minutesを追加
+      if (usage === '欠席') return { label: '', grade: '', minutes: 0 };
       const a = parseHHMM(arrival), d = parseHHMM(departure);
-      if (a == null || d == null) return { label: '', grade: '' };
-      let span = d - a; if (span <= 0) return { label: '', grade: '' };
+      if (a == null || d == null) return { label: '', grade: '', minutes: 0 };
+      let span = d - a; if (span <= 0) return { label: '', grade: '', minutes: 0 };
       const base = usage === '放課後' ? 180 : 300; 
-      const over = span - base; if (over < 30) return { label: '', grade: '' };
+      const over = span - base; if (over < 30) return { label: '', grade: '', minutes: 0 };
       let grade: '' | '1' | '2' | '3' = over >= 120 ? '3' : over >= 60 ? '2' : '1';
       const hh = Math.floor(over / 60), mm = over % 60;
       const hStr = hh > 0 ? `${hh}時間` : '';
       const label = `${hStr}${mm}分（${grade}）`;
-      return { label, grade };
+      return { label, grade, minutes: over };
     };
 
     try {
@@ -308,10 +302,22 @@ export default function AttendancePage() {
         };
         if (ext.label) {
           update.notes = ext.label;
-          update.extension = ext.grade;
+          update.extension = { minutes: ext.minutes, class: Number(ext.grade), display: ext.label }; // 構造を合わせる
         }
 
         await setDoc(recordRef, update, { merge: true });
+        
+        // ★支援記録の自動生成 (帰所時)
+        await createRecord({
+          date: todayStr,
+          userId: userId,
+          userName: userName,
+          status: prevUsage,
+          startTime: prev?.arrivalTime || '',
+          endTime: currentTime,
+          extensionMinutes: ext.minutes || 0,
+        });
+
         toast.success(`${userName}さん、お疲れ様でした！`, { id: loadingToast });
       } else {
         throw new Error("不明なtypeです");
@@ -325,7 +331,7 @@ export default function AttendancePage() {
         setIsProcessingState(false);
       }, 2000);
     }
-  }, [fetchData]);
+  }, [fetchData, createRecord]); // createRecordを依存配列に追加
 
   const handleScanFailure = (error: string) => {};
 
@@ -383,6 +389,16 @@ export default function AttendancePage() {
       };
 
       const docRef = await addDoc(collection(db, "attendanceRecords"), newRecord);
+      
+      // ★支援記録の自動生成 (欠席時)
+      await createRecord({
+        date: absenceDate,
+        userId: user.id,
+        userName: `${user.lastName} ${user.firstName}`,
+        status: '欠席',
+        absenceReason: absenceReason,
+      });
+
       generateAndSaveAdvice(docRef.id, newRecord.userId, newRecord.date, absenceReason);
       
       toast.success(`${user.lastName} ${user.firstName} さんを欠席として登録しました。`, { id: loadingToast });
@@ -422,6 +438,26 @@ export default function AttendancePage() {
       };
       const recordRef = doc(db, 'attendanceRecords', editingRecord.id);
       await updateDoc(recordRef, dataToUpdate);
+
+      // ★支援記録の自動生成 (手動編集保存時)
+      // 条件: 利用または欠席が確定しており、利用の場合は時間が入力されていること
+      const isPresent = editingRecord.usageStatus === '放課後' || editingRecord.usageStatus === '休校日';
+      const isAbsent = editingRecord.usageStatus === '欠席';
+      const hasTime = editingRecord.arrivalTime && editingRecord.departureTime;
+
+      if ((isPresent && hasTime) || isAbsent) {
+        await createRecord({
+          date: editingRecord.date,
+          userId: editingRecord.userId,
+          userName: editingRecord.userName,
+          status: editingRecord.usageStatus, // '放課後' | '休校日' | '欠席'
+          startTime: editingRecord.arrivalTime,
+          endTime: editingRecord.departureTime,
+          extensionMinutes: ext ? ext.minutes : 0,
+          absenceReason: isAbsent ? editingRecord.notes : '',
+        });
+      }
+
       toast.success('記録を更新しました。', { id: loadingToast });
       setIsEditModalOpen(false);
       await fetchData();
@@ -456,6 +492,8 @@ export default function AttendancePage() {
     }
     return status;
   };
+
+  
 
   return (
     <>
@@ -612,7 +650,6 @@ export default function AttendancePage() {
               <div><label className="block text-sm font-medium text-gray-700">来所時間</label><input type="time" value={editingRecord.arrivalTime || ''} onChange={(e) => setEditingRecord({ ...editingRecord, arrivalTime: e.target.value })} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm" /></div>
               <div><label className="block text-sm font-medium text-gray-700">退所時間</label><input type="time" value={editingRecord.departureTime || ''} onChange={(e) => setEditingRecord({ ...editingRecord, departureTime: e.target.value })} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm" /></div>
               
-              {/* 加算チェックボックス (修正済みロジックで判定) */}
               <div className="border-t pt-2 mt-2">
                 <p className="text-sm font-bold text-gray-700 mb-2">本日の加算実績</p>
                 <div className="space-y-2">
