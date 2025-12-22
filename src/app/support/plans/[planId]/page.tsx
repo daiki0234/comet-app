@@ -4,12 +4,11 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/Layout';
 import { db, auth } from '@/lib/firebase/firebase';
-import { collection, getDocs, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
+import { collection, getDocs, doc, getDoc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import { UserData } from '@/types/billing';
 
-// --- 定数定義 (新規作成と同じ) ---
+// --- 定数定義 ---
 const DAYS = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日・祝日・長期休'];
 const SCHEDULE_TYPES = ['pre', 'standard', 'post'] as const;
 
@@ -84,32 +83,29 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
   // 支援目標リスト
   const [supportTargets, setSupportTargets] = useState<SupportTargetItem[]>([]);
 
-  // --- データ取得 (マスタ & 既存データ) ---
+  // --- データ取得 ---
   useEffect(() => {
     const initData = async () => {
       try {
-        // 1. マスタデータ取得
         const usersSnap = await getDocs(collection(db, 'users'));
         const usersData = usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as UserData));
         setUsers(usersData);
 
-        const staffsSnap = await getDocs(collection(db, 'staffs'));
+        const staffsSnap = await getDocs(collection(db, 'admins'));
         const staffList = staffsSnap.docs.map(d => d.data().name as string).filter(Boolean);
         setStaffs(staffList);
 
-        // 2. 既存の計画書データを取得
         const docRef = doc(db, 'supportPlans', params.planId);
         const docSnap = await getDoc(docRef);
 
         if (docSnap.exists()) {
           const data = docSnap.data();
           
-          // 基本情報のセット
           setBasicInfo({
             creationDate: data.creationDate || '',
             status: data.status || '原案',
             userId: data.userId || '',
-            userName: data.userName || '', // 保存時に入れていない場合は後でIDから復元が必要かも
+            userName: data.userName || '',
             author: data.author || '',
             hasTransport: data.hasTransport || 'なし',
             hasMeal: data.hasMeal || 'なし',
@@ -119,7 +115,6 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
             shortTermGoal: data.shortTermGoal || '',
           });
 
-          // 利用者名検索窓の初期値
           if (data.userId) {
             const targetUser = usersData.find(u => u.id === data.userId);
             if (targetUser) {
@@ -127,7 +122,6 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
             }
           }
 
-          // 時間割、備考、支援目標のセット
           if (data.schedules) setSchedules(data.schedules);
           if (data.remarks) setRemarks(data.remarks);
           if (data.supportTargets) setSupportTargets(data.supportTargets);
@@ -222,9 +216,8 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
     setSupportTargets(prev => prev.filter(item => item.id !== id));
   };
 
-  // ★修正: 更新処理 (updateDoc)
-  const handleSave = async () => {
-    // 必須チェック
+  // 更新処理
+  const handleUpdate = async () => {
     if (!basicInfo.creationDate) return toast.error("作成日を入力してください");
     if (!basicInfo.status) return toast.error("作成状態を選択してください");
     if (!basicInfo.userId) return toast.error("利用者を選択してください");
@@ -245,6 +238,36 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
     } catch(e) {
         console.error(e);
         toast.error("更新失敗", { id: toastId });
+    }
+  };
+
+  // ★追加: コピー作成処理
+  const handleCopy = async () => {
+    if (!confirm("現在の内容をコピーして、新しい計画書を作成しますか？")) return;
+    
+    // バリデーション
+    if (!basicInfo.creationDate) return toast.error("作成日を入力してください");
+    if (!basicInfo.userId) return toast.error("利用者を選択してください");
+
+    const toastId = toast.loading("コピー作成中...");
+    try {
+        // 新規ドキュメントとして追加 (addDoc)
+        const docRef = await addDoc(collection(db, 'supportPlans'), {
+            ...basicInfo,
+            status: '原案', // コピー時は安全のため「原案」に戻す
+            schedules,
+            remarks,
+            supportTargets,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+        });
+        
+        toast.success("コピーを作成しました", { id: toastId });
+        // 新しい計画書の編集画面へ遷移
+        router.push(`/support/plans/${docRef.id}`);
+    } catch(e) {
+        console.error(e);
+        toast.error("コピー作成に失敗しました", { id: toastId });
     }
   };
 
@@ -291,6 +314,9 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
               <select value={basicInfo.author} onChange={(e) => setBasicInfo({...basicInfo, author: e.target.value})} className="border p-2 rounded flex-1 bg-white">
                 <option value="">選択してください</option>
                 {staffs.map((s, idx) => <option key={idx} value={s}>{s}</option>)}
+                {basicInfo.author && !staffs.includes(basicInfo.author) && (
+                   <option value={basicInfo.author}>{basicInfo.author}</option>
+                )}
               </select>
             </div>
 
@@ -423,9 +449,17 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
           </button>
         </div>
 
+        {/* フッターアクション */}
         <div className="fixed bottom-0 left-0 w-full bg-white border-t p-4 flex justify-end gap-4 z-20 shadow-lg">
            <button onClick={() => router.back()} className="px-6 py-2 bg-gray-100 rounded hover:bg-gray-200 font-bold text-gray-600">キャンセル</button>
-           <button onClick={handleSave} className="px-8 py-2 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow-md">更新</button>
+           
+           {/* コピー作成ボタン */}
+           <button onClick={handleCopy} className="px-6 py-2 bg-green-600 text-white font-bold rounded hover:bg-green-700 shadow-md flex items-center gap-2">
+             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+             コピーして新規作成
+           </button>
+
+           <button onClick={handleUpdate} className="px-8 py-2 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow-md">更新</button>
         </div>
       </div>
     </AppLayout>

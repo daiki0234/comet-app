@@ -101,10 +101,12 @@ export default function NewPlanPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        // 1. 利用者リスト
         const usersSnap = await getDocs(collection(db, 'users'));
         setUsers(usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as UserData)));
 
-        const staffsSnap = await getDocs(collection(db, 'staffs'));
+        // 2. スタッフリスト (adminsコレクションから取得) [修正箇所]
+        const staffsSnap = await getDocs(collection(db, 'admins'));
         const staffList = staffsSnap.docs.map(d => d.data().name as string).filter(Boolean);
         setStaffs(staffList);
 
@@ -116,6 +118,7 @@ export default function NewPlanPage() {
 
     fetchData();
 
+    // 3. ログインユーザー名を初期値にセット
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user && user.displayName) {
         setBasicInfo(prev => {
@@ -205,15 +208,10 @@ export default function NewPlanPage() {
     setSupportTargets(prev => prev.filter(item => item.id !== id));
   };
 
-  // ★修正: 必須項目のバリデーションを追加
   const handleSave = async () => {
-    // 1. 作成日
     if (!basicInfo.creationDate) return toast.error("作成日を入力してください");
-    // 2. 作成状態
     if (!basicInfo.status) return toast.error("作成状態を選択してください");
-    // 3. 利用者名 (IDでチェック)
     if (!basicInfo.userId) return toast.error("利用者を選択してください");
-    // 4. 入力者
     if (!basicInfo.author) return toast.error("入力者を選択してください");
 
     const toastId = toast.loading("保存中...");
@@ -274,6 +272,10 @@ export default function NewPlanPage() {
               <select value={basicInfo.author} onChange={(e) => setBasicInfo({...basicInfo, author: e.target.value})} className="border p-2 rounded flex-1 bg-white">
                 <option value="">選択してください</option>
                 {staffs.map((s, idx) => <option key={idx} value={s}>{s}</option>)}
+                {/* ログイン中のユーザーがリストにない場合のフォールバック表示 */}
+                {basicInfo.author && !staffs.includes(basicInfo.author) && (
+                   <option value={basicInfo.author}>{basicInfo.author}</option>
+                )}
               </select>
             </div>
 
@@ -365,7 +367,6 @@ export default function NewPlanPage() {
 
               {/* 4段目: 5領域 & 担当者 (2カラム) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                {/* 左: 5領域 */}
                 <div className="bg-white border border-gray-200 rounded-lg p-3">
                     <label className="text-xs font-bold text-gray-700 block mb-2">5領域との関連性</label>
                     <div className="flex gap-x-4 gap-y-2 flex-wrap">
@@ -377,8 +378,6 @@ export default function NewPlanPage() {
                     ))}
                     </div>
                 </div>
-
-                {/* 右: 担当者・提供機関 */}
                 <TextAreaField 
                   label="担当者・提供機関" 
                   value={item.staff} 
