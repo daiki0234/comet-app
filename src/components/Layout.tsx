@@ -69,7 +69,6 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
         { href: '/attendance/user-status', label: '利用者別の出欠状況' },
       ]
     },
-    { href: '/absence-management', label: '欠席管理', icon: <UserXIcon /> },
     {
       href: '/support',
       label: '支援管理',
@@ -78,9 +77,11 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
         { href: '/support/records', label: '支援記録' },
         { href: '/support/plans', label: '個別支援計画' },
         { href: '/support/monitoring', label: 'モニタリング' },
+        { href: '/support/case-meetings', label: 'ケース担当者会議' },
       ]
     },
     { href: '/business-journal', label: '業務日誌', icon: <BookIcon /> },
+    { href: '/absence-management', label: '欠席管理', icon: <UserXIcon /> },
     { href: '/analysis', label: 'AI分析', icon: <ChartIcon /> },
     // ★★★ ここに追加 ★★★
     { href: '/billing', label: '請求管理', icon: <FileTextCheckIcon /> }, 

@@ -34,11 +34,27 @@ export default function SupportDashboardPage() {
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
       )
     },
+    // ★追加: ケース担当者会議
+    {
+      title: "ケース担当者会議",
+      description: "会議の実施記録や検討内容、利用者ごとの支援方針の変更点を管理します。",
+      href: "/support/case-meetings",
+      iconColor: "bg-orange-100 text-orange-600",
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+          <circle cx="9" cy="7" r="4"></circle>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+        </svg>
+      )
+    },
   ];
 
   return (
     <AppLayout pageTitle="支援管理">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* 4つになったのでレスポンシブ設定を調整しました (md:2列, lg:4列) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {menuItems.map((item) => (
           <Link key={item.href} href={item.href} className="group block h-full">
             <div className="h-full bg-white p-6 rounded-2xl shadow-ios border border-gray-200 transition-all duration-200 group-hover:shadow-md group-hover:border-blue-300 flex flex-col">
