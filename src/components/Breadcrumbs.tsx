@@ -14,7 +14,7 @@ const breadcrumbNameMap: { [key: string]: string } = {
   '/attendance/register-absence': '別日の欠席登録',
   '/attendance/user-status': '利用者別出欠状況',
   
-  //欠席管理
+  // 欠席管理
   '/absence-management': '欠席管理',
 
   // 利用者管理関連
@@ -24,12 +24,32 @@ const breadcrumbNameMap: { [key: string]: string } = {
   // マスタ・設定関連
   '/masters': 'サービス情報マスタ',
   '/admin-settings': '職員管理',
+  '/operations': '運営管理',
   
   // 支援管理関連
   '/support': '支援管理',
+  
+  // 支援記録
   '/support/records': '支援記録',
+ '/support/records/new': '新規作成', // 支援記録の新規作成ページがある場合はコメントアウトを外してください
+  
+  // 個別支援計画
   '/support/plans': '個別支援計画',
+  '/support/plans/new': '新規作成',
+  
+  // モニタリング
   '/support/monitoring': 'モニタリング',
+  '/support/monitoring/new': '新規作成',
+  
+  // ケース担当者会議 (★追加)
+  '/support/case-meetings': 'ケース担当者会議',
+  '/support/case-meetings/new': '新規作成',
+
+  '/business-journal': '業務日誌',
+  '/analysis': 'AI分析',
+
+  '/billing': '請求管理',
+  '/billing/records': '実績チェック',
 };
 
 export function Breadcrumbs() {
