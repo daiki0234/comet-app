@@ -41,7 +41,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-end',
     width: '100%',
-    marginBottom: 2,
+    marginBottom: 10,
   },
   headerSeparator: {
     borderBottomWidth: 1,
