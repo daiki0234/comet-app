@@ -8,7 +8,7 @@ import { collection, getDocs, query, where, orderBy, doc, getDoc, updateDoc, ser
 import toast from 'react-hot-toast';
 import { UserData } from '@/types/billing';
 
-// --- 選択肢定数 (省略: 新規作成と同じ) ---
+// --- 選択肢定数 ---
 const CONDITIONS = ['良好', '注意', '悪化'];
 const SERVICE_TIME_CLASSES = [
   '区分1(30分以上1時間30分以下)',
@@ -17,7 +17,7 @@ const SERVICE_TIME_CLASSES = [
 ];
 const EXTENDED_ADDONS = ['加算しない', '1（30分以上1時間未満）', '2（1時間以上2時間未満）', '3（2時間以上）'];
 
-// --- 長い選択肢リスト (省略: 新規作成と同じ) ---
+// --- 長い選択肢リスト (省略なし) ---
 const OPT_INDIVIDUAL = ['加算しない', 'Ⅰ-イ 【ケアニーズの高い障害児 90単位】', 'Ⅰ-イ 【強行（基礎） 120単位】', 'Ⅰ-ロ 【著しく重度の障害児 120単位】', 'Ⅱ 【150単位】', 'Ⅲ 【70単位】', 'Ⅰ-イ 【ケアニーズの高い障害児 90単位】・Ⅱ 【150単位】', 'Ⅰ-イ 【ケアニーズの高い障害児 90単位】・Ⅲ 【70単位】', 'Ⅰ-イ 【強行（基礎） 120単位】・Ⅱ 【150単位】', 'Ⅰ-イ 【強行（基礎） 120単位】・Ⅲ 【70単位】', 'Ⅰ-ロ 【著しく重度の障害児に支援 120単位】・Ⅱ 【150単位】', 'Ⅰ-ロ 【著しく重度の障害児に支援 120単位】・Ⅲ 【70単位】', 'Ⅱ 【150単位】・Ⅲ 【70単位】', 'Ⅰ-イ 【ケアニーズの高い障害児 90単位】・Ⅱ 【150単位】・Ⅲ 【70単位】', 'Ⅰ-イ 【強行（基礎） 120単位】・Ⅱ 【150単位】・Ⅲ 【70単位】', 'Ⅰ-ロ 【著しく重度の障害児に支援 120単位】・Ⅱ 【150単位】・Ⅲ 【70単位】'];
 const OPT_AGENCY = ['加算しない', 'Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ'];
 const OPT_FAMILY = ['加算しない', 'Ⅰ1（居宅を訪問・1時間以上）', 'Ⅰ2（居宅を訪問・1時間未満）', 'Ⅰ3（事業所等で対面）', 'Ⅰ4（オンライン）', 'Ⅱ1（事業所等で対面）', 'Ⅱ2（オンライン）', 'Ⅰ1・Ⅱ1', 'Ⅰ1・Ⅱ2', 'Ⅰ2・Ⅱ1', 'Ⅰ2・Ⅱ2', 'Ⅰ3・Ⅱ1', 'Ⅰ3・Ⅱ2', 'Ⅰ4・Ⅱ1', 'Ⅰ4・Ⅱ2'];
@@ -35,7 +35,6 @@ const OPT_ABSENCE = ['加算しない', 'Ⅰ'];
 export default function EditRecordPage({ params }: { params: { recordId: string } }) {
   const router = useRouter();
   
-  // --- State ---
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<UserData[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -47,7 +46,7 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
     date: '',
     userId: '',
     userName: '',
-    status: '放課後利用' as any,
+    status: '' as any,
     startTime: '',
     endTime: '',
     duration: '', 
@@ -80,7 +79,7 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
 
   const [targetComments, setTargetComments] = useState<Record<string, string>>({});
 
-  // --- データ取得 (初期ロード) ---
+  // --- データ取得 ---
   useEffect(() => {
     const initData = async () => {
       try {
@@ -98,12 +97,43 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
         }
 
         const rData = recordSnap.data();
+        let currentStatus = rData.status || '';
+
+        // ★修正: データがない場合、出欠から自動判定
+        // 値を「放課後」「休校日」に統一
+        if (!currentStatus && rData.userId && rData.date) {
+          try {
+            const attQ = query(
+              collection(db, 'attendance'),
+              where('userId', '==', rData.userId),
+              where('date', '==', rData.date)
+            );
+            const attSnap = await getDocs(attQ);
+            
+            if (!attSnap.empty) {
+              const attData = attSnap.docs[0].data();
+              // serviceType: "1"=平日(放課後), "2"=学校休業日
+              if (attData.serviceType === '1') {
+                currentStatus = '放課後';     // ★統一
+              } else if (attData.serviceType === '2') {
+                currentStatus = '休校日';     // ★統一
+              }
+            }
+          } catch (err) {
+            console.error("出欠データ照合エラー", err);
+          }
+        }
+        
+        // デフォルト値
+        if (!currentStatus) {
+            currentStatus = '放課後'; // ★統一
+        }
 
         setFormData({
             date: rData.date,
             userId: rData.userId,
             userName: rData.userName,
-            status: rData.status,
+            status: currentStatus,
             startTime: rData.startTime || '',
             endTime: rData.endTime || '',
             duration: rData.duration || '',
@@ -167,9 +197,7 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
     initData();
   }, [params.recordId, router]);
 
-  // --- ロジック (算定時間・区分の再計算) ---
-  // 編集画面では「日付」や「利用状況」が変更された時のみ再計算されるようにする
-  // (初期ロード完了後のみ機能させるため loading チェック)
+  // --- 算定時間・区分ロジック ---
   useEffect(() => {
     if (loading) return;
 
@@ -178,11 +206,8 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
         return;
     }
 
-    // 1. 算定時間の決定
     let determinedDuration = '';
 
-    // 日付または状況が、元データと変わった場合のみ計算する…などの厳密制御も可能だが
-    // ここでは簡潔に「現在のフォーム値に基づいて常に計算」する (編集操作への即応)
     if (activePlan) {
       const dateObj = new Date(formData.date);
       const jsDay = dateObj.getDay(); 
@@ -193,12 +218,12 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
       }
     }
 
+    // ★修正: 判定文字列を「放課後」「休校日」に統一
     if (!determinedDuration) {
-      if (formData.status === '放課後利用') determinedDuration = '2.0';
-      else if (formData.status === '休校日利用') determinedDuration = '3.5';
+      if (formData.status === '放課後') determinedDuration = '2.0';
+      else if (formData.status === '休校日') determinedDuration = '3.5';
     }
 
-    // 2. 区分判定
     let newClass = '';
     if (determinedDuration) {
       const dNum = Number(determinedDuration);
@@ -216,7 +241,7 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
 
   }, [loading, formData.date, formData.status, activePlan]); 
 
-  // --- ロジック (延長支援加算) ---
+  // --- 延長支援ロジック ---
   useEffect(() => {
     if (loading) return;
     if(formData.status === '欠席') return;
@@ -241,7 +266,6 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
   }, [loading, formData.extensionDuration, formData.status]);
 
 
-  // 利用者選択 (編集画面で変更時)
   const handleSelectUser = async (user: UserData) => {
     setFormData({ ...formData, userId: user.id, userName: `${user.lastName} ${user.firstName}` });
     setSearchTerm(`${user.lastName} ${user.firstName}`);
@@ -293,12 +317,10 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
     return <AppLayout pageTitle="読み込み中..."><div className="p-8 text-center">データを取得しています...</div></AppLayout>;
   }
 
-  // --- JSX (レイアウト部分は新規作成とほぼ同じ) ---
   return (
     <AppLayout pageTitle="支援記録 編集">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full pb-20">
         
-        {/* 左カラム */}
         <div className="space-y-6 overflow-y-auto pr-2">
           
           <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 space-y-4">
@@ -332,7 +354,8 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
               <div>
                 <label className="text-xs font-bold text-gray-500">利用状況</label>
                 <div className="flex gap-4 mt-1">
-                  {['放課後利用','休校日利用','欠席'].map(st => (
+                  {/* ★修正: 選択肢を「放課後」「休校日」に統一 */}
+                  {['放課後','休校日','欠席'].map(st => (
                     <label key={st} className="flex items-center gap-1 text-sm cursor-pointer">
                       <input type="radio" checked={formData.status === st} onChange={() => setFormData({...formData, status: st as any})} /> 
                       <span className={st === '欠席' ? 'text-red-600 font-bold' : ''}>{st}</span>
@@ -374,7 +397,6 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
             </div>
           </div>
 
-          {/* 加減算設定 (内容は新規作成と同じため、構造のみ記載) */}
           <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 space-y-4">
             <h3 className="font-bold text-gray-700 border-l-4 border-orange-500 pl-2">加減算設定</h3>
             <div className="space-y-4">
@@ -488,7 +510,6 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
           </div>
         </div>
 
-        {/* フッター */}
         <div className="fixed bottom-0 left-0 w-full bg-white border-t p-4 flex justify-end gap-4 z-20 shadow-lg lg:col-span-2">
            <button onClick={() => router.back()} className="px-6 py-2 bg-gray-100 rounded hover:bg-gray-200 font-bold text-gray-600">キャンセル</button>
            <button onClick={handleUpdate} className="px-8 py-2 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow-md">更新</button>
@@ -499,7 +520,6 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
   );
 }
 
-// 共通Selectコンポーネント (変更なし)
 const SelectField = ({ label, value, onChange, options }: { label: string, value: string, onChange: (v: string) => void, options: string[] }) => (
   <div className="flex flex-col">
     <label className="text-xs font-bold text-gray-500 mb-1">{label}</label>
