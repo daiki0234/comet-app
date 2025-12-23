@@ -4,7 +4,7 @@ import React from 'react';
 import { Document as PdfDocument, Page, Text, View, StyleSheet, Font } from '@react-pdf/renderer';
 import { SupportPlan } from '@/types/plan';
 
-// 型定義
+// ユーザーデータの型定義（PDF生成用に柔軟に定義）
 interface UserDataPDF {
   lastName: string;
   firstName: string;
@@ -44,8 +44,8 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   headerSeparator: {
-    // borderBottomWidth: 1,
-    // borderBottomColor: '#ccc',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ccc',
     width: '100%',
     marginBottom: 8,
   },
@@ -155,7 +155,7 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
   const recipientNo = user?.jukyushaNo || user?.recipientNumber || '';
   const gender = user?.gender === 'male' ? '男性' : user?.gender === 'female' ? '女性' : user?.gender || '';
 
-  // ★ここ: 児発管の名前を優先、なければ作成者
+  // 児発管の名前を優先、なければ作成者
   const signerName = managerName || plan.author;
 
   return (
@@ -283,7 +283,8 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
             <View style={styles.table}>
               <View style={[styles.tableRow, styles.rowFirst]}>
                 {DAYS.map((d, i) => (
-                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 0 && styles.cellFirst]}>
+                  // ★修正: undefined ではなく空オブジェクト {} を返す
+                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 0 ? styles.cellFirst : {}]}>
                     <Text style={{ fontSize: 6 }}>{d}</Text>
                   </View>
                 ))}
@@ -292,7 +293,8 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
                 {DAYS.map((_, i) => {
                   const slot = plan.schedules?.standard?.[i] || { start: '', end: '', duration: '' };
                   return (
-                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 0 && styles.cellFirst, { height: 35 }]}>
+                    // ★修正: undefined ではなく空オブジェクト {} を返す
+                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 0 ? styles.cellFirst : {}, { height: 35 }]}>
                       <Text style={{ fontSize: 7, textAlign: 'center' }}>{slot.start ? `${slot.start}~${slot.end}` : ''}</Text>
                       <Text style={{ fontSize: 8, marginTop: 2, textAlign: 'center' }}>{slot.duration ? `${slot.duration}h` : ''}</Text>
                     </View>
@@ -312,7 +314,8 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
             <View style={styles.table}>
               <View style={[styles.tableRow, styles.rowFirst]}>
                 {DAYS.map((d, i) => (
-                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 0 && styles.cellFirst]}>
+                  // ★修正: undefined ではなく空オブジェクト {} を返す
+                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 0 ? styles.cellFirst : {}]}>
                      <Text style={{ fontSize: 6 }}>{d}</Text>
                   </View>
                 ))}
@@ -321,7 +324,8 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
                 {DAYS.map((_, i) => {
                   const slot = plan.schedules?.pre?.[i] || { start: '', end: '', duration: '' };
                   return (
-                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 0 && styles.cellFirst, { height: 35 }]}>
+                    // ★修正: undefined ではなく空オブジェクト {} を返す
+                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 0 ? styles.cellFirst : {}, { height: 35 }]}>
                       <Text style={{ fontSize: 7, textAlign: 'center' }}>{slot.start ? `${slot.start}~${slot.end}` : ''}</Text>
                       <Text style={{ fontSize: 8, marginTop: 2, textAlign: 'center' }}>{slot.duration ? `${slot.duration}h` : ''}</Text>
                     </View>
@@ -341,7 +345,8 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
             <View style={styles.table}>
               <View style={[styles.tableRow, styles.rowFirst]}>
                 {DAYS.map((d, i) => (
-                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 0 && styles.cellFirst]}>
+                  // ★修正: undefined ではなく空オブジェクト {} を返す
+                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 0 ? styles.cellFirst : {}]}>
                      <Text style={{ fontSize: 6 }}>{d}</Text>
                   </View>
                 ))}
@@ -350,7 +355,8 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
                 {DAYS.map((_, i) => {
                   const slot = plan.schedules?.post?.[i] || { start: '', end: '', duration: '' };
                   return (
-                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 0 && styles.cellFirst, { height: 35 }]}>
+                    // ★修正: undefined ではなく空オブジェクト {} を返す
+                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 0 ? styles.cellFirst : {}, { height: 35 }]}>
                       <Text style={{ fontSize: 7, textAlign: 'center' }}>{slot.start ? `${slot.start}~${slot.end}` : ''}</Text>
                       <Text style={{ fontSize: 8, marginTop: 2, textAlign: 'center' }}>{slot.duration ? `${slot.duration}h` : ''}</Text>
                     </View>
@@ -372,7 +378,6 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
             <View style={{ width: '45%' }}>
               <Text>提供する支援内容について、本計画書に基づき説明しました。</Text>
               <View style={{ marginTop: 20, borderBottomWidth: 1, borderColor: '#000', paddingBottom: 2 }}>
-                {/* ★修正: 変数を signerName に変更 */}
                 <Text>児童発達支援管理責任者氏名: {signerName}</Text>
               </View>
             </View>
