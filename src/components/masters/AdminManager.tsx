@@ -7,7 +7,7 @@ import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore'
 // ロールの型定義
 type Role = "admin" | "user";
 
-// ★追加: 役職の型定義
+// 役職の型定義
 type JobTitle = "" | "child_dev_manager" | "facility_manager";
 
 // データ型定義
@@ -15,7 +15,8 @@ interface AdminUser {
   id: string; // Email
   name: string;
   role: Role;
-  jobTitle?: JobTitle; // ★追加
+  jobTitle?: JobTitle;
+  isEnrolled?: boolean; // ★追加: シフト表示フラグ
   updatedAt: any;
 }
 
@@ -27,7 +28,8 @@ export default function AdminManager() {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [role, setRole] = useState<Role>('user');
-  const [jobTitle, setJobTitle] = useState<JobTitle>(''); // ★追加
+  const [jobTitle, setJobTitle] = useState<JobTitle>('');
+  const [isEnrolled, setIsEnrolled] = useState(true); // ★追加: デフォルトは表示(true)
   const [editId, setEditId] = useState<string | null>(null);
 
   // データ取得
@@ -42,7 +44,8 @@ export default function AdminManager() {
           name: dData.name,
           role: dData.role,
           updatedAt: dData.updatedAt,
-          jobTitle: dData.jobTitle || '' // ★既存データに無い場合の対応
+          jobTitle: dData.jobTitle || '',
+          isEnrolled: dData.isEnrolled !== undefined ? dData.isEnrolled : true // ★既存データがない場合はtrue扱い
         } as AdminUser;
       });
       setItems(data);
@@ -61,7 +64,8 @@ export default function AdminManager() {
     setEmail(''); 
     setName(''); 
     setRole('user'); 
-    setJobTitle(''); // ★追加
+    setJobTitle('');
+    setIsEnrolled(true); // ★リセット
   };
 
   // 保存 (新規・更新)
@@ -75,7 +79,8 @@ export default function AdminManager() {
       await setDoc(doc(db, 'admins', docId), {
         name, 
         role,
-        jobTitle, // ★追加
+        jobTitle,
+        isEnrolled, // ★保存
         updatedAt: new Date() 
       }, { merge: true });
       
@@ -105,12 +110,13 @@ export default function AdminManager() {
     setEmail(item.id); 
     setName(item.name); 
     setRole(item.role);
-    setJobTitle(item.jobTitle || ''); // ★追加
+    setJobTitle(item.jobTitle || '');
+    setIsEnrolled(item.isEnrolled !== false); // ★編集時反映 (undefinedならtrue)
   };
 
-  // ★追加: 役職ラベル表示ヘルパー
+  // 役職ラベル表示ヘルパー
   const getJobTitleLabel = (key: string | undefined) => {
-    if (key === 'child_dev_manager') return '児発管'; // 略称で表示
+    if (key === 'child_dev_manager') return '児発管';
     if (key === 'facility_manager') return '施設長';
     return null;
   };
@@ -161,7 +167,7 @@ export default function AdminManager() {
             </select>
           </div>
 
-          {/* ★追加: 役職設定 */}
+          {/* 役職設定 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">役職・資格</label>
             <div className="flex flex-col gap-2">
@@ -202,6 +208,24 @@ export default function AdminManager() {
           </div>
         </div>
 
+        {/* ★追加: シフト表示設定 */}
+        <div className="mb-4 pt-4 border-t border-gray-100">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={isEnrolled} 
+              onChange={(e) => setIsEnrolled(e.target.checked)} 
+              className="w-5 h-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500" 
+            />
+            <span className="text-sm font-bold text-gray-700 select-none">
+              シフト管理・運営管理画面に表示する（在籍）
+            </span>
+          </label>
+          <p className="text-xs text-gray-500 mt-1 ml-7">
+            チェックを外すと、シフト表のデフォルト表示から除外されます。
+          </p>
+        </div>
+
         <div className="flex justify-end gap-3 mt-4 border-t pt-4">
           <button type="button" onClick={resetForm} className="bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-4 rounded-lg">
             クリア
@@ -220,6 +244,7 @@ export default function AdminManager() {
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">氏名 / Email</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">役職・資格</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">システム権限</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">シフト表示</th> {/* ★列追加 */}
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
             </tr>
           </thead>
@@ -233,7 +258,6 @@ export default function AdminManager() {
                     <div className="text-xs text-gray-500">{it.id}</div>
                   </td>
                   <td className="px-4 py-3 text-sm">
-                    {/* ★追加: 役職表示 */}
                     {jobLabel ? (
                       <span className={`px-2 py-1 rounded-md text-xs font-bold border ${
                         it.jobTitle === 'child_dev_manager' 
@@ -250,6 +274,18 @@ export default function AdminManager() {
                     <span className={`px-2 py-1 rounded-full text-xs font-semibold ${it.role==='admin'?'bg-purple-100 text-purple-800':'bg-gray-100 text-gray-800'}`}>
                       {it.role === 'admin' ? '管理者' : '一般'}
                     </span>
+                  </td>
+                  {/* ★追加: 表示ステータス */}
+                  <td className="px-4 py-3 text-sm">
+                    {it.isEnrolled !== false ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                        表示中
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500">
+                        非表示
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-sm space-x-2">
                     <button onClick={()=>handleEdit(it)} className="text-blue-600 hover:text-blue-900 font-medium">編集</button>

@@ -14,7 +14,8 @@ type BusinessDay = {
   note?: string;
 };
 
-type ShiftCode = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | '休み';
+// AM, PM, R を追加
+type ShiftCode = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'AM' | 'PM' | 'R' | '休み';
 
 type StaffShift = {
   id: string; // date_staffName
@@ -34,6 +35,7 @@ type DailyTraining = {
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 const TRAINING_CATEGORIES: TrainingCategory[] = ['SST', '運動', '学習' , '創作', 'イベント', 'その他'];
 
+// AM, PM, R を定義に追加
 const SHIFT_DEFINITIONS: Record<string, string> = {
   'A': '9:00～18:00',
   'B': '10:00～19:00',
@@ -41,9 +43,13 @@ const SHIFT_DEFINITIONS: Record<string, string> = {
   'D': '9:30～18:30',
   'E': '9:30～17:30',
   'F': '10:00～18:00',
+  'AM': 'AM有給',
+  'PM': 'PM有給',
+  'R': 'R休暇',
 };
 const SHIFT_CODES = Object.keys(SHIFT_DEFINITIONS) as ShiftCode[];
 
+// CSV取り込み用マッピング
 const SHIFT_MAP: Record<string, ShiftCode> = {
   'A': 'A', 'ａ': 'A', 'Ａ': 'A',
   'B': 'B', 'b': 'B', 'Ｂ': 'B',
@@ -52,12 +58,21 @@ const SHIFT_MAP: Record<string, ShiftCode> = {
   'E': 'E', 'e': 'E', 'Ｅ': 'E',
   'F': 'F', 'f': 'F', 'Ｆ': 'F',
   
+  'AM': 'AM', 'am': 'AM', 'ＡＭ': 'AM', 
+  'AM有給': 'AM', '午前': 'AM', '午前休': 'AM', '半休(AM)': 'AM',
+
+  'PM': 'PM', 'pm': 'PM', 'ＰＭ': 'PM',
+  'PM有給': 'PM', '午後': 'PM', '午後休': 'PM', '半休(PM)': 'PM',
+
+  'R': 'R', 'r': 'R', 'Ｒ': 'R',
+  'R休暇': 'R', 'Ｒ休暇': 'R', 'リフレッシュ': 'R',
+  
   '休': '休み', '休み': '休み', '公': '休み', '公休': '休み',
-  '有': '休み', '有給': '休み', '有休': '休み',
-  'R': '休み', 'R休暇': '休み', 'Ｒ休暇': '休み',
+  '有': '休み', '有給': '休み', '有休': '休み', 
   '/': '休み', '': '休み', '-': '休み'
 };
 
+// 色設定
 const getShiftColor = (code: string) => {
   switch (code) {
     case 'A': return 'bg-blue-100 text-blue-700 border-blue-200';
@@ -66,6 +81,9 @@ const getShiftColor = (code: string) => {
     case 'D': return 'bg-purple-100 text-purple-700 border-purple-200';
     case 'E': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
     case 'F': return 'bg-pink-100 text-pink-700 border-pink-200';
+    case 'AM': return 'bg-amber-100 text-amber-700 border-amber-200';
+    case 'PM': return 'bg-cyan-100 text-cyan-700 border-cyan-200';
+    case 'R': return 'bg-rose-100 text-rose-700 border-rose-200';
     case '休み': return 'bg-gray-100 text-gray-500 border-gray-200';
     default: return 'bg-white text-gray-800 border-gray-200';
   }
@@ -97,53 +115,67 @@ export default function OperationsPage() {
   const [shifts, setShifts] = useState<StaffShift[]>([]);
   const [trainings, setTrainings] = useState<Record<string, DailyTraining>>({});
 
-  const [staffList, setStaffList] = useState<string[]>(['管理者', 'スタッフA', 'スタッフB']);
-
+  const [staffList, setStaffList] = useState<string[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editTraining, setEditTraining] = useState<DailyTraining>({ date: '', title: '', category: 'SST', description: '' });
 
+  const [newStaffName, setNewStaffName] = useState('');
+  const [isAddStaffModalOpen, setIsAddStaffModalOpen] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // データ取得関数を外に出して再利用可能に（ただし依存配列に注意）
+  // ここではuseEffect内と同じロジックを使います
+  const loadData = async () => {
+    setLoading(true);
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth() + 1;
+    const startStr = `${year}-${String(month).padStart(2, '0')}-01`;
+    const endStr = `${year}-${String(month).padStart(2, '0')}-${new Date(year, month, 0).getDate()}`;
+
+    try {
+      const [busSnap, shiftSnap, trainSnap, adminSnap] = await Promise.all([
+        getDocs(query(collection(db, 'businessDays'), where('date', '>=', startStr), where('date', '<=', endStr))),
+        getDocs(query(collection(db, 'shifts'), where('date', '>=', startStr), where('date', '<=', endStr))),
+        getDocs(query(collection(db, 'dailyTrainings'), where('date', '>=', startStr), where('date', '<=', endStr))),
+        getDocs(collection(db, 'admins'))
+      ]);
+
+      const busMap: Record<string, BusinessDay> = {};
+      busSnap.forEach(d => { busMap[d.id] = d.data() as BusinessDay; });
+      setBusinessDays(busMap);
+
+      const loadedShifts = shiftSnap.docs.map(d => ({ id: d.id, ...d.data() } as StaffShift));
+      setShifts(loadedShifts);
+
+      const enrolledStaffNames = adminSnap.docs
+        .map(d => d.data())
+        .filter((d: any) => d.isEnrolled !== false)
+        .map((d: any) => d.name);
+
+      const shiftStaffNames = loadedShifts.map(s => s.staffName);
+      
+      const dynamicStaffs = Array.from(new Set([
+        ...enrolledStaffNames, 
+        ...shiftStaffNames
+      ])).sort();
+
+      setStaffList(dynamicStaffs);
+
+      const trainMap: Record<string, DailyTraining> = {};
+      trainSnap.forEach(d => { trainMap[d.id] = d.data() as DailyTraining; });
+      setTrainings(trainMap);
+
+    } catch (e) {
+      console.error(e);
+      toast.error("データの読み込みに失敗しました");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchMonthData = async () => {
-      setLoading(true);
-      const year = currentDate.getFullYear();
-      const month = currentDate.getMonth() + 1;
-      const startStr = `${year}-${String(month).padStart(2, '0')}-01`;
-      const endStr = `${year}-${String(month).padStart(2, '0')}-${new Date(year, month, 0).getDate()}`;
-
-      try {
-        const [busSnap, shiftSnap, trainSnap] = await Promise.all([
-          getDocs(query(collection(db, 'businessDays'), where('date', '>=', startStr), where('date', '<=', endStr))),
-          getDocs(query(collection(db, 'shifts'), where('date', '>=', startStr), where('date', '<=', endStr))),
-          getDocs(query(collection(db, 'dailyTrainings'), where('date', '>=', startStr), where('date', '<=', endStr)))
-        ]);
-
-        const busMap: Record<string, BusinessDay> = {};
-        busSnap.forEach(d => { busMap[d.id] = d.data() as BusinessDay; });
-        setBusinessDays(busMap);
-
-        const loadedShifts = shiftSnap.docs.map(d => ({ id: d.id, ...d.data() } as StaffShift));
-        setShifts(loadedShifts);
-
-        const dynamicStaffs = Array.from(new Set([
-          ...staffList, 
-          ...loadedShifts.map(s => s.staffName)
-        ])).sort();
-        setStaffList(dynamicStaffs);
-
-        const trainMap: Record<string, DailyTraining> = {};
-        trainSnap.forEach(d => { trainMap[d.id] = d.data() as DailyTraining; });
-        setTrainings(trainMap);
-
-      } catch (e) {
-        console.error(e);
-        toast.error("データの読み込みに失敗しました");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchMonthData();
+    loadData();
   }, [currentDate]);
 
   const toggleBusinessDay = async (dateStr: string) => {
@@ -206,6 +238,22 @@ export default function OperationsPage() {
     }
   };
 
+  const handleAddStaff = () => {
+    if (!newStaffName.trim()) {
+      toast.error("スタッフ名を入力してください");
+      return;
+    }
+    if (staffList.includes(newStaffName)) {
+      toast.error("既に追加されているスタッフです");
+      return;
+    }
+    setStaffList(prev => [...prev, newStaffName].sort());
+    setNewStaffName('');
+    setIsAddStaffModalOpen(false);
+    toast.success("スタッフを追加しました");
+  };
+
+  // ★修正: CSVヘッダーと表示リストの突合ロジックを追加
   const handleCsvImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -223,10 +271,20 @@ export default function OperationsPage() {
         if (!headerRow || headerRow.length < 2) throw new Error("フォーマットが無効です");
 
         const staffMap: Record<number, string> = {};
+        const csvStaffNames: string[] = []; // CSV内のスタッフ名収集用
+
         headerRow.forEach((cell, idx) => {
           if (idx === 0) return; 
           const name = cell.trim();
-          if (name) staffMap[idx] = name;
+          if (name) {
+            staffMap[idx] = name;
+            csvStaffNames.push(name);
+          }
+        });
+
+        // ★ここで現在のリストとCSVのリストを統合して即時反映させる
+        setStaffList(prev => {
+          return Array.from(new Set([...prev, ...csvStaffNames])).sort();
         });
 
         const batch = writeBatch(db);
@@ -283,7 +341,8 @@ export default function OperationsPage() {
         if (updateCount > 0) {
           await batch.commit();
           toast.success(`${updateCount}件のシフトデータを反映しました`);
-          setTimeout(() => window.location.reload(), 1000); 
+          // リロードではなくデータ再取得を行う
+          await loadData(); 
         } else {
           toast('更新対象のデータがありませんでした');
         }
@@ -380,7 +439,13 @@ export default function OperationsPage() {
                   <p className="text-sm text-gray-500">
                     💡 CSV(横:スタッフ/縦:日付)で一括登録できます。(有給などは「休み」となります)
                   </p>
-                  <div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setIsAddStaffModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm text-sm font-bold">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        スタッフ追加
+                    </button>
                     <input type="file" accept=".csv" ref={fileInputRef} className="hidden" onChange={handleCsvImport} />
                     <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm text-sm font-bold">
                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -416,10 +481,8 @@ export default function OperationsPage() {
                   {calendarDates.map(date => {
                     const dStr = toDateStr(date);
                     const isSunday = date.getDay() === 0;
-                    // ★ 赤日の判定: 日曜 または 休所日(CLOSED)
                     const isRedDay = isSunday || businessDays[dStr]?.status === 'CLOSED';
 
-                    // ★ 出勤人数の計算 (休み以外のシフトが入っている人数)
                     const workingCount = staffList.filter(staff => {
                       const shift = shifts.find(s => s.date === dStr && s.staffName === staff);
                       return shift && shift.shiftType !== '休み';
@@ -427,10 +490,8 @@ export default function OperationsPage() {
 
                     return (
                       <tr key={dStr} className="hover:bg-gray-50">
-                        {/* ★ 日付セル: 条件に応じて赤背景・赤文字 */}
                         <td className={`border p-2 font-bold text-center sticky left-0 z-10 ${isRedDay ? 'bg-red-50 text-red-600' : 'bg-white'}`}>
                           <div>{date.getDate()} ({WEEKDAYS[date.getDay()]})</div>
-                          {/* ★ 出勤人数表示 */}
                           <div className="text-[10px] mt-1 text-gray-500 font-normal">
                             出勤: <span className="font-bold text-gray-700">{workingCount}</span>名
                           </div>
@@ -502,6 +563,25 @@ export default function OperationsPage() {
             </div>
           )}
         </div>
+
+        {/* スタッフ追加モーダル */}
+        {isAddStaffModalOpen && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm m-4">
+              <h3 className="text-lg font-bold text-gray-800 mb-4">スタッフ追加</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">スタッフ名</label>
+                  <input type="text" value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" placeholder="例: スタッフC" />
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
+                <button onClick={() => setIsAddStaffModalOpen(false)} className="px-4 py-2 text-gray-600 font-bold hover:bg-gray-100 rounded-lg">キャンセル</button>
+                <button onClick={handleAddStaff} className="px-4 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">追加する</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* トレーニング編集モーダル */}
         {isModalOpen && (
