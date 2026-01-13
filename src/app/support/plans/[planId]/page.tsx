@@ -49,7 +49,7 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
   const [staffs, setStaffs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // ★追加: 児発管の名前
+  // 児発管の名前
   const [managerName, setManagerName] = useState('');
 
   // 基本情報
@@ -104,13 +104,10 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
         const staffList = adminDocs.map(d => d.name as string).filter(Boolean);
         setStaffs(staffList);
 
-        // ★修正: 役職が "child_dev_manager" の職員を探す
+        // 役職が "child_dev_manager" の職員を探す
         const manager = adminDocs.find((d: any) => d.jobTitle === 'child_dev_manager');
         if (manager && manager.name) {
-          console.log("児発管が見つかりました:", manager.name);
           setManagerName(manager.name);
-        } else {
-          console.log("児発管(child_dev_manager)の設定された職員が見つかりません");
         }
 
         // 3. 計画書データ取得
@@ -143,7 +140,16 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
 
           if (data.schedules) setSchedules(data.schedules);
           if (data.remarks) setRemarks(data.remarks);
-          if (data.supportTargets) setSupportTargets(data.supportTargets);
+          
+          // ★修正: displayOrderの昇順でソートしてセット
+          if (data.supportTargets) {
+            const sortedTargets = (data.supportTargets as SupportTargetItem[]).sort((a, b) => {
+              const orderA = Number(a.displayOrder) || 999;
+              const orderB = Number(b.displayOrder) || 999;
+              return orderA - orderB;
+            });
+            setSupportTargets(sortedTargets);
+          }
 
         } else {
           toast.error("計画書が見つかりません");
@@ -317,7 +323,6 @@ export default function PlanEditPage({ params }: { params: { planId: string } })
         {/* --- ヘッダーアクション (PDFボタン) --- */}
         <div className="flex justify-end gap-2">
            {targetUser && (
-             // ★ managerName を渡す
              <PlanPDFDownloadButton plan={currentPlanData} user={targetUser} managerName={managerName} />
            )}
         </div>
