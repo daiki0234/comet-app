@@ -50,6 +50,11 @@ const breadcrumbNameMap: { [key: string]: string } = {
 
   '/billing': '請求管理',
   '/billing/records': '実績チェック',
+
+  '/audit': '監査管理',
+  '/audit/plans': '計画作成',
+  '/audit/trainings': '研修管理',
+  
 };
 
 export function Breadcrumbs() {

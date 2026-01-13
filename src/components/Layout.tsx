@@ -24,14 +24,14 @@ const UserXIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" heigh
 const BookIcon = ({ className = "w-5 h-5" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>;
 const ChartIcon = ({ className = "w-5 h-5" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>;
 const FileTextIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>;
-// 請求書（ファイル）っぽいアイコンを追加
 const FileTextCheckIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>;
-
+const ClipboardCheckIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="M9 14l2 2 4-4"></path></svg>;
 
 export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTitle: string }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { currentUser, isAdmin, isLoggedIn, isLoading } = useAuth(); 
+  // ★修正1: isGuest を取得
+  const { currentUser, isAdmin, isGuest, isLoggedIn, isLoading } = useAuth(); 
 
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
@@ -57,9 +57,18 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
     return null;
   }
 
+  // ★修正3: メニュー定義
+  // ゲストには見せたくない項目（請求、運営、マスタなど）を !isGuest 条件で制御します
   const menuItems = [
+    // 1. ダッシュボード (全員表示)
     { href: '/dashboard', label: 'ダッシュボード', icon: <HomeIcon /> },
-    { href: '/calendar', label: 'カレンダー', icon: <CalendarIcon /> },
+
+    // 2. カレンダー (ゲスト非表示)
+    ...(!isGuest ? [
+      { href: '/calendar', label: 'カレンダー', icon: <CalendarIcon /> },
+    ] : []),
+
+    // 3. 出欠記録 (全員表示)
     {
       href: '/attendance',
       label: '出欠記録',
@@ -69,26 +78,39 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
         { href: '/attendance/user-status', label: '利用者別の出欠状況' },
       ]
     },
-    {
-      href: '/support',
-      label: '支援管理',
-      icon: <FileTextIcon />,
-      subMenu: [
-        { href: '/support/records', label: '支援記録' },
-        { href: '/support/plans', label: '個別支援計画' },
-        { href: '/support/monitoring', label: 'モニタリング' },
-        { href: '/support/case-meetings', label: 'ケース担当者会議' },
-      ]
-    },
-    { href: '/business-journal', label: '業務日誌', icon: <BookIcon /> },
-    { href: '/absence-management', label: '欠席管理', icon: <UserXIcon /> },
-    { href: '/analysis', label: 'AI分析', icon: <ChartIcon /> },
-    // ★★★ ここに追加 ★★★
-    { href: '/billing', label: '請求管理', icon: <FileTextCheckIcon /> }, 
-    // ★★★ 追加ここまで ★★★
-    { href: '/users', label: '利用者管理', icon: <UsersIcon /> },
-    { href: '/operations', label: '運営管理', icon: <SettingsIcon /> },
-    { href: '/masters', label: 'サービス情報マスタ', icon: <SettingsIcon /> },
+
+    // 4. その他の機能 (すべてゲスト非表示)
+    ...(!isGuest ? [
+      {
+        href: '/support',
+        label: '支援管理',
+        icon: <FileTextIcon />,
+        subMenu: [
+          { href: '/support/records', label: '支援記録' },
+          { href: '/support/plans', label: '個別支援計画' },
+          { href: '/support/monitoring', label: 'モニタリング' },
+          { href: '/support/case-meetings', label: 'ケース担当者会議' },
+        ]
+      },
+      { href: '/business-journal', label: '業務日誌', icon: <BookIcon /> },
+      { href: '/absence-management', label: '欠席管理', icon: <UserXIcon /> },
+      { href: '/analysis', label: 'AI分析', icon: <ChartIcon /> },
+      { href: '/billing', label: '請求管理', icon: <FileTextCheckIcon /> },
+      {
+        href: '/audit',
+        label: '監査管理',
+        icon: <ClipboardCheckIcon />,
+        subMenu: [
+          { href: '/audit/plans', label: '計画作成' },
+          { href: '/audit/trainings', label: '研修管理' },
+        ]
+      },
+      { href: '/users', label: '利用者管理', icon: <UsersIcon /> },
+      { href: '/operations', label: '運営管理', icon: <SettingsIcon /> },
+      { href: '/masters', label: 'サービス情報マスタ', icon: <SettingsIcon /> },
+    ] : []),
+
+    // 5. 職員管理 (管理者のみ)
     ...(isAdmin ? [  
       { href: '/admin-settings', label: '職員管理', icon: <UsersIcon /> },
     ] : []),
@@ -120,7 +142,7 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
           </Link>
         </div>
 
-        {/* 開閉ボタン (フローティング) */}
+        {/* 開閉ボタン */}
         <button
           onClick={() => setCollapsed(v => !v)}
           className="absolute -right-3 top-5 z-50 flex items-center justify-center w-6 h-6 bg-white border border-gray-200 rounded-full shadow-md hover:bg-gray-50 text-gray-500 transition-colors"
@@ -170,7 +192,7 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
 
       {/* メインエリア */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* ★★★ 修正点: ヘッダー高さを h-14 から h-16 に変更してサイドバーと統一 ★★★ */}
+        {/* ヘッダー */}
         <header className="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-10 px-4 md:px-6 h-16 flex items-center justify-between border-b">
           <h2 className="text-xl md:text-2xl font-bold text-gray-800 truncate">{pageTitle}</h2>
           
@@ -180,7 +202,8 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
                 {currentUser?.displayName || 'ユーザー'}
               </span>
               <span className="text-xs text-gray-500">
-                {isAdmin ? '管理者' : '一般'}
+                {/* ★修正2: ゲスト用のラベルを追加 */}
+                {isAdmin ? '管理者' : isGuest ? 'ゲスト' : '一般'}
               </span>
             </div>
 

@@ -7,9 +7,12 @@ import { collection, addDoc, getDocs, query, where, orderBy, doc, updateDoc } fr
 import { AppLayout } from '@/components/Layout';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
-import { useAutoRecord } from '@/hooks/useAutoRecord'; // ★追加
+import { useAutoRecord } from '@/hooks/useAutoRecord';
 
 type User = { id: string; lastName: string; firstName: string; };
+
+// ★追加: スタッフ型定義
+type Staff = { id: string; name: string; };
 
 const toDateString = (date: Date) => date.toISOString().split('T')[0];
 
@@ -23,8 +26,8 @@ const determineAbsenceCategory = (text: string): string => {
 
 export default function RegisterAbsencePage() {
   const router = useRouter();
-  const { currentUser } = useAuth();
-  const { createRecord } = useAutoRecord(); // ★フックの使用
+  const { currentUser, isGuest } = useAuth(); // ★追加: isGuest
+  const { createRecord } = useAutoRecord();
 
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +44,33 @@ export default function RegisterAbsencePage() {
 
   // 欠席回数管理用State (Key: userId, Value: 回数)
   const [absenceCounts, setAbsenceCounts] = useState<Record<string, number>>({});
+
+  // ★追加: スタッフ選択用
+  const [staffList, setStaffList] = useState<Staff[]>([]);
+  const [selectedStaffId, setSelectedStaffId] = useState('');
+
+  // ★追加: ゲストの場合、スタッフリストを取得
+  useEffect(() => {
+    const fetchStaff = async () => {
+      if (!isGuest) return;
+      try {
+        const q = query(collection(db, 'admins'));
+        const snap = await getDocs(q);
+        const staffs = snap.docs
+          .map(d => {
+            const data = d.data();
+            return { id: d.id, name: data.name, isEnrolled: data.isEnrolled };
+          })
+          .filter((s: any) => s.isEnrolled !== false)
+          .map((s: any) => ({ id: s.id, name: s.name } as Staff));
+        
+        setStaffList(staffs);
+      } catch (e) {
+        console.error("スタッフ取得エラー", e);
+      }
+    };
+    fetchStaff();
+  }, [isGuest]);
 
   // 1. ユーザー一覧取得
   useEffect(() => {
@@ -125,6 +155,19 @@ export default function RegisterAbsencePage() {
 
   const handleAddAbsence = async () => {
     if (!absentUserId) { return toast.error('利用者を選択してください。'); }
+    
+    // ★追加: ゲストの場合の担当者チェック & 名前決定
+    let staffName = currentUser?.displayName || '担当者';
+    if (isGuest) {
+      if (!selectedStaffId) {
+        return toast.error('担当職員を選択してください。');
+      }
+      const staff = staffList.find(s => s.id === selectedStaffId);
+      if (staff) {
+        staffName = staff.name; // 選択された名前で上書き
+      }
+    }
+
     const user = users.find(u => u.id === absentUserId);
     if (!user) return;
     
@@ -170,8 +213,9 @@ export default function RegisterAbsencePage() {
         usageStatus: '欠席',
         reason: autoReason, 
         notes: notes,
-        staffName: currentUser?.displayName || '担当者',
+        staffName: staffName, // ★変更: 決定した担当者名を保存
         createdAt: new Date(),
+        // 必要なら recordedBy: staffName としても良いですが、既存が staffName を使っているようなのでそれに合わせました
       });
       
       // ★★★ 追加: 支援記録の自動生成 ★★★
@@ -198,6 +242,7 @@ export default function RegisterAbsencePage() {
       setAbsentUserId('');
       setUserSearchQuery('');
       setNotes('');
+      setSelectedStaffId(''); // ★追加: リセット
       
     } catch (error: any) {
       toast.error(error.message, { id: loadingToast });
@@ -215,6 +260,27 @@ export default function RegisterAbsencePage() {
         <p className="text-sm text-gray-500 mb-6">先日付の欠席連絡などを登録します。</p>
         
         <div className="space-y-5">
+          {/* ★追加: ゲスト用 担当職員プルダウン */}
+          {isGuest && (
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1">
+                担当職員 <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={selectedStaffId}
+                onChange={(e) => setSelectedStaffId(e.target.value)}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-blue-50"
+              >
+                <option value="">担当者を選択してください</option>
+                {staffList.map((staff) => (
+                  <option key={staff.id} value={staff.id}>
+                    {staff.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* 日付 */}
           <div>
             <label className="block text-sm font-bold text-gray-700 mb-1">日付 <span className="text-red-500">*</span></label>
@@ -310,8 +376,12 @@ export default function RegisterAbsencePage() {
             >
               {isSubmitting ? '登録中...' : '登録する'}
             </button>
+            
+            {/* ゲストかどうかで注釈を出し分ける */}
             <p className="text-xs text-gray-400 mt-2">
-              ※登録者（{currentUser?.displayName || 'あなた'}）が担当者として記録されます
+              {isGuest 
+                ? '※ゲストアカウントで操作中のため、担当者の選択が必須です' 
+                : `※登録者（${currentUser?.displayName || 'あなた'}）が担当者として記録されます`}
             </p>
           </div>
         </div>

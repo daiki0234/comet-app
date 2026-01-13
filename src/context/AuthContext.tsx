@@ -5,7 +5,8 @@ import { auth, db } from '@/lib/firebase/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
-type Role = "admin" | "user";
+// ★修正: guestを追加
+type Role = "admin" | "user" | "guest";
 
 interface AuthContextType {
   currentUser: FirebaseUser | null;
@@ -13,6 +14,7 @@ interface AuthContextType {
   isLoading: boolean;
   isLoggedIn: boolean;
   isAdmin: boolean;
+  isGuest: boolean; // ★追加
   isUnauthorized: boolean;
 }
 
@@ -36,10 +38,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       if (docSnap.exists()) {
         const data = docSnap.data();
-        const roleFromDb = (data.role as Role) || 'user';
+        // DB上の値が不正でも安全にキャスト、デフォルトはuser
+        const roleFromDb = (['admin', 'user', 'guest'].includes(data.role) ? data.role : 'user') as Role;
         setCurrentRole(roleFromDb);
         setIsUnauthorized(false);
       } else {
+        // 未登録ユーザー
         setCurrentRole(null);
         setIsUnauthorized(true);
       }
@@ -67,9 +71,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const isAdmin = useMemo(() => currentRole === 'admin', [currentRole]);
+  const isGuest = useMemo(() => currentRole === 'guest', [currentRole]); // ★追加
   const isLoggedIn = useMemo(() => !!currentUser && !!currentRole, [currentUser, currentRole]);
   
-  const value = { currentUser, currentRole, isLoading, isLoggedIn, isAdmin, isUnauthorized };
+  const value = { currentUser, currentRole, isLoading, isLoggedIn, isAdmin, isGuest, isUnauthorized };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
