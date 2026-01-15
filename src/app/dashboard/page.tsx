@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
 
-// ★ PDF用ライブラリ (カレンダーページと同じ構成に変更)
+// ★ PDF用ライブラリ
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { createRoot } from 'react-dom/client';
@@ -48,7 +48,12 @@ type PreviousDayData = {
   }[];
 };
 
-// ★ 提供記録用の型定義 (カレンダーページから移植)
+type PlanAlertData = {
+  finals: { id: string; userName: string; date: string }[];
+  drafts: { id: string; userName: string; date: string }[];
+};
+
+// ★ 提供記録用の型定義
 type PseudoRecord = { userName: string; date: string; usageStatus: '放課後' | '休校日' | '欠席'; notes?: string; };
 type SheetRecord = React.ComponentProps<typeof ServiceRecordSheet>['record'];
 type SheetRecordNonNull = NonNullable<SheetRecord>;
@@ -71,19 +76,16 @@ const chunkArray = (array: string[], size: number) => {
   return chunked;
 };
 
-// 2桁埋め
 const pad2 = (n: number) => n.toString().padStart(2, "0");
-// YYYY-MM-DD形式への変換
 const toDateStr = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
-
-// --- コンポーネント: アラートパネル ---
+// --- コンポーネント: アラートパネル (欠席・記録漏れ) ---
 const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean }) => {
-  if (loading) return <div className="bg-gray-100 h-24 rounded-xl animate-pulse mb-6" />;
+  if (loading) return <div className="bg-gray-100 h-24 rounded-xl animate-pulse" />;
 
   if (alerts.length === 0) {
     return (
-      <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded-r-xl shadow-sm flex items-center mb-6">
+      <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded-r-xl shadow-sm flex items-center">
         <div className="p-2 bg-green-100 rounded-full mr-3">
           <svg className="w-6 h-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -91,14 +93,14 @@ const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean
         </div>
         <div>
           <h3 className="text-green-800 font-bold">状況は正常です</h3>
-          <p className="text-green-600 text-sm">欠席が4回に達した利用者はいません。</p>
+          <p className="text-green-600 text-sm">欠席が4回に達した利用者や記録漏れはありません。</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl shadow-sm mb-6">
+    <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl shadow-sm">
       <div className="flex items-center mb-3">
         <div className="p-2 bg-red-100 rounded-full mr-3">
           <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -129,6 +131,67 @@ const AlertPanel = ({ alerts, loading }: { alerts: AlertItem[], loading: boolean
   );
 };
 
+// --- コンポーネント: 支援計画アラートパネル ---
+const SupportPlanAlertPanel = ({ alerts }: { alerts: PlanAlertData }) => {
+  const hasFinals = alerts.finals.length > 0;
+  const hasDrafts = alerts.drafts.length > 0;
+
+  if (!hasFinals && !hasDrafts) return null;
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-gray-500 text-xs font-bold uppercase tracking-wider flex items-center gap-2 mb-2">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+        支援計画アラート
+      </h3>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* 原案アラート (左) */}
+        {hasDrafts && (
+          <div className={`${!hasFinals ? 'md:col-span-2' : ''} bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r-lg shadow-sm flex items-start`}>
+            <div className="flex-shrink-0">
+              <svg className="h-5 w-5 text-yellow-500" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <div className="ml-3 w-full">
+              <h3 className="text-sm font-bold text-yellow-800">
+                【原案】の作成時期に該当する利用者が{alerts.drafts.length}名います
+              </h3>
+              <div className="mt-2">
+                <Link href="/support/plans" className="text-xs bg-white border border-yellow-300 text-yellow-800 px-3 py-1 rounded hover:bg-yellow-100 transition-colors inline-block">
+                  一覧を確認する
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 本番アラート (右) */}
+        {hasFinals && (
+          <div className={`${!hasDrafts ? 'md:col-span-2' : ''} bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm flex items-start`}>
+            <div className="flex-shrink-0">
+              <svg className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <div className="ml-3 w-full">
+              <h3 className="text-sm font-bold text-red-800">
+                【本番】の計画作成時期に該当する利用者が{alerts.finals.length}名います
+              </h3>
+              <div className="mt-2">
+                <Link href="/support/plans" className="text-xs bg-white border border-red-300 text-red-800 px-3 py-1 rounded hover:bg-red-100 transition-colors inline-block">
+                  一覧を確認する
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // --- コンポーネント: 本日の状況 ---
 const TodayPanel = ({ summary, onPrint }: { summary: TodaySummary, onPrint: () => void }) => {
   return (
@@ -139,10 +202,9 @@ const TodayPanel = ({ summary, onPrint }: { summary: TodaySummary, onPrint: () =
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <p className="text-3xl font-extrabold text-gray-800">{summary.date}</p>
-            {/* PDF作成ボタン */}
             <button 
               onClick={onPrint}
-              title="サービス提供記録PDFを作成 (カレンダーと同じ形式)"
+              title="サービス提供記録PDFを作成"
               className="bg-gray-100 hover:bg-gray-200 text-gray-600 p-2 rounded-full transition-colors"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -285,13 +347,15 @@ export default function DashboardPage() {
   const { currentUser } = useAuth();
   const [loading, setLoading] = useState(true);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [planAlerts, setPlanAlerts] = useState<PlanAlertData>({ finals: [], drafts: [] });
   const [todaySummary, setTodaySummary] = useState<TodaySummary>({
     date: '', dateObj: new Date(), weather: '-', userCount: 0, scheduledUserNames: [], googleEvents: []
   });
   const [prevDayData, setPrevDayData] = useState<PreviousDayData | null>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
+    // 1. メインの業務データ取得（並列処理で高速化）
+    const fetchMainData = async () => {
       setLoading(true);
       try {
         const now = new Date();
@@ -303,10 +367,22 @@ export default function DashboardPage() {
         const dStr = String(todayJst.getDate()).padStart(2, '0');
         const todayStr = `${y}-${mStr}-${dStr}`;
 
+        // 並列実行するPromises
+        const [absSnap, recordSnap, eventSnap, prevDateSnap, plansSnap] = await Promise.all([
+          // 欠席アラート
+          getDocs(query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('usageStatus', '==', '欠席'))),
+          // 記録漏れアラート
+          getDocs(query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('date', '<', todayStr))),
+          // 今日のイベント
+          getDocs(query(collection(db, 'events'), where('dateKeyJst', '==', todayStr))),
+          // 前回の日付
+          getDocs(query(collection(db, 'attendanceRecords'), where('date', '<', todayStr), orderBy('date', 'desc'), limit(1))),
+          // 支援計画アラート用（全件）
+          getDocs(query(collection(db, 'supportPlans'), orderBy('creationDate', 'desc')))
+        ]);
+
+        // --- A. 欠席・記録漏れアラート処理 ---
         const alertList: AlertItem[] = [];
-        
-        const absQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('usageStatus', '==', '欠席'));
-        const absSnap = await getDocs(absQuery);
         const counts: Record<string, { name: string; count: number }> = {};
         absSnap.forEach(doc => {
           const d = doc.data();
@@ -318,24 +394,17 @@ export default function DashboardPage() {
             alertList.push({ id: `abs-${uid}`, type: 'ABSENCE_LIMIT', message: `${data.name} さんの欠席が4回に達しました`, detail: `${data.count}回`, link: '/absence-management' });
           }
         });
-
-        const recordQuery = query(collection(db, 'attendanceRecords'), where('month', '==', currentMonth), where('date', '<', todayStr));
-        const recordSnap = await getDocs(recordQuery);
         recordSnap.forEach(doc => {
           const d = doc.data();
-          if (d.usageStatus !== '欠席') {
-            if (!d.arrivalTime || !d.departureTime) {
-              alertList.push({ id: `miss-${doc.id}`, type: 'MISSING_RECORD', message: `${d.date} ${d.userName} さんの記録漏れ`, detail: !d.arrivalTime ? '来所時間なし' : '退所時間なし', link: '/attendance' });
-            }
+          if (d.usageStatus !== '欠席' && (!d.arrivalTime || !d.departureTime)) {
+            alertList.push({ id: `miss-${doc.id}`, type: 'MISSING_RECORD', message: `${d.date} ${d.userName} さんの記録漏れ`, detail: !d.arrivalTime ? '来所時間なし' : '退所時間なし', link: '/attendance' });
           }
         });
         setAlerts(alertList);
 
-        const eventQuery = query(collection(db, 'events'), where('dateKeyJst', '==', todayStr));
-        const eventSnap = await getDocs(eventQuery);
+        // --- B. 本日の状況（基本データ） ---
         let userCount = 0;
         const scheduledUsersMap: Record<string, string> = {}; 
-        
         eventSnap.forEach(doc => {
           const d = doc.data();
           if (d.type === '放課後' || d.type === '休校日') {
@@ -344,57 +413,29 @@ export default function DashboardPage() {
           }
         });
 
+        // ユーザー詳細は別途取得 (これは待つ必要がある)
         let scheduledUserNames: { name: string; service: string }[] = [];
         const scheduledUserIds = Object.keys(scheduledUsersMap);
-
         if (scheduledUserIds.length > 0) {
           const userChunks = chunkArray(scheduledUserIds, 10);
           const userDocsPromises = userChunks.map(ids => getDocs(query(collection(db, 'users'), where(documentId(), 'in', ids))));
           const userSnapshots = await Promise.all(userDocsPromises);
-          
           userSnapshots.forEach(snap => {
             snap.forEach(doc => { 
               const u = doc.data();
-              scheduledUserNames.push({
-                name: `${u.lastName} ${u.firstName}`,
-                service: scheduledUsersMap[doc.id]
-              });
+              scheduledUserNames.push({ name: `${u.lastName} ${u.firstName}`, service: scheduledUsersMap[doc.id] });
             });
           });
           scheduledUserNames.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
         }
-
-        let googleEvents: string[] = [];
-        try {
-          const timeMin = new Date(`${todayStr}T00:00:00`).toISOString();
-          const timeMax = new Date(`${todayStr}T23:59:59`).toISOString();
-          const calRes = await fetch(`/api/calendar?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
-          if (calRes.ok) {
-            const calData = await calRes.json();
-            if (calData.items) googleEvents = calData.items.map((item: any) => item.summary);
-          }
-        } catch (calError) { console.error("Calendar fetch error:", calError); }
-
-        let weather = '-';
-        try {
-          const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=34.6937&longitude=135.5023&daily=weather_code&timezone=Asia%2FTokyo&start_date=${todayStr}&end_date=${todayStr}`);
-          const wData = await res.json();
-          if (wData.daily && wData.daily.weather_code) {
-            const code = wData.daily.weather_code[0];
-            if (code === 0) weather = '晴'; else if (code <= 3) weather = '曇'; else if (code <= 67) weather = '雨'; else weather = 'その他';
-          }
-        } catch(e) {}
-
-        setTodaySummary({ date: `${mStr}/${dStr}`, dateObj: todayJst, weather, userCount, scheduledUserNames, googleEvents });
-
-        const prevDateQuery = query(collection(db, 'attendanceRecords'), where('date', '<', todayStr), orderBy('date', 'desc'), limit(1));
-        const prevDateSnap = await getDocs(prevDateQuery);
         
+        // とりあえず天気・Googleなしでセット
+        setTodaySummary({ date: `${mStr}/${dStr}`, dateObj: todayJst, weather: '-', userCount, scheduledUserNames, googleEvents: [] });
+
+        // --- C. 前回の実績 ---
         if (!prevDateSnap.empty) {
           const targetDateStr = prevDateSnap.docs[0].data().date;
-          const prevRecordsQuery = query(collection(db, 'attendanceRecords'), where('date', '==', targetDateStr));
-          const prevRecordsSnap = await getDocs(prevRecordsQuery);
-          
+          const prevRecordsSnap = await getDocs(query(collection(db, 'attendanceRecords'), where('date', '==', targetDateStr)));
           const recordsData = prevRecordsSnap.docs.map(doc => {
             const d = doc.data();
             return {
@@ -406,48 +447,107 @@ export default function DashboardPage() {
             };
           });
           recordsData.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
-
           let cHoukago = 0, cKyuko = 0, cAbsence = 0;
-          recordsData.forEach(r => {
-            if (r.status === '放課後') cHoukago++; else if (r.status === '休校日') cKyuko++; else if (r.status === '欠席') cAbsence++;
-          });
-
+          recordsData.forEach(r => { if (r.status === '放課後') cHoukago++; else if (r.status === '休校日') cKyuko++; else if (r.status === '欠席') cAbsence++; });
           setPrevDayData({ dateStr: targetDateStr, countHoukago: cHoukago, countKyuko: cKyuko, countAbsence: cAbsence, records: recordsData });
         } else {
           setPrevDayData(null);
         }
 
-      } catch (e) { console.error("Dashboard Fetch error:", e); } finally { setLoading(false); }
+        // --- D. 支援計画アラート ---
+        const finals: any[] = [];
+        const drafts: any[] = [];
+        
+        const isPlanAlertTarget = (dateVal: any) => {
+          if (!dateVal) return false;
+          const d = typeof dateVal === 'string' ? new Date(dateVal) : (dateVal.toDate ? dateVal.toDate() : new Date(dateVal));
+          if (isNaN(d.getTime())) return false;
+          const createdYear = d.getFullYear();
+          const createdMonth = d.getMonth();
+          let targetMonth = createdMonth + 6;
+          let targetYear = createdYear;
+          if (targetMonth > 11) {
+            targetYear += Math.floor(targetMonth / 12);
+            targetMonth = targetMonth % 12;
+          }
+          return todayJst.getFullYear() === targetYear && todayJst.getMonth() === targetMonth;
+        };
+
+        plansSnap.forEach(doc => {
+          const data = doc.data();
+          if (isPlanAlertTarget(data.creationDate)) {
+            const item = { id: doc.id, userName: data.userName, date: data.creationDate };
+            if (data.status === '本番') finals.push(item);
+            else if (data.status === '原案') drafts.push(item);
+          }
+        });
+        setPlanAlerts({ finals, drafts });
+
+      } catch (e) {
+        console.error("Fetch Error:", e);
+      } finally {
+        setLoading(false); // ★ここで画面表示！
+      }
     };
 
-    fetchData();
+    // 2. 外部API (天気・Google) は後から非同期で取得してState更新
+    const fetchExternalData = async () => {
+      const now = new Date();
+      const todayJst = new Date(now.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
+      const y = todayJst.getFullYear();
+      const mStr = String(todayJst.getMonth() + 1).padStart(2, '0');
+      const dStr = String(todayJst.getDate()).padStart(2, '0');
+      const todayStr = `${y}-${mStr}-${dStr}`;
+
+      // Google Calendar
+      try {
+        const timeMin = new Date(`${todayStr}T00:00:00`).toISOString();
+        const timeMax = new Date(`${todayStr}T23:59:59`).toISOString();
+        const calRes = await fetch(`/api/calendar?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
+        if (calRes.ok) {
+          const calData = await calRes.json();
+          if (calData.items) {
+            const events = calData.items.map((item: any) => item.summary);
+            setTodaySummary(prev => ({ ...prev, googleEvents: events }));
+          }
+        }
+      } catch (e) {}
+
+      // Weather
+      try {
+        const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=34.6937&longitude=135.5023&daily=weather_code&timezone=Asia%2FTokyo&start_date=${todayStr}&end_date=${todayStr}`);
+        const wData = await res.json();
+        if (wData.daily && wData.daily.weather_code) {
+          const code = wData.daily.weather_code[0];
+          let weather = 'その他';
+          if (code === 0) weather = '晴'; else if (code <= 3) weather = '曇'; else if (code <= 67) weather = '雨';
+          setTodaySummary(prev => ({ ...prev, weather }));
+        }
+      } catch(e) {}
+    };
+
+    fetchMainData();
+    fetchExternalData(); // 画面表示をブロックせずに実行
   }, []);
 
-  // --- ★★★ カレンダーページと同じPDF生成ロジック ★★★ ---
   const handlePrintDailySheet = async () => {
     if (todaySummary.scheduledUserNames.length === 0) return toast.error("本日の利用予定者がいません");
     const loadingToast = toast.loading("PDFを生成中...");
 
     try {
-      // 1. データ準備
       const recordsToPrint: (PseudoRecord | null)[] = todaySummary.scheduledUserNames.map(u => ({
         userName: u.name,
-        date: toDateStr(todaySummary.dateObj), // YYYY-MM-DD
+        date: toDateStr(todaySummary.dateObj),
         usageStatus: u.service as '放課後' | '休校日', 
         notes: '',
       }));
 
-      if (recordsToPrint.length % 2 !== 0) {
-        recordsToPrint.push(null);
-      }
+      if (recordsToPrint.length % 2 !== 0) recordsToPrint.push(null);
 
-      // 2. PDF初期化 (B5 縦)
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'b5' });
 
-      // 3. ペアごとにループして描画
       for (let i = 0; i < recordsToPrint.length; i += 2) {
         const pair = [recordsToPrint[i], recordsToPrint[i+1]];
-        
         const tempDiv = document.createElement('div');
         tempDiv.style.width = '182mm';
         tempDiv.style.position = 'absolute';
@@ -455,8 +555,6 @@ export default function DashboardPage() {
         document.body.appendChild(tempDiv);
 
         const root = createRoot(tempDiv);
-        
-        // Reactコンポーネント (ServiceRecordSheet) をレンダリング
         await new Promise<void>((resolve) => {
           root.render(
             <React.StrictMode>
@@ -464,10 +562,9 @@ export default function DashboardPage() {
               <ServiceRecordSheet record={toSheetRecord(pair[1])} />
             </React.StrictMode>
           );
-          setTimeout(resolve, 500); // レンダリング待ち
+          setTimeout(resolve, 500);
         });
 
-        // 画像化してPDFへ
         const canvas = await html2canvas(tempDiv, { scale: 3 });
         const imgData = canvas.toDataURL('image/png');
 
@@ -489,18 +586,38 @@ export default function DashboardPage() {
 
   return (
     <AppLayout pageTitle="ダッシュボード">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <AlertPanel alerts={alerts} loading={loading} />
+      <div className="max-w-6xl mx-auto space-y-12">
+        
+        {/* --- デイリーインフォーメーション --- */}
+        <section>
+          <h2 className="text-xl font-bold text-gray-700 mb-6 flex items-center gap-2 border-b pb-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            デイリーインフォーメーション
+          </h2>
+          
+          <div className="space-y-6">
+            <AlertPanel alerts={alerts} loading={loading} />
+            
+            {(planAlerts.finals.length > 0 || planAlerts.drafts.length > 0) && (
+               <SupportPlanAlertPanel alerts={planAlerts} />
+            )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-          <TodayPanel summary={todaySummary} onPrint={handlePrintDailySheet} />
-          <PreviousDayPanel data={prevDayData} loading={loading} />
-        </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+              <TodayPanel summary={todaySummary} onPrint={handlePrintDailySheet} />
+              <PreviousDayPanel data={prevDayData} loading={loading} />
+            </div>
+          </div>
+        </section>
 
-        <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
-          <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-4">業務メニュー</h3>
+        {/* --- 業務メニュー --- */}
+        <section className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200">
+          <h3 className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-6 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            業務メニュー
+          </h3>
           <QuickAccess />
-        </div>
+        </section>
+
       </div>
     </AppLayout>
   );

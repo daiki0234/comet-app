@@ -33,8 +33,6 @@ export default function PlanListPage() {
     try {
       setLoading(true);
       
-      // 1. 計画書一覧を全件取得 (creationDateの降順)
-      // ※Firestoreのインデックス警告が出る場合はコンソールのリンクから作成してください
       const q = query(collection(db, 'supportPlans'), orderBy('creationDate', 'desc'));
       const snapshot = await getDocs(q);
       
@@ -45,7 +43,6 @@ export default function PlanListPage() {
 
       setPlans(plansData);
 
-      // 2. マスタデータ取得
       const [usersSnap, adminsSnap] = await Promise.all([
         getDocs(collection(db, 'users')),
         getDocs(collection(db, 'admins'))
@@ -82,11 +79,8 @@ export default function PlanListPage() {
   };
 
   // --- フィルタリング & ページネーション処理 ---
-  
-  // 1. 検索フィルタ結果
   const filteredPlans = useMemo(() => {
     let res = plans;
-
     if (searchQuery.trim()) {
       const lowerQ = searchQuery.toLowerCase().trim();
       res = res.filter(p => 
@@ -97,27 +91,133 @@ export default function PlanListPage() {
     return res;
   }, [plans, searchQuery]);
 
-  // 2. ページネーション切り出し
   const paginatedPlans = useMemo(() => {
     const start = (currentPage - 1) * ITEMS_PER_PAGE;
     return filteredPlans.slice(start, start + ITEMS_PER_PAGE);
   }, [filteredPlans, currentPage]);
 
-  // 3. 総ページ数計算
   const totalPages = Math.ceil(filteredPlans.length / ITEMS_PER_PAGE);
 
-  // 検索操作時のページリセット
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(e.target.value);
-    setCurrentPage(1); // 検索したら1ページ目に戻す
+    setCurrentPage(1);
   };
+
+  // --- アラート判定ロジック ---
+  const isAlertTarget = (dateVal: any) => {
+    if (!dateVal) return false;
+    const d = typeof dateVal === 'string' ? new Date(dateVal) : (dateVal.toDate ? dateVal.toDate() : new Date(dateVal));
+    if (isNaN(d.getTime())) return false;
+
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth();
+
+    const createdYear = d.getFullYear();
+    const createdMonth = d.getMonth();
+
+    let targetMonth = createdMonth + 6;
+    let targetYear = createdYear;
+    
+    if (targetMonth > 11) {
+      targetYear += Math.floor(targetMonth / 12);
+      targetMonth = targetMonth % 12;
+    }
+
+    return currentYear === targetYear && currentMonth === targetMonth;
+  };
+
+  const alertPlans = useMemo(() => {
+    const finals: SupportPlan[] = [];
+    const drafts: SupportPlan[] = [];
+
+    plans.forEach(plan => {
+      if (isAlertTarget(plan.creationDate)) {
+        if (plan.status === '本番') {
+          finals.push(plan);
+        } else if (plan.status === '原案') {
+          drafts.push(plan);
+        }
+      }
+    });
+
+    return { finals, drafts };
+  }, [plans]);
+
+  const hasFinals = alertPlans.finals.length > 0;
+  const hasDrafts = alertPlans.drafts.length > 0;
 
   return (
     <AppLayout pageTitle="個別支援計画一覧">
       <div className="space-y-6">
+
+        {/* --- アラート表示エリア --- */}
+        {(hasFinals || hasDrafts) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            
+            {/* 原案プランのアラート (黄色) - 左側 */}
+            {hasDrafts && (
+              <div className={`${!hasFinals ? 'md:col-span-2' : ''} bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r-lg shadow-sm flex items-start`}>
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-yellow-500" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="ml-3 w-full">
+                  {/* ★修正箇所: 原案のメッセージ */}
+                  <h3 className="text-sm font-bold text-yellow-800">
+                    【原案】の作成時期に該当する利用者が{alertPlans.drafts.length}名います
+                  </h3>
+                  <div className="mt-2 text-sm text-yellow-700 max-h-32 overflow-y-auto">
+                    <ul className="list-disc list-inside space-y-1">
+                      {alertPlans.drafts.map(plan => (
+                        <li key={plan.id}>
+                          <span className="font-bold">{plan.userName}</span>
+                          <span className="ml-2 text-xs">
+                            (作成日: {plan.creationDate ? new Date(plan.creationDate as string).toLocaleDateString() : '-'})
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 本番プランのアラート (赤色) - 右側 */}
+            {hasFinals && (
+              <div className={`${!hasDrafts ? 'md:col-span-2' : ''} bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm flex items-start`}>
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="ml-3 w-full">
+                  {/* ★修正箇所: 本番のメッセージ */}
+                  <h3 className="text-sm font-bold text-red-800">
+                    【本番】の計画作成時期に該当する利用者が{alertPlans.finals.length}名います
+                  </h3>
+                  <div className="mt-2 text-sm text-red-700 max-h-32 overflow-y-auto">
+                    <ul className="list-disc list-inside space-y-1">
+                      {alertPlans.finals.map(plan => (
+                        <li key={plan.id}>
+                          <span className="font-bold">{plan.userName}</span> 
+                          <span className="ml-2 text-xs">
+                            (作成日: {plan.creationDate ? new Date(plan.creationDate as string).toLocaleDateString() : '-'})
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+
         {/* ヘッダーエリア: 検索窓 & 新規作成ボタン */}
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-          {/* 検索窓 */}
           <div className="relative w-full md:w-96">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
@@ -162,8 +262,11 @@ export default function PlanListPage() {
             <tbody className="bg-white divide-y divide-gray-200">
               {paginatedPlans.map((plan) => {
                 const targetUser = usersMap[plan.userId] || null;
-                // 日付表示 (YYYY-MM-DD 文字列を想定)
-                let dateStr = plan.creationDate || '-';
+                let dateStr = '-';
+                if (plan.creationDate) {
+                   const d = typeof plan.creationDate === 'string' ? new Date(plan.creationDate) : (plan.creationDate as any).toDate ? (plan.creationDate as any).toDate() : new Date(plan.creationDate);
+                   dateStr = !isNaN(d.getTime()) ? d.toLocaleDateString('ja-JP') : '-';
+                }
                 
                 return (
                   <tr key={plan.id} className="hover:bg-gray-50 transition-colors">
@@ -185,7 +288,6 @@ export default function PlanListPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <div className="flex justify-end items-center gap-3">
-                        {/* PDFボタン */}
                         {targetUser && (
                           <PlanPDFDownloadButton 
                             plan={plan} 
@@ -193,7 +295,6 @@ export default function PlanListPage() {
                             managerName={managerName} 
                           />
                         )}
-
                         <button 
                           onClick={() => plan.id && router.push(`/support/plans/${plan.id}`)}
                           className="text-blue-600 hover:text-blue-900 bg-blue-50 p-2 rounded hover:bg-blue-100 transition-colors"
@@ -226,7 +327,6 @@ export default function PlanListPage() {
              <div className="p-12 text-center text-gray-500">読み込み中...</div>
           )}
 
-          {/* ページネーション UI */}
           {!loading && totalPages > 1 && (
             <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
               <div className="flex-1 flex justify-between sm:hidden">
@@ -255,8 +355,6 @@ export default function PlanListPage() {
                     <span className="sr-only">Previous</span>
                     <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
                   </button>
-                  
-                  {/* ページ番号ボタン */}
                   {[...Array(totalPages)].map((_, i) => (
                     <button
                       key={i}
@@ -270,7 +368,6 @@ export default function PlanListPage() {
                       {i + 1}
                     </button>
                   ))}
-
                   <button
                     onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                     disabled={currentPage === totalPages}

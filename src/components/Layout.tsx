@@ -30,7 +30,6 @@ const ClipboardCheckIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="
 export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTitle: string }) {
   const pathname = usePathname();
   const router = useRouter();
-  // ★修正1: isGuest を取得
   const { currentUser, isAdmin, isGuest, isLoggedIn, isLoading } = useAuth(); 
 
   const [collapsed, setCollapsed] = useState(false);
@@ -57,8 +56,6 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
     return null;
   }
 
-  // ★修正3: メニュー定義
-  // ゲストには見せたくない項目（請求、運営、マスタなど）を !isGuest 条件で制御します
   const menuItems = [
     // 1. ダッシュボード (全員表示)
     { href: '/dashboard', label: 'ダッシュボード', icon: <HomeIcon /> },
@@ -96,15 +93,19 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
       { href: '/absence-management', label: '欠席管理', icon: <UserXIcon /> },
       { href: '/analysis', label: 'AI分析', icon: <ChartIcon /> },
       { href: '/billing', label: '請求管理', icon: <FileTextCheckIcon /> },
-      {
-        href: '/audit',
-        label: '監査管理',
-        icon: <ClipboardCheckIcon />,
-        subMenu: [
-          { href: '/audit/plans', label: '計画作成' },
-          { href: '/audit/trainings', label: '研修管理' },
-        ]
-      },
+      
+      // ★修正: 監査管理メニュー
+    {
+      href: '/audit',
+      label: '監査管理',
+      icon: <ClipboardCheckIcon />,
+      subMenu: [
+        { href: '/safety/plans', label: '安全計画' },
+        { href: '/audit/training', label: '研修管理' }, // ★統合しました
+        { href: '/audit/five-domains', label: '５領域プログラム' },
+      ]
+    },
+      
       { href: '/users', label: '利用者管理', icon: <UsersIcon /> },
       { href: '/operations', label: '運営管理', icon: <SettingsIcon /> },
       { href: '/masters', label: 'サービス情報マスタ', icon: <SettingsIcon /> },
@@ -162,7 +163,7 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
                     href={item.href}
                     className={[
                       'flex items-center gap-3 rounded-lg px-3 py-2 transition-colors whitespace-nowrap',
-                      isActive ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100',
+                      isActive ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100', // hoverテキスト色修正
                       collapsed ? 'justify-center' : ''
                     ].join(' ')}
                     title={collapsed ? item.label : undefined}
@@ -202,7 +203,6 @@ export function AppLayout({ children, pageTitle }: { children: ReactNode, pageTi
                 {currentUser?.displayName || 'ユーザー'}
               </span>
               <span className="text-xs text-gray-500">
-                {/* ★修正2: ゲスト用のラベルを追加 */}
                 {isAdmin ? '管理者' : isGuest ? 'ゲスト' : '一般'}
               </span>
             </div>

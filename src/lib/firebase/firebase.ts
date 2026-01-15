@@ -4,6 +4,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth"; // ← この行があるか確認
+import { getStorage } from "firebase/storage"; // ★追加: Storageをインポート
 
 // あなたのWebアプリのFirebase設定
 const firebaseConfig = {
@@ -19,5 +20,9 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 // 他のファイルから使えるように、データベースと認証機能をエクスポートします
-export const db = getFirestore(app);
-export const auth = getAuth(app); // ← この行が重要です！
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app); // ★追加: Storageのインスタンス化
+
+// エクスポート
+export { auth, db, storage }; // ★追加: storage をエクスポートに含める
