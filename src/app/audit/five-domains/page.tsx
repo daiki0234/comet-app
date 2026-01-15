@@ -101,9 +101,7 @@ export default function FiveDomainsPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // IDは年度とサービス種別で固定 (例: 2025_afterSchool)
       const currentYear = new Date().getFullYear(); 
-      // ※本格運用では年度選択が必要ですが、今回は今年度固定とします
       const docId = `${currentYear}_${activeTab}`;
       
       const docRef = doc(db, 'fiveDomainPlans', docId);
@@ -112,7 +110,6 @@ export default function FiveDomainsPage() {
       if (snap.exists()) {
         setPlan(snap.data() as FiveDomainPlan);
       } else {
-        // データがない場合は初期値 (サービス種別だけ合わせる)
         setPlan({ ...INITIAL_PLAN, serviceType: activeTab });
       }
     } catch (e) {
@@ -123,17 +120,14 @@ export default function FiveDomainsPage() {
     }
   };
 
-  // マスタデータの取得 (serviceMastersコレクションなどを想定)
+  // マスタデータの取得
   const fetchMasterData = async () => {
     try {
-      // ※実際のマスタ構造に合わせて調整してください。
-      // ここでは 'trainingMaster' コレクションがある、または 'serviceMasters' 内にあると仮定してダミーデータをセットするか取得します
       const snap = await getDocs(collection(db, 'trainingMaster'));
       if (!snap.empty) {
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() })) as TrainingMasterItem[];
         setMasterTrainings(data);
       } else {
-        // マスタがない場合のダミーデータ（テスト用）
         setMasterTrainings([
           { id: '1', category: '運動・感覚', theme: 'サーキットトレーニング', content: 'バランス感覚の育成' },
           { id: '2', category: '認知・行動', theme: 'ビジョントレーニング', content: '眼球運動' },
@@ -210,8 +204,6 @@ export default function FiveDomainsPage() {
   const selectMasterItem = (item: TrainingMasterItem) => {
     if (targetField) {
       updateScheduleRow(targetField.domain, targetField.index, 'theme', item.theme);
-      // 内容も自動入力したい場合はここに追加: 
-      // updateScheduleRow(targetField.domain, targetField.index, 'content', item.content || '');
       toast.success(`テーマ「${item.theme}」を反映しました`);
       setIsMasterModalOpen(false);
       setTargetField(null);
@@ -248,7 +240,6 @@ export default function FiveDomainsPage() {
           </button>
         </div>
 
-        {/* 警告メッセージ (放デイ以外を選択時など) */}
         {activeTab === 'childDev' && (
           <div className="bg-orange-50 border border-orange-200 text-orange-800 p-4 rounded-lg text-sm">
             ※現在は「放課後等デイサービス」の内容をベースにしています。児童発達支援用の様式に合わせて項目を調整する必要があります。
@@ -313,9 +304,9 @@ export default function FiveDomainsPage() {
               description="身体と認知の発達を促すトレーニング等"
               items={plan.schedules.physical}
               onAdd={() => addScheduleRow('physical')}
-              onRemove={(idx) => removeScheduleRow('physical', idx)}
-              onUpdate={(idx, field, val) => updateScheduleRow('physical', idx, field, val)}
-              onOpenMaster={(idx) => openMasterModal('physical', idx)}
+              onRemove={(idx: number) => removeScheduleRow('physical', idx)}
+              onUpdate={(idx: number, field: keyof ScheduleItem, val: string) => updateScheduleRow('physical', idx, field, val)}
+              onOpenMaster={(idx: number) => openMasterModal('physical', idx)}
             />
             
             <ScheduleSection 
@@ -323,9 +314,9 @@ export default function FiveDomainsPage() {
               description="学習・生活・社会性に関する総合的なソーシャルスキル等"
               items={plan.schedules.cognitive}
               onAdd={() => addScheduleRow('cognitive')}
-              onRemove={(idx) => removeScheduleRow('cognitive', idx)}
-              onUpdate={(idx, field, val) => updateScheduleRow('cognitive', idx, field, val)}
-              onOpenMaster={(idx) => openMasterModal('cognitive', idx)}
+              onRemove={(idx: number) => removeScheduleRow('cognitive', idx)}
+              onUpdate={(idx: number, field: keyof ScheduleItem, val: string) => updateScheduleRow('cognitive', idx, field, val)}
+              onOpenMaster={(idx: number) => openMasterModal('cognitive', idx)}
             />
 
             <ScheduleSection 
@@ -333,9 +324,9 @@ export default function FiveDomainsPage() {
               description="身辺自立、家事、地域生活など"
               items={plan.schedules.health}
               onAdd={() => addScheduleRow('health')}
-              onRemove={(idx) => removeScheduleRow('health', idx)}
-              onUpdate={(idx, field, val) => updateScheduleRow('health', idx, field, val)}
-              onOpenMaster={(idx) => openMasterModal('health', idx)}
+              onRemove={(idx: number) => removeScheduleRow('health', idx)}
+              onUpdate={(idx: number, field: keyof ScheduleItem, val: string) => updateScheduleRow('health', idx, field, val)}
+              onOpenMaster={(idx: number) => openMasterModal('health', idx)}
             />
 
             <ScheduleSection 
@@ -343,9 +334,9 @@ export default function FiveDomainsPage() {
               description="聞く・話す、読む・書くなど"
               items={plan.schedules.language}
               onAdd={() => addScheduleRow('language')}
-              onRemove={(idx) => removeScheduleRow('language', idx)}
-              onUpdate={(idx, field, val) => updateScheduleRow('language', idx, field, val)}
-              onOpenMaster={(idx) => openMasterModal('language', idx)}
+              onRemove={(idx: number) => removeScheduleRow('language', idx)}
+              onUpdate={(idx: number, field: keyof ScheduleItem, val: string) => updateScheduleRow('language', idx, field, val)}
+              onOpenMaster={(idx: number) => openMasterModal('language', idx)}
             />
 
             <ScheduleSection 
@@ -353,9 +344,9 @@ export default function FiveDomainsPage() {
               description="対人関係、集団参加など"
               items={plan.schedules.social}
               onAdd={() => addScheduleRow('social')}
-              onRemove={(idx) => removeScheduleRow('social', idx)}
-              onUpdate={(idx, field, val) => updateScheduleRow('social', idx, field, val)}
-              onOpenMaster={(idx) => openMasterModal('social', idx)}
+              onRemove={(idx: number) => removeScheduleRow('social', idx)}
+              onUpdate={(idx: number, field: keyof ScheduleItem, val: string) => updateScheduleRow('social', idx, field, val)}
+              onOpenMaster={(idx: number) => openMasterModal('social', idx)}
             />
           </div>
         </div>
@@ -429,7 +420,19 @@ function TextAreaField({ label, value, onChange }: { label: string, value: strin
   );
 }
 
-function ScheduleSection({ title, description, items, onAdd, onRemove, onUpdate, onOpenMaster }: any) {
+// プロップスの型定義を追加
+type ScheduleSectionProps = {
+  title: string;
+  description: string;
+  items: ScheduleItem[];
+  onAdd: () => void;
+  onRemove: (index: number) => void;
+  onUpdate: (index: number, field: keyof ScheduleItem, value: string) => void;
+  onOpenMaster: (index: number) => void;
+};
+
+// anyから具体的な型に変更
+function ScheduleSection({ title, description, items, onAdd, onRemove, onUpdate, onOpenMaster }: ScheduleSectionProps) {
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden mb-6">
       <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center">
