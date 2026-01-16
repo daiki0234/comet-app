@@ -4,7 +4,7 @@ import React from 'react';
 import { Document as PdfDocument, Page, Text, View, StyleSheet, Font } from '@react-pdf/renderer';
 import { SupportPlan } from '@/types/plan';
 
-// ユーザーデータの型定義（PDF生成用に柔軟に定義）
+// ユーザーデータの型定義
 interface UserDataPDF {
   lastName: string;
   firstName: string;
@@ -18,13 +18,19 @@ interface UserDataPDF {
 }
 
 // フォント登録
+// ★修正: hyphenationCallback で単語分割（ハイフン挿入）を無効化
 Font.register({
   family: 'NotoSansJP',
   fonts: [
     { src: '/fonts/NotoSansJP-Regular.ttf' },
-    // { src: '/fonts/NotoSansJP-Bold.ttf', fontWeight: 'bold' } 
-  ]
-});
+  ],
+  // 文字列を1文字ずつに分解して返すことで、
+  // ライブラリ側に「ここは改行して良い」と伝えるが、「単語の途中ではない」と認識させる
+  hyphenationCallback: (word: string) => {
+    // 1文字ずつ分割。ハイフンは挿入されない。
+    return Array.from(word);
+  },
+} as any);
 
 // スタイル定義
 const styles = StyleSheet.create({
@@ -71,13 +77,20 @@ const styles = StyleSheet.create({
   
   // --- セル装飾 ---
   cell: {
-    borderRightWidth: 1,
-    borderRightColor: '#000',
+    borderLeftWidth: 1,
+    borderLeftColor: '#000',
     borderBottomWidth: 1,
     borderBottomColor: '#000',
     padding: 2, 
     justifyContent: 'center',
+    flexWrap: 'wrap', // 折り返しを有効化
+    overflow: 'hidden',
   },
+  cellRight: {
+    borderRightWidth: 1,
+    borderRightColor: '#000',
+  },
+  
   th: {
     backgroundColor: '#f0f0f0',
     textAlign: 'center',
@@ -86,14 +99,9 @@ const styles = StyleSheet.create({
   },
   td: {
     textAlign: 'left',
-    fontSize: 7.5, 
+    fontSize: 7.5,
   },
 
-  // 枠線調整
-  cellFirst: {
-    borderLeftWidth: 1,
-    borderLeftColor: '#000',
-  },
   rowFirst: {
     borderTopWidth: 1,
     borderTopColor: '#000',
@@ -101,12 +109,12 @@ const styles = StyleSheet.create({
 
   // --- 幅設定 (合計100%) ---
   colNo: { width: '3%' },       
-  colPriority: { width: '3%' }, 
   colGoal: { width: '20%' },    
   colContent: { width: '36%' }, 
-  colPeriod: { width: '8%' },   
-  colStaff: { width: '18%' },   
-  colRemarks: { width: '12%' },
+  colPeriod: { width: '6%' },
+  colStaff: { width: '10%' },
+  colRemarks: { width: '22%' },
+  colPriority: { width: '3%' },
   
   // 時間割用
   wSchedule: { width: '14.28%' },
@@ -128,6 +136,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     minHeight: 30,
   },
+  textLong: {
+    fontSize: 8,
+  }
 });
 
 interface Props {
@@ -155,7 +166,6 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
   const recipientNo = user?.jukyushaNo || user?.recipientNumber || '';
   const gender = user?.gender === 'male' ? '男性' : user?.gender === 'female' ? '女性' : user?.gender || '';
 
-  // 児発管の名前を優先、なければ作成者
   const signerName = managerName || plan.author;
 
   return (
@@ -176,16 +186,16 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
         {/* 基本情報 */}
         <View style={styles.table}>
           <View style={[styles.tableRow, styles.rowFirst]}>
-            <View style={[styles.cell, styles.th, styles.cellFirst, { width: '10%' }]}><Text>ふりがな</Text></View>
+            <View style={[styles.cell, styles.th, { width: '10%' }]}><Text>ふりがな</Text></View>
             <View style={[styles.cell, styles.td, { width: '20%' }]}><Text>{kana}</Text></View>
             <View style={[styles.cell, styles.th, { width: '10%' }]}><Text>生年月日</Text></View>
             <View style={[styles.cell, styles.td, { width: '20%' }]}><Text>{birthDay}</Text></View>
             <View style={[styles.cell, styles.th, { width: '10%' }]}><Text>受給者証番号</Text></View>
-            <View style={[styles.cell, styles.td, { width: '30%' }]}><Text>{recipientNo}</Text></View>
+            <View style={[styles.cell, styles.td, styles.cellRight, { width: '30%' }]}><Text>{recipientNo}</Text></View>
           </View>
           
           <View style={styles.tableRow}>
-            <View style={[styles.cell, styles.th, styles.cellFirst, { width: '10%' }]}><Text>お名前</Text></View>
+            <View style={[styles.cell, styles.th, { width: '10%' }]}><Text>お名前</Text></View>
             <View style={[styles.cell, styles.td, { width: '20%' }]}><Text>{user?.lastName} {user?.firstName}</Text></View>
             
             <View style={[styles.cell, styles.th, { width: '10%' }]}><Text>性別</Text></View>
@@ -195,7 +205,7 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
             <View style={[styles.cell, styles.td, { width: '10%' }]}><Text>無し</Text></View>
             
             <View style={[styles.cell, styles.th, { width: '15%' }]}><Text>食事提供の有無</Text></View>
-            <View style={[styles.cell, styles.td, { width: '10%' }]}><Text>無し</Text></View>
+            <View style={[styles.cell, styles.td, styles.cellRight, { width: '10%' }]}><Text>無し</Text></View>
           </View>
         </View>
 
@@ -203,42 +213,51 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <View style={{ width: '50%' }}>
             <Text style={styles.sectionTitle}>利用児及び家族の生活に対する意向</Text>
-            <View style={[styles.box, { height: 50 }]}><Text>{plan.userRequest}</Text></View>
+            <View style={[styles.box, { minHeight: 50, height: 'auto' }]}>
+              <Text style={styles.textLong}>{plan.userRequest}</Text>
+            </View>
             <Text style={styles.sectionTitle}>長期目標</Text>
-            <View style={[styles.box, { height: 35 }]}><Text>{plan.longTermGoal}</Text></View>
+            <View style={[styles.box, { minHeight: 35, height: 'auto' }]}>
+              <Text style={styles.textLong}>{plan.longTermGoal}</Text>
+            </View>
           </View>
 
           <View style={{ width: '50%' }}>
             <Text style={styles.sectionTitle}>総合的な支援の方針</Text>
-            <View style={[styles.box, { height: 50 }]}><Text>{plan.policy}</Text></View>
+            <View style={[styles.box, { minHeight: 50, height: 'auto' }]}>
+              <Text style={styles.textLong}>{plan.policy}</Text>
+            </View>
             <Text style={styles.sectionTitle}>短期目標</Text>
-            <View style={[styles.box, { height: 35 }]}><Text>{plan.shortTermGoal}</Text></View>
+            <View style={[styles.box, { minHeight: 35, height: 'auto' }]}>
+              <Text style={styles.textLong}>{plan.shortTermGoal}</Text>
+            </View>
           </View>
         </View>
 
         {/* 支援目標テーブル */}
         <Text style={{ fontSize: 9, marginTop: 8, marginBottom: 2 }}>支援目標及び具体的な支援内容等</Text>
         <View style={styles.table}>
+          {/* ヘッダー行 */}
           <View style={[styles.tableRow, styles.rowFirst]} fixed>
-            <View style={[styles.cell, styles.th, styles.cellFirst, styles.colNo]}><Text>No</Text></View>
-            <View style={[styles.cell, styles.th, styles.colPriority]}><Text>優先</Text></View>
+            <View style={[styles.cell, styles.th, styles.colNo]}><Text>No</Text></View>
             <View style={[styles.cell, styles.th, styles.colGoal]}><Text>支援目標</Text></View>
             <View style={[styles.cell, styles.th, styles.colContent]}><Text>支援内容</Text></View>
             <View style={[styles.cell, styles.th, styles.colPeriod]}><Text>達成時期</Text></View>
             <View style={[styles.cell, styles.th, styles.colStaff]}><Text>担当者</Text></View>
             <View style={[styles.cell, styles.th, styles.colRemarks]}><Text>留意事項</Text></View>
+            <View style={[styles.cell, styles.th, styles.cellRight, styles.colPriority]}><Text>優先</Text></View>
           </View>
 
+          {/* データ行 */}
           {plan.supportTargets.map((target, index) => (
             <View key={index} style={styles.tableRow} wrap={false}>
-              <View style={[styles.cell, styles.td, styles.cellFirst, styles.colNo, { textAlign: 'center' }]}>
+              <View style={[styles.cell, styles.td, styles.colNo, { textAlign: 'center' }]}>
                 <Text>{target.displayOrder}</Text>
               </View>
-              <View style={[styles.cell, styles.td, styles.colPriority, { textAlign: 'center' }]}>
-                <Text>{target.priority}</Text>
-              </View>
               
-              <View style={[styles.cell, styles.td, styles.colGoal]}><Text>{target.goal}</Text></View>
+              <View style={[styles.cell, styles.td, styles.colGoal]}>
+                <Text>{target.goal}</Text>
+              </View>
               
               <View style={[styles.cell, styles.td, styles.colContent]}>
                 <Text>
@@ -259,7 +278,13 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
                 <Text style={{ fontSize: 6.5 }}>{target.staff}</Text>
               </View>
               
-              <View style={[styles.cell, styles.td, styles.colRemarks]}><Text>{target.remarks}</Text></View>
+              <View style={[styles.cell, styles.td, styles.colRemarks]}>
+                <Text>{target.remarks}</Text>
+              </View>
+
+              <View style={[styles.cell, styles.td, styles.cellRight, styles.colPriority, { textAlign: 'center' }]}>
+                <Text>{target.priority}</Text>
+              </View>
             </View>
           ))}
         </View>
@@ -283,8 +308,7 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
             <View style={styles.table}>
               <View style={[styles.tableRow, styles.rowFirst]}>
                 {DAYS.map((d, i) => (
-                  // ★修正: undefined ではなく空オブジェクト {} を返す
-                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 0 ? styles.cellFirst : {}]}>
+                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 6 ? styles.cellRight : {}]}>
                     <Text style={{ fontSize: 6 }}>{d}</Text>
                   </View>
                 ))}
@@ -293,8 +317,7 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
                 {DAYS.map((_, i) => {
                   const slot = plan.schedules?.standard?.[i] || { start: '', end: '', duration: '' };
                   return (
-                    // ★修正: undefined ではなく空オブジェクト {} を返す
-                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 0 ? styles.cellFirst : {}, { height: 35 }]}>
+                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 6 ? styles.cellRight : {}, { height: 35 }]}>
                       <Text style={{ fontSize: 7, textAlign: 'center' }}>{slot.start ? `${slot.start}~${slot.end}` : ''}</Text>
                       <Text style={{ fontSize: 8, marginTop: 2, textAlign: 'center' }}>{slot.duration ? `${slot.duration}h` : ''}</Text>
                     </View>
@@ -314,8 +337,7 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
             <View style={styles.table}>
               <View style={[styles.tableRow, styles.rowFirst]}>
                 {DAYS.map((d, i) => (
-                  // ★修正: undefined ではなく空オブジェクト {} を返す
-                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 0 ? styles.cellFirst : {}]}>
+                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 6 ? styles.cellRight : {}]}>
                      <Text style={{ fontSize: 6 }}>{d}</Text>
                   </View>
                 ))}
@@ -324,8 +346,7 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
                 {DAYS.map((_, i) => {
                   const slot = plan.schedules?.pre?.[i] || { start: '', end: '', duration: '' };
                   return (
-                    // ★修正: undefined ではなく空オブジェクト {} を返す
-                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 0 ? styles.cellFirst : {}, { height: 35 }]}>
+                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 6 ? styles.cellRight : {}, { height: 35 }]}>
                       <Text style={{ fontSize: 7, textAlign: 'center' }}>{slot.start ? `${slot.start}~${slot.end}` : ''}</Text>
                       <Text style={{ fontSize: 8, marginTop: 2, textAlign: 'center' }}>{slot.duration ? `${slot.duration}h` : ''}</Text>
                     </View>
@@ -345,8 +366,7 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
             <View style={styles.table}>
               <View style={[styles.tableRow, styles.rowFirst]}>
                 {DAYS.map((d, i) => (
-                  // ★修正: undefined ではなく空オブジェクト {} を返す
-                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 0 ? styles.cellFirst : {}]}>
+                  <View key={d} style={[styles.cell, styles.th, styles.wSchedule, i === 6 ? styles.cellRight : {}]}>
                      <Text style={{ fontSize: 6 }}>{d}</Text>
                   </View>
                 ))}
@@ -355,8 +375,7 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
                 {DAYS.map((_, i) => {
                   const slot = plan.schedules?.post?.[i] || { start: '', end: '', duration: '' };
                   return (
-                    // ★修正: undefined ではなく空オブジェクト {} を返す
-                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 0 ? styles.cellFirst : {}, { height: 35 }]}>
+                    <View key={i} style={[styles.cell, styles.td, styles.wSchedule, i === 6 ? styles.cellRight : {}, { height: 35 }]}>
                       <Text style={{ fontSize: 7, textAlign: 'center' }}>{slot.start ? `${slot.start}~${slot.end}` : ''}</Text>
                       <Text style={{ fontSize: 8, marginTop: 2, textAlign: 'center' }}>{slot.duration ? `${slot.duration}h` : ''}</Text>
                     </View>
