@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Edge Runtimeの設定
 export const runtime = 'edge';
@@ -8,13 +7,9 @@ export async function POST(request: Request) {
   try {
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
-    if (apiKey) {
-      console.log(`[API] API Key loaded: ${apiKey.substring(0, 4)}...`);
-    } else {
+    if (!apiKey) {
       console.error("[API] Error: API Key is missing.");
-      return NextResponse.json({ 
-        overall: 'APIキーが設定されていません。' 
-      }, { status: 500 });
+      return NextResponse.json({ overall: 'APIキーが設定されていません。' }, { status: 500 });
     }
 
     const { context, type } = await request.json();
@@ -22,12 +17,6 @@ export async function POST(request: Request) {
     if (!context) {
       return NextResponse.json({ overall: '分析するデータがありません。' }, { status: 400 });
     }
-
-    const genAI = new GoogleGenerativeAI(apiKey);
-    
-    // ★修正: モデル名を 'gemini-1.5-flash-latest' に変更
-    // エラーが続く場合は、ライブラリが古い可能性があるため 'gemini-pro' (1.0) を試してください
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
     // 今日の日付
     const now = new Date();
@@ -78,12 +67,37 @@ export async function POST(request: Request) {
       `;
     }
 
-    console.log(`[API] Requesting Gemini (1.5-flash-latest)...`);
-    
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    
+    console.log(`[API] Requesting Gemini via fetch (gemini-1.5-flash)...`);
+
+    // ★ SDKを使わず、直接Fetchで叩く
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: prompt }]
+          }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 2000,
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("[API] Gemini API Error:", JSON.stringify(errorData, null, 2));
+      throw new Error(`Gemini API Error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
     // JSONパース処理
     let jsonStr = text.replace(/^```json\s*/, '').replace(/\s*```$/, '');
     
