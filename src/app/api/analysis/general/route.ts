@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     // ★修正ポイント: モデル名をバージョン付きの正式名称に変更
     // エイリアス(gemini-1.5-flash)が認識されない場合、バージョン(-001)を付けると通ることが多いです
     // それでもダメな場合は、'gemini-pro' (1.0) を試してみてください。
-    const MODEL_NAME = 'gemini-1.5-flash-001'; 
+    const MODEL_NAME = 'gemini-pro'; 
     
     console.log(`[API] Requesting Gemini via fetch (${MODEL_NAME})...`);
 
