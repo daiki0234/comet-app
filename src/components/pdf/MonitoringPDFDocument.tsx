@@ -5,28 +5,30 @@ import { Document as PdfDocument, Page, Text, View, StyleSheet, Font } from '@re
 import { MonitoringRecord } from '@/types/monitoring';
 import { SupportPlan } from '@/types/plan';
 
-// ★追加: ユーザーデータの型定義（揺らぎ吸収用）
+// ユーザーデータの型定義
 interface UserDataMonitoring {
   lastName: string;
   firstName: string;
   lastKana?: string; 
   firstKana?: string;
-  lastNameKana?: string; // 互換性
-  firstNameKana?: string; // 互換性
+  lastNameKana?: string; 
+  firstNameKana?: string; 
   birthday?: string;
-  birthDate?: string; // 互換性
+  birthDate?: string; 
   gender?: string;
   [key: string]: any;
 }
 
-// フォント登録
+// フォント登録 (ハイフン除去設定付き)
 Font.register({
   family: 'NotoSansJP',
   fonts: [
     { src: '/fonts/NotoSansJP-Regular.ttf' },
-    // { src: '/fonts/NotoSansJP-Bold.ttf', fontWeight: 'bold' }
-  ]
-});
+  ],
+  hyphenationCallback: (word: string) => {
+    return Array.from(word);
+  },
+} as any);
 
 const styles = StyleSheet.create({
   page: { padding: 20, fontFamily: 'NotoSansJP', fontSize: 9, lineHeight: 1.4 },
@@ -40,7 +42,14 @@ const styles = StyleSheet.create({
   // 共通テーブルスタイル
   table: { width: '100%', marginBottom: 10, borderLeftWidth: 1, borderTopWidth: 1, borderColor: '#000' },
   row: { flexDirection: 'row' },
-  cell: { borderRightWidth: 1, borderBottomWidth: 1, borderColor: '#000', padding: 3, fontSize: 8 },
+  cell: { 
+    borderRightWidth: 1, 
+    borderBottomWidth: 1, 
+    borderColor: '#000', 
+    padding: 3, 
+    fontSize: 8,
+    ...({ wordBreak: 'break-all' } as any),
+  },
   headerCell: { backgroundColor: '#f0f0f0', textAlign: 'center', fontWeight: 'bold' },
   
   // セクション
@@ -51,37 +60,82 @@ const styles = StyleSheet.create({
   targetBox: { borderWidth: 1, borderColor: '#000', marginBottom: 8 },
   targetRow: { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#ccc' },
   targetLabel: { width: '15%', backgroundColor: '#f0f0f0', padding: 4, justifyContent: 'center', fontSize: 8, borderRightWidth: 1, borderColor: '#ccc' },
-  targetContent: { width: '85%', padding: 4, fontSize: 9 },
+  targetContent: { 
+    width: '85%', 
+    padding: 4, 
+    fontSize: 9,
+    ...({ wordBreak: 'break-all' } as any),
+  },
   
-  // フッター
-  footer: { position: 'absolute', bottom: 20, left: 20, right: 20, textAlign: 'right', fontSize: 8, color: '#666' },
+  // --- フッター・署名欄 (修正) ---
+  footerSection: { marginTop: 10 }, // 少し詰める
+  
+  // 署名エリア全体
+  signatureContainer: {
+    borderTopWidth: 1,
+    borderTopColor: '#000',
+    marginTop: 10,
+    paddingTop: 10,
+    paddingRight: 10,
+  },
+  
+  // 署名行（署名 + ハンコ）
+  signatureRow: {
+    marginTop: 15,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'flex-end', // 右寄せ
+    gap: 15, // 署名欄とハンコの間隔
+  },
+
+  // 署名の下線部分
+  signatureLine: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#000',
+    width: 250, // 署名欄の幅
+    paddingBottom: 2,
+  },
+
+  // ハンコ枠
+  stampBox: {
+    width: 45,
+    height: 45,
+    borderWidth: 1,
+    borderColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stampText: {
+    fontSize: 8,
+    color: '#ccc', // 薄い文字で「印」
+  },
+  
+  metaInfo: { textAlign: 'right', fontSize: 8, color: '#666', marginTop: 10 },
+  textLong: {
+    fontSize: 9,
+    ...({ wordBreak: 'break-all' } as any),
+  }
 });
 
 interface Props {
   monitoring: MonitoringRecord;
   plan: SupportPlan | null;
-  user: any; // ★修正: 型エラー回避のため any で受けつつ、内部で UserDataMonitoring として扱う
+  user: any; 
 }
 
 export const MonitoringPDFDocument: React.FC<Props> = ({ monitoring, plan, user }) => {
   
-  // ★データ整形ロジック
   const userData = user as UserDataMonitoring;
   
-  // ふりがな (lastKana または lastNameKana)
   const kana = `${userData?.lastKana || userData?.lastNameKana || ''} ${userData?.firstKana || userData?.firstNameKana || ''}`;
-  
-  // 誕生日 (birthday または birthDate)
   const birthDateRaw = userData?.birthday || userData?.birthDate;
-  
-  // 性別
   const genderText = userData?.gender === 'male' ? '男性' : userData?.gender === 'female' ? '女性' : userData?.gender || '';
 
   // --- ヘルパー関数: 年齢・学年計算 ---
   const getAge = (birthDate?: string) => {
     if (!birthDate) return '';
     const birth = new Date(birthDate);
-    if (isNaN(birth.getTime())) return ''; // 無効な日付
+    if (isNaN(birth.getTime())) return '';
     const today = new Date();
     let age = today.getFullYear() - birth.getFullYear();
     const m = today.getMonth() - birth.getMonth();
@@ -92,30 +146,33 @@ export const MonitoringPDFDocument: React.FC<Props> = ({ monitoring, plan, user 
   const getGrade = (birthDate?: string) => {
     if (!birthDate) return '';
     const birth = new Date(birthDate);
-    if (isNaN(birth.getTime())) return ''; // 無効な日付
-    const today = new Date();
-    const schoolYearStart = today.getMonth() < 3 ? today.getFullYear() - 1 : today.getFullYear(); // 4月始まり
+    if (isNaN(birth.getTime())) return '';
     
-    let ageAtApril1st = schoolYearStart - birth.getFullYear();
-    if (birth.getMonth() < 3 || (birth.getMonth() === 3 && birth.getDate() === 1)) {
-        ageAtApril1st++; 
+    const today = new Date();
+    const currentFiscalYear = today.getMonth() < 3 ? today.getFullYear() - 1 : today.getFullYear();
+    
+    let birthFiscalYear = birth.getFullYear();
+    if (birth.getMonth() < 2 || (birth.getMonth() === 3 && birth.getDate() <= 1)) {
+        birthFiscalYear--;
     }
 
-    if (ageAtApril1st < 6) return '未就学';
-    if (ageAtApril1st === 6) return '小学1年生';
-    if (ageAtApril1st === 7) return '小学2年生';
-    if (ageAtApril1st === 8) return '小学3年生';
-    if (ageAtApril1st === 9) return '小学4年生';
-    if (ageAtApril1st === 10) return '小学5年生';
-    if (ageAtApril1st === 11) return '小学6年生';
-    if (ageAtApril1st === 12) return '中学1年生';
-    if (ageAtApril1st === 13) return '中学2年生';
-    if (ageAtApril1st === 14) return '中学3年生';
-    if (ageAtApril1st >= 15 && ageAtApril1st <= 17) return '高校生';
+    const schoolYear = currentFiscalYear - birthFiscalYear;
+
+    if (schoolYear < 7) return '未就学';
+    if (schoolYear === 7) return '小学1年生';
+    if (schoolYear === 8) return '小学2年生';
+    if (schoolYear === 9) return '小学3年生';
+    if (schoolYear === 10) return '小学4年生';
+    if (schoolYear === 11) return '小学5年生';
+    if (schoolYear === 12) return '小学6年生';
+    if (schoolYear === 13) return '中学1年生';
+    if (schoolYear === 14) return '中学2年生';
+    if (schoolYear === 15) return '中学3年生';
+    if (schoolYear >= 16 && schoolYear <= 18) return '高校生';
+    
     return '';
   };
 
-  // 評価データの取得ヘルパー
   const getEval = (targetId: string) => {
     const found = monitoring.targetEvaluations?.find(t => t.targetId === targetId);
     return found ? found.evaluation : '';
@@ -127,8 +184,8 @@ export const MonitoringPDFDocument: React.FC<Props> = ({ monitoring, plan, user 
         
         {/* ヘッダー */}
         <View style={styles.header}>
-          <Text style={styles.title}>モニタリング</Text>
-          <Text style={styles.subTitle}>振り返り</Text>
+          <Text style={styles.title}>モニタリング報告書</Text>
+          <Text style={styles.subTitle}>振り返り期間</Text>
           <Text style={styles.period}>
             {monitoring.periodStart} ~ {monitoring.periodEnd}
           </Text>
@@ -136,7 +193,6 @@ export const MonitoringPDFDocument: React.FC<Props> = ({ monitoring, plan, user 
 
         {/* 利用者情報 */}
         <View style={styles.table}>
-          {/* 1行目 */}
           <View style={styles.row}>
             <View style={[styles.cell, styles.headerCell, { width: '15%' }]}><Text>ふりがな</Text></View>
             <View style={[styles.cell, { width: '35%' }]}><Text>{kana}</Text></View>
@@ -145,7 +201,6 @@ export const MonitoringPDFDocument: React.FC<Props> = ({ monitoring, plan, user 
             <View style={[styles.cell, styles.headerCell, { width: '30%' }]}><Text>学年</Text></View>
           </View>
           
-          {/* 2行目: ここに width を追加して整列させます */}
           <View style={styles.row}>
             <View style={[styles.cell, styles.headerCell, { width: '15%' }]}><Text>お名前</Text></View>
             <View style={[styles.cell, { width: '35%' }]}><Text>{monitoring.userName}</Text></View>
@@ -157,10 +212,10 @@ export const MonitoringPDFDocument: React.FC<Props> = ({ monitoring, plan, user 
 
         {/* 計画の目標 */}
         <Text style={styles.sectionTitle}>長期目標</Text>
-        <View style={styles.box}><Text>{plan?.longTermGoal}</Text></View>
+        <View style={styles.box}><Text style={styles.textLong}>{plan?.longTermGoal}</Text></View>
         
         <Text style={styles.sectionTitle}>短期目標</Text>
-        <View style={styles.box}><Text>{plan?.shortTermGoal}</Text></View>
+        <View style={styles.box}><Text style={styles.textLong}>{plan?.shortTermGoal}</Text></View>
 
         {/* 支援目標と評価 */}
         <Text style={{ fontSize: 10, marginTop: 10, marginBottom: 4, fontWeight: 'bold' }}>支援目標・内容・評価</Text>
@@ -175,21 +230,21 @@ export const MonitoringPDFDocument: React.FC<Props> = ({ monitoring, plan, user 
                   {target.supportCategories?.length > 0 ? `【${target.supportCategories.join('・')}】` : ''} 
                   {target.fiveDomains?.length > 0 ? ` [${target.fiveDomains.join('・')}]` : ''}
                 </Text>
-                <Text>{target.goal}</Text>
+                <Text style={styles.textLong}>{target.goal}</Text>
               </View>
             </View>
             {/* 行2: 内容 */}
             <View style={styles.targetRow}>
               <View style={styles.targetLabel}><Text>支援内容</Text></View>
               <View style={styles.targetContent}>
-                <Text>{target.content}</Text>
+                <Text style={styles.textLong}>{target.content}</Text>
               </View>
             </View>
             {/* 行3: 評価 */}
             <View style={[styles.targetRow, { borderBottomWidth: 0 }]}>
               <View style={[styles.targetLabel, { backgroundColor: '#fffbe6' }]}><Text>目標の評価</Text></View>
               <View style={styles.targetContent}>
-                <Text>{getEval(target.id)}</Text>
+                <Text style={styles.textLong}>{getEval(target.id)}</Text>
               </View>
             </View>
           </View>
@@ -207,21 +262,43 @@ export const MonitoringPDFDocument: React.FC<Props> = ({ monitoring, plan, user 
             <View key={num} style={styles.row}>
               <View style={[styles.cell, { width: '10%', textAlign: 'center' }]}><Text>{num}</Text></View>
               {/* @ts-ignore */}
-              <View style={[styles.cell, { width: '45%', minHeight: 30 }]}><Text>{monitoring[`initiative${num}`]}</Text></View>
+              <View style={[styles.cell, { width: '45%', minHeight: 30 }]}><Text style={styles.textLong}>{monitoring[`initiative${num}`]}</Text></View>
               {/* @ts-ignore */}
-              <View style={[styles.cell, { width: '45%', minHeight: 30 }]}><Text>{monitoring[`evaluation${num}`]}</Text></View>
+              <View style={[styles.cell, { width: '45%', minHeight: 30 }]}><Text style={styles.textLong}>{monitoring[`evaluation${num}`]}</Text></View>
             </View>
           ))}
         </View>
 
         {/* 短信 */}
         <Text style={styles.sectionTitle}>短信</Text>
-        <View style={[styles.box, { minHeight: 50 }]}><Text>{monitoring.shortMessage}</Text></View>
+        <View style={[styles.box, { minHeight: 50 }]}><Text style={styles.textLong}>{monitoring.shortMessage}</Text></View>
 
-        {/* フッター情報 */}
-        <View style={styles.footer}>
-          <Text>作成日: {monitoring.creationDate}   作成者: {monitoring.author}</Text>
-          <Text>事業所名: ハッピーテラス俊徳道教室</Text>
+        {/* フッター・押印欄 */}
+        <View style={styles.footerSection}>
+          <View style={styles.signatureContainer}>
+            <Text>上記の内容について説明を受け、同意しました。</Text>
+            
+            {/* 日付欄（全角スペースで確保） */}
+            <View style={{ marginTop: 15, alignItems: 'flex-end' }}>
+              <Text>年月日:　　　　　　年　　　　　月　　　　　日</Text>
+            </View>
+
+            {/* 署名欄 + ハンコ枠 */}
+            <View style={styles.signatureRow}>
+              <View style={styles.signatureLine}>
+                <Text>保護者署名:</Text>
+              </View>
+              <View style={styles.stampBox}>
+                <Text style={styles.stampText}>印</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* メタ情報 */}
+          <View style={styles.metaInfo}>
+            <Text>作成日: {monitoring.creationDate}   作成者: {monitoring.author}</Text>
+            <Text>事業所名: ハッピーテラス俊徳道教室</Text>
+          </View>
         </View>
 
       </Page>
