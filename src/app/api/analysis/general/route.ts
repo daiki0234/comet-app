@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// ★重要: Edge Runtime を使用することで、タイムアウト制限を回避・緩和します
+// ★ Edge Runtime (Vercelのタイムアウト対策)
 export const runtime = 'edge';
 
 export async function POST(request: Request) {
@@ -24,10 +24,10 @@ export async function POST(request: Request) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    // モデル名は gemini-1.5-flash または gemini-pro を推奨しますが、
-    // 2.0-flash が使える環境であればそのままでOKです。
-    // もしエラーが出る場合は 'gemini-1.5-flash' に変更してください。
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    
+    // ★修正: モデル名を確実なエイリアスに変更
+    // エラーが出る場合は 'gemini-pro' (旧安定版) を試してください
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
 
     // 今日の日付
     const now = new Date();
@@ -85,7 +85,6 @@ export async function POST(request: Request) {
     const text = response.text();
     
     // JSONパース処理
-    // 余計な文字（```json や ```）を削除
     let jsonStr = text.replace(/^```json\s*/, '').replace(/\s*```$/, '');
     
     try {
@@ -94,10 +93,9 @@ export async function POST(request: Request) {
       return NextResponse.json(jsonResponse);
     } catch (e) {
       console.error("JSON Parse Error:", jsonStr);
-      // パース失敗時でも、なんとかテキストを表示させるためのフォールバック
       return NextResponse.json({ 
         overall: "分析データの形式エラーが発生しましたが、AIからの応答はありました。",
-        trends: text, // 生のテキストを入れておく
+        trends: text, 
         dayOfWeek: "",
         ranking: "",
         absences: "",
