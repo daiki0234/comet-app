@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     
     // ★修正: モデル名を 'gemini-1.5-flash-latest' に変更
     // エラーが続く場合は、ライブラリが古い可能性があるため 'gemini-pro' (1.0) を試してください
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
     // 今日の日付
     const now = new Date();
