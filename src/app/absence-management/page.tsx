@@ -3,17 +3,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
-import { collection, getDocs, query, where, doc, updateDoc, orderBy, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, updateDoc, orderBy, Timestamp, limit } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
 
-
-// ★ PDF生成用ライブラリ
+// PDF生成用ライブラリ
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import html2canvas from 'html2canvas';
-import { createRoot } from 'react-dom/client';
-import { AbsenceReportSheet } from '@/components/AbsenceReportSheet'; // ★ 作成したコンポーネント
 
 // --- 型定義 ---
 type AbsenceRecord = {
@@ -32,6 +28,7 @@ type AbsenceRecord = {
 // ヘルパー関数
 const pad2 = (n: number) => n.toString().padStart(2, "0");
 const formatDateJP = (dateStr: string) => {
+  if (!dateStr) return '';
   const d = new Date(dateStr);
   const week = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
   return `${d.getMonth() + 1}月${d.getDate()}日(${week})`;
@@ -51,7 +48,7 @@ const determineAbsenceCategory = (text: string): string => {
   }
 };
 
-// ★★★ 追加: ブラウザでArrayBufferをBase64に変換する関数 ★★★
+// ブラウザでArrayBufferをBase64に変換する関数
 function arrayBufferToBase64(buffer: ArrayBuffer) {
   let binary = '';
   const bytes = new Uint8Array(buffer);
@@ -94,13 +91,41 @@ export default function AbsenceManagementPage() {
       );
 
       const snapshot = await getDocs(q);
-      const data = snapshot.docs.map(doc => {
-        const d = doc.data();
+
+      // 1件ずつ非同期で次回予定を補完するために Promise.all を使用
+      const data = await Promise.all(snapshot.docs.map(async (docSnap) => {
+        const d = docSnap.data();
         const notes = d.notes || '';
         const reason = d.reason || determineAbsenceCategory(notes);
+        
+        let nextVisit = d.nextVisit || '';
+
+        // ★ 次回予定が空の場合、自動取得を試みる
+        if (!nextVisit) {
+          try {
+            // この利用者の、欠席日(d.date)より未来の予定を取得
+            const nextVisitQuery = query(
+              collection(db, 'attendanceRecords'),
+              where('userId', '==', d.userId),
+              where('date', '>', d.date),
+              orderBy('date', 'asc'),
+              limit(1)
+            );
+            const nextSnap = await getDocs(nextVisitQuery);
+            if (!nextSnap.empty) {
+              const nextRec = nextSnap.docs[0].data();
+              // ★修正: フォーマットを「次回M月D日利用予定」に変更
+              const nd = new Date(nextRec.date);
+              nextVisit = `次回${nd.getMonth() + 1}月${nd.getDate()}日利用予定`;
+            }
+          } catch (err) {
+            console.error("次回予定の取得に失敗:", err);
+            // インデックス未作成エラー等の場合は空のまま続行
+          }
+        }
 
         return {
-          id: doc.id,
+          id: docSnap.id,
           date: d.date,
           userId: d.userId,
           userName: d.userName,
@@ -108,9 +133,9 @@ export default function AbsenceManagementPage() {
           notes: notes,
           aiAdvice: d.aiAdvice || '',
           staffName: d.staffName || '',
-          nextVisit: d.nextVisit || '', 
+          nextVisit: nextVisit, 
         } as AbsenceRecord;
-      });
+      }));
 
       setRecords(data);
     } catch (error) {
@@ -177,8 +202,6 @@ export default function AbsenceManagementPage() {
     }
   };
 
-  
-
   // --- 一括AI作成機能 (月単位・不足情報補完) ---
   const handleBatchGenerate = async () => {
     if (!confirm(`${currentYear}年${currentMonth}月 の欠席データに対して、\nAI相談・担当者・次回予定を一括作成しますか？\n(空欄の項目のみ補完されます)`)) return;
@@ -205,20 +228,19 @@ export default function AbsenceManagementPage() {
   };
 
   const cleanNoteText = (text: string) => {
-  if (!text) return '';
-  return text
-    .replace(/^欠席[（(]\d+[）)]\s*[｜\|]\s*/u, '')
-    .replace(/^欠席\s*[｜\|]\s*/u, '');
-};
+    if (!text) return '';
+    return text
+      .replace(/^欠席[（(]\d+[）)]\s*[｜\|]\s*/u, '')
+      .replace(/^欠席\s*[｜\|]\s*/u, '');
+  };
 
-  // --- ★★★ PDF一括出力 (軽量版: jspdf-autotable使用) ★★★ ---
+  // --- PDF一括出力 ---
   const handlePrintMonthlyReport = async () => {
     if (records.length === 0) return toast.error("出力するデータがありません");
 
     const loadingToast = toast.loading("PDFを生成中...");
 
     try {
-      // 1. 日付ごとにデータをグループ化
       const groupedByDate: { [date: string]: AbsenceRecord[] } = {};
       records.forEach(r => {
         if (!groupedByDate[r.date]) groupedByDate[r.date] = [];
@@ -227,10 +249,8 @@ export default function AbsenceManagementPage() {
 
       const dates = Object.keys(groupedByDate).sort();
       
-      // 2. PDF初期化 (A4 縦向き)
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
-// ★ フォント読み込みロジックの修正 ★
       try {
         const fontUrl = '/fonts/NotoSansJP-Regular.ttf';
         const fontRes = await fetch(fontUrl);
@@ -239,22 +259,15 @@ export default function AbsenceManagementPage() {
         const fontBuffer = await fontRes.arrayBuffer();
         const fontBase64 = arrayBufferToBase64(fontBuffer);
 
-        // フォントをVFSに追加
         pdf.addFileToVFS('NotoSansJP.ttf', fontBase64);
-
-        // 1. 標準フォントとして登録
         pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'normal');
-        
-        // ★★★ 2. 太字(bold)としても同じファイルを登録（これでエラー回避！） ★★★
         pdf.addFont('NotoSansJP.ttf', 'NotoSansJP', 'bold');
-
-        pdf.setFont('NotoSansJP'); // メインフォントに設定
+        pdf.setFont('NotoSansJP');
       } catch (err) {
         console.error("Font loading error:", err);
         toast.error("フォントの読み込みに失敗しました。", { id: loadingToast });
       }
 
-      // 3. 日付ごとにページ作成
       for (let i = 0; i < dates.length; i++) {
         const dateStr = dates[i];
         const dayRecords = groupedByDate[dateStr];
@@ -262,35 +275,29 @@ export default function AbsenceManagementPage() {
 
         if (i > 0) pdf.addPage();
 
-        // --- ヘッダー描画 ---
         pdf.setFontSize(16);
-        pdf.text('欠席時対応加算記録', 105, 20, { align: 'center' }); // 中央寄せ
+        pdf.text('欠席時対応加算記録', 105, 20, { align: 'center' });
         
         pdf.setFontSize(10);
         pdf.text(`日付：${dateJp}`, 195, 28, { align: 'right' });
 
-        // --- 押印欄 (枠線と文字を手動描画) ---
-        // 管理者枠
-        pdf.rect(150, 35, 20, 20); // x, y, w, h
+        pdf.rect(150, 35, 20, 20);
         pdf.text('管理者', 160, 40, { align: 'center' });
-        pdf.line(150, 42, 170, 42); // 横線
+        pdf.line(150, 42, 170, 42);
 
-        // 児発管枠
         pdf.rect(170, 35, 20, 20);
         pdf.text('児発管', 180, 40, { align: 'center' });
         pdf.line(170, 42, 190, 42);
 
-        // --- テーブルデータ作成 ---
         const tableBody = dayRecords.map((rec, index) => [
           index + 1,
           rec.userName,
           rec.reason,
-          cleanNoteText(rec.notes), // "欠席(n)|" 除去済み
+          cleanNoteText(rec.notes),
           rec.aiAdvice,
-          `${rec.nextVisit || '-'}\n${rec.staffName}` // 次回予定と担当者を同じセルに改行して入れる
+          `${rec.nextVisit || '-'}\n${rec.staffName}`
         ]);
 
-        // ★ autoTableを関数として実行
         autoTable(pdf, {
           startY: 60,
           head: [['No.', '利用者氏名', '欠席理由', '連絡の内容', '相談援助内容 (対応)', '次回予定 / 担当']],
@@ -322,14 +329,12 @@ export default function AbsenceManagementPage() {
           margin: { top: 20, bottom: 20, left: 15, right: 15 },
         });
 
-        // フッター
         pdf.setFontSize(8);
         pdf.setTextColor(150);
         pdf.text(`Comet System / 出力日: ${new Date().toLocaleDateString()}`, 195, 290, { align: 'right' });
-        pdf.setTextColor(0); // 色戻し
+        pdf.setTextColor(0);
       }
 
-      // 4. 保存
       pdf.save(`${currentYear}年${currentMonth}月_欠席対応記録.pdf`);
       toast.success("PDFをダウンロードしました", { id: loadingToast });
 
