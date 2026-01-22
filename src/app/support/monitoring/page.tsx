@@ -4,10 +4,20 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
-import { collection, getDocs, deleteDoc, doc, orderBy, query } from 'firebase/firestore';
+import { 
+  collection, 
+  getDocs, 
+  deleteDoc, 
+  doc, 
+  orderBy, 
+  query, 
+  QueryDocumentSnapshot, 
+  DocumentData 
+} from 'firebase/firestore';
 import { MonitoringRecord } from '@/types/monitoring';
 import toast from 'react-hot-toast';
-import MonitoringPDFDownloadButton from '@/components/pdf/MonitoringPDFDownloadButton'; // ★追加
+// ★修正: 波括弧 { } を追加して名前付きインポートにする
+import { MonitoringPDFDownloadButton } from '@/components/pdf/MonitoringPDFDownloadButton';
 
 export default function MonitoringListPage() {
   const router = useRouter();
@@ -20,13 +30,14 @@ export default function MonitoringListPage() {
       setLoading(true);
       const q = query(collection(db, 'monitoringRecords'), orderBy('creationDate', 'desc'));
       const snapshot = await getDocs(q);
-      const data = snapshot.docs.map(doc => ({
+      
+      const data = snapshot.docs.map((doc: QueryDocumentSnapshot<DocumentData>) => ({
         id: doc.id,
         ...doc.data()
       })) as MonitoringRecord[];
       
       setRecords(data);
-    } catch (error) {
+    } catch (error: any) {
       console.error("取得エラー:", error);
       toast.error("データの取得に失敗しました");
     } finally {
@@ -45,7 +56,7 @@ export default function MonitoringListPage() {
       await deleteDoc(doc(db, 'monitoringRecords', id));
       toast.success('削除しました');
       fetchRecords();
-    } catch (error) {
+    } catch (error: any) {
       console.error("削除エラー:", error);
       toast.error('削除に失敗しました');
     }
@@ -89,7 +100,7 @@ export default function MonitoringListPage() {
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex justify-end gap-3 items-center">
                       
-                      {/* ★追加: PDFボタン (planやuserは内部で取得するので不要) */}
+                      {/* PDFボタン */}
                       <MonitoringPDFDownloadButton monitoring={rec} />
 
                       <button 
