@@ -403,8 +403,9 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
             <View style={{ width: '45%' }}>
               <Text>本計画書に基づき支援の説明を受け、内容に同意しました。</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 }}>
+                {/* ★修正: 年月日の記入スペースを全角スペースで確保 */}
                 <View style={{ width: '40%', borderBottomWidth: 1, borderColor: '#000', paddingBottom: 2 }}>
-                  <Text>年月日:      年    月    日</Text>
+                  <Text>年月日:　　　　　　年　　　　　月　　　　　日</Text>
                 </View>
                 <View style={{ width: '55%', borderBottomWidth: 1, borderColor: '#000', paddingBottom: 2 }}>
                   <Text>(保護者署名)</Text>
