@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// ★ Edge Runtime (Vercelのタイムアウト対策)
+// Edge Runtimeの設定
 export const runtime = 'edge';
 
 export async function POST(request: Request) {
@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     } else {
       console.error("[API] Error: API Key is missing.");
       return NextResponse.json({ 
-        overall: 'APIキーが設定されていません。管理者にご連絡ください。' 
+        overall: 'APIキーが設定されていません。' 
       }, { status: 500 });
     }
 
@@ -25,9 +25,9 @@ export async function POST(request: Request) {
 
     const genAI = new GoogleGenerativeAI(apiKey);
     
-    // ★修正: モデル名を確実なエイリアスに変更
-    // エラーが出る場合は 'gemini-pro' (旧安定版) を試してください
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    // ★修正: モデル名を 'gemini-1.5-flash-latest' に変更
+    // エラーが続く場合は、ライブラリが古い可能性があるため 'gemini-pro' (1.0) を試してください
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
 
     // 今日の日付
     const now = new Date();
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
       `;
     }
 
-    console.log(`[API] Requesting Gemini (Edge Runtime)...`);
+    console.log(`[API] Requesting Gemini (1.5-flash-latest)...`);
     
     const result = await model.generateContent(prompt);
     const response = await result.response;
@@ -94,8 +94,8 @@ export async function POST(request: Request) {
     } catch (e) {
       console.error("JSON Parse Error:", jsonStr);
       return NextResponse.json({ 
-        overall: "分析データの形式エラーが発生しましたが、AIからの応答はありました。",
-        trends: text, 
+        overall: "AIからの応答はありましたが、データの形式変換に失敗しました。",
+        trends: text,
         dayOfWeek: "",
         ranking: "",
         absences: "",
