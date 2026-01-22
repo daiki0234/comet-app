@@ -22,8 +22,9 @@ export async function POST(request: Request) {
     const now = new Date();
     const todayStr = now.toLocaleDateString('ja-JP'); 
 
-    // ★修正: 診断リストにあった軽量モデルを使用
-    const MODEL_NAME = 'gemini-2.0-flash-lite';
+    // ★修正: あなたのモデル一覧リストに確実に存在していた名前を使用
+    // これ実体は Gemini 1.5 Flash なので、無料枠が使えるはずです
+    const MODEL_NAME = 'gemini-flash-latest';
     
     console.log(`[API] Requesting Gemini via fetch (${MODEL_NAME})...`);
 
@@ -96,13 +97,12 @@ export async function POST(request: Request) {
       const errorData = await response.json();
       console.error("[API] Gemini API Error:", JSON.stringify(errorData, null, 2));
       
-      // エラー詳細
       const status = errorData.error?.status || response.statusText;
       const msg = errorData.error?.message || "Unknown Error";
       
-      // 429 Quota Exceeded の場合
+      // 429の場合のメッセージ
       if (response.status === 429) {
-         throw new Error(`AIの利用上限(Quota)を超えました。しばらく待つか、課金設定を確認してください。`);
+         throw new Error(`AIの利用上限(Quota)を超えました(Limit: 0)。このAPIキーでは無料枠が使えない可能性があります。`);
       }
       throw new Error(`Gemini API Error (${status}): ${msg}`);
     }
