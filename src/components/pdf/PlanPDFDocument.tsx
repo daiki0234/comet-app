@@ -274,9 +274,10 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
                 <Text>{target.achievementPeriod === 'その他' ? target.achievementPeriodOther : target.achievementPeriod}</Text>
               </View>
               
+              {/* 変更後: replaceでスペースを改行コードに置換 */}
               <View style={[styles.cell, styles.td, styles.colStaff]}>
                 <Text style={{ fontSize: 6.5, ...({ wordBreak: 'break-all' } as any) }}>
-                  {target.staff}
+                  {(target.staff || '').replace(/[ 　]+/g, '\n')}
                 </Text>
               </View>
               
