@@ -7,6 +7,7 @@ import { db } from '@/lib/firebase/firebase';
 import { collection, getDocs, deleteDoc, doc, orderBy, query } from 'firebase/firestore';
 import { MonitoringRecord } from '@/types/monitoring';
 import toast from 'react-hot-toast';
+import MonitoringPDFDownloadButton from '@/components/pdf/MonitoringPDFDownloadButton'; // ★追加
 
 export default function MonitoringListPage() {
   const router = useRouter();
@@ -86,7 +87,11 @@ export default function MonitoringListPage() {
                     {rec.author}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <div className="flex justify-end gap-3">
+                    <div className="flex justify-end gap-3 items-center">
+                      
+                      {/* ★追加: PDFボタン (planやuserは内部で取得するので不要) */}
+                      <MonitoringPDFDownloadButton monitoring={rec} />
+
                       <button 
                         onClick={() => rec.id && router.push(`/support/monitoring/${rec.id}`)}
                         className="text-blue-600 hover:text-blue-900 bg-blue-50 p-2 rounded hover:bg-blue-100 transition-colors"

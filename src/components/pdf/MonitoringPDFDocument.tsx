@@ -268,12 +268,12 @@ export const MonitoringPDFDocument: React.FC<Props> = ({ monitoring, plan, user 
         {/* フッター・押印欄 */}
         <View style={styles.footerSection}>
           <View style={styles.signatureContainer}>
-            <Text>上記の内容について説明を受け、同意しました。</Text>
+            {/* <Text>上記の内容について説明を受け、同意しました。</Text> */}
             
             {/* 日付欄 */}
-            <View style={{ marginTop: 15, alignItems: 'flex-end' }}>
+            {/* <View style={{ marginTop: 15, alignItems: 'flex-end' }}>
               <Text>年月日:　　　　　　年　　　　　月　　　　　日</Text>
-            </View>
+            </View> */}
 
             {/* 署名欄 + ハンコ枠2つ */}
             <View style={styles.signatureRow}>
