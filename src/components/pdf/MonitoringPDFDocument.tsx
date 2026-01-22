@@ -68,7 +68,7 @@ const styles = StyleSheet.create({
   },
   
   // --- フッター・署名欄 (修正) ---
-  footerSection: { marginTop: 10 }, // 少し詰める
+  footerSection: { marginTop: 10 },
   
   // 署名エリア全体
   signatureContainer: {
@@ -79,21 +79,13 @@ const styles = StyleSheet.create({
     paddingRight: 10,
   },
   
-  // 署名行（署名 + ハンコ）
+  // 署名行（テキスト + ハンコ x2）
   signatureRow: {
     marginTop: 15,
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'flex-end', // 下揃え
     justifyContent: 'flex-end', // 右寄せ
-    gap: 15, // 署名欄とハンコの間隔
-  },
-
-  // 署名の下線部分
-  signatureLine: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#000',
-    width: 250, // 署名欄の幅
-    paddingBottom: 2,
+    gap: 10, // 要素間の隙間
   },
 
   // ハンコ枠
@@ -278,16 +270,19 @@ export const MonitoringPDFDocument: React.FC<Props> = ({ monitoring, plan, user 
           <View style={styles.signatureContainer}>
             <Text>上記の内容について説明を受け、同意しました。</Text>
             
-            {/* 日付欄（全角スペースで確保） */}
+            {/* 日付欄 */}
             <View style={{ marginTop: 15, alignItems: 'flex-end' }}>
               <Text>年月日:　　　　　　年　　　　　月　　　　　日</Text>
             </View>
 
-            {/* 署名欄 + ハンコ枠 */}
+            {/* 署名欄 + ハンコ枠2つ */}
             <View style={styles.signatureRow}>
-              <View style={styles.signatureLine}>
-                <Text>保護者署名:</Text>
+              {/* <Text style={{ marginBottom: 5 }}>保護者署名:</Text> */}
+              
+              <View style={styles.stampBox}>
+                <Text style={styles.stampText}>印</Text>
               </View>
+              
               <View style={styles.stampBox}>
                 <Text style={styles.stampText}>印</Text>
               </View>
