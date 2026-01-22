@@ -242,7 +242,7 @@ export default function EditCaseMeetingPage({ params }: { params: { id: string }
                         value={row.content}
                         onChange={(e) => updateRow(index, 'content', e.target.value)}
                         placeholder="内容を入力してください"
-                        className="w-full border p-2 rounded text-sm h-24 focus:ring-2 focus:ring-blue-200 outline-none resize-none"
+                        className="w-full border p-2 rounded text-sm h-24 focus:ring-2 focus:ring-blue-200 outline-none resize-y"
                       />
                     </td>
                     <td className="p-3 align-top text-center">
