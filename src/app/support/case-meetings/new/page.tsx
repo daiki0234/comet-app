@@ -8,7 +8,7 @@ import { collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore
 import toast from 'react-hot-toast';
 import { UserData } from '@/types/billing';
 import { CaseMeeting, CaseMeetingDetail } from '@/types/caseMeeting';
-import { CaseMeetingPDFDownloadButton } from '@/components/pdf/CaseMeetingPDFDownloadButton'; // ★追加
+import { CaseMeetingPDFDownloadButton } from '@/components/pdf/CaseMeetingPDFDownloadButton';
 
 // 職員データの型
 interface StaffData {
@@ -119,12 +119,12 @@ export default function NewCaseMeetingPage() {
     }
   };
 
-  // ★PDF用データ生成
+  // PDF用データ生成
   const meetingDataForPDF: CaseMeeting = {
     date,
     staffIds: selectedStaffIds,
     staffNames: staffList.filter(s => selectedStaffIds.includes(s.id)).map(s => s.name),
-    details: rows.filter(r => r.userId && r.content) // 空行は除外してプレビュー
+    details: rows.filter(r => r.userId && r.content)
   };
 
   return (
@@ -222,11 +222,12 @@ export default function NewCaseMeetingPage() {
                       </div>
                     </td>
                     <td className="p-3 align-top">
+                      {/* ★修正箇所: resize-none を resize-y に変更 */}
                       <textarea
                         value={row.content}
                         onChange={(e) => updateRow(index, 'content', e.target.value)}
                         placeholder="内容を入力してください"
-                        className="w-full border p-2 rounded text-sm h-24 focus:ring-2 focus:ring-blue-200 outline-none resize-none"
+                        className="w-full border p-2 rounded text-sm h-24 focus:ring-2 focus:ring-blue-200 outline-none resize-y"
                       />
                     </td>
                     <td className="p-3 align-top text-center">
@@ -249,7 +250,6 @@ export default function NewCaseMeetingPage() {
 
         <div className="fixed bottom-0 left-0 w-full bg-white border-t p-4 flex justify-end gap-4 z-20 shadow-lg">
            
-           {/* ★追加: PDFボタン */}
            <CaseMeetingPDFDownloadButton meeting={meetingDataForPDF} />
 
            <button type="button" onClick={() => router.back()} className="px-6 py-2 bg-gray-100 rounded hover:bg-gray-200 font-bold text-gray-600">キャンセル</button>
