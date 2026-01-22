@@ -95,7 +95,7 @@ export async function POST(request: Request) {
         }
 
         const prompt = `
-[役割] あなたは児童発達支援の専門スタッフです。
+[役割] あなたは児童発達支援・放課後等デイサービスの専門スタッフです。
 ${promptInputPart}
 [厳格な指示]
 1. 上記の「入力」は欠席連絡（および過去の経緯）です。この内容から本人の状況や心理を分析してください。
@@ -135,9 +135,10 @@ ${promptInputPart}
         await docSnap.ref.update(updates);
         processedCount++;
         
-        // AIを使った場合のみ、レート制限回避のために休憩する
+        // ★修正: Vercelのタイムアウトを防ぐため、待機時間を短くする（または削除）
+        // 3000msだと3件でタイムアウトするため、500ms程度にするか、削除してください。
         if (aiCalled) {
-          await sleep(3000); 
+          await sleep(500); // 0.5秒に変更
         }
       }
     }
