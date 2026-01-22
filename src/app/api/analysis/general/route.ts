@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-export const dynamic = 'force-dynamic';
+// ★重要: Edge Runtime を使用することで、タイムアウト制限を回避・緩和します
+export const runtime = 'edge';
 
 export async function POST(request: Request) {
   try {
@@ -11,19 +12,24 @@ export async function POST(request: Request) {
       console.log(`[API] API Key loaded: ${apiKey.substring(0, 4)}...`);
     } else {
       console.error("[API] Error: API Key is missing.");
-      return NextResponse.json({ comment: 'APIキーが設定されていません。' }, { status: 500 });
+      return NextResponse.json({ 
+        overall: 'APIキーが設定されていません。管理者にご連絡ください。' 
+      }, { status: 500 });
     }
 
     const { context, type } = await request.json();
     
     if (!context) {
-      return NextResponse.json({ comment: '分析するデータがありません。' }, { status: 400 });
+      return NextResponse.json({ overall: '分析するデータがありません。' }, { status: 400 });
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    // モデル名は gemini-1.5-flash または gemini-pro を推奨しますが、
+    // 2.0-flash が使える環境であればそのままでOKです。
+    // もしエラーが出る場合は 'gemini-1.5-flash' に変更してください。
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-    // 今日の日付を取得してAIに伝える
+    // 今日の日付
     const now = new Date();
     const todayStr = now.toLocaleDateString('ja-JP'); 
 
@@ -72,13 +78,14 @@ export async function POST(request: Request) {
       `;
     }
 
-    console.log(`[API] Requesting Gemini (gemini-1.5-flash)...`);
+    console.log(`[API] Requesting Gemini (Edge Runtime)...`);
     
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
     
     // JSONパース処理
+    // 余計な文字（```json や ```）を削除
     let jsonStr = text.replace(/^```json\s*/, '').replace(/\s*```$/, '');
     
     try {
@@ -87,9 +94,10 @@ export async function POST(request: Request) {
       return NextResponse.json(jsonResponse);
     } catch (e) {
       console.error("JSON Parse Error:", jsonStr);
+      // パース失敗時でも、なんとかテキストを表示させるためのフォールバック
       return NextResponse.json({ 
-        overall: "分析データの生成に失敗しました（形式エラー）。",
-        trends: "再読み込みしてください。",
+        overall: "分析データの形式エラーが発生しましたが、AIからの応答はありました。",
+        trends: text, // 生のテキストを入れておく
         dayOfWeek: "",
         ranking: "",
         absences: "",
@@ -100,8 +108,8 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error('[API] Analysis Error Detail:', error);
     return NextResponse.json({ 
-      comment: 'AI分析中にエラーが発生しました。時間を置いて再度お試しください。',
-      debug: error.message 
+      overall: 'AI分析中にエラーが発生しました。',
+      trends: error.message || 'Unknown Error',
     }, { status: 500 });
   }
 }
