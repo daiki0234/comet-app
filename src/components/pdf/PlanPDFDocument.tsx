@@ -275,7 +275,9 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
               </View>
               
               <View style={[styles.cell, styles.td, styles.colStaff]}>
-                <Text style={{ fontSize: 6.5 }}>{target.staff}</Text>
+                <Text style={{ fontSize: 6.5, ...({ wordBreak: 'break-all' } as any) }}>
+                  {target.staff}
+                </Text>
               </View>
               
               <View style={[styles.cell, styles.td, styles.colRemarks]}>
