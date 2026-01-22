@@ -22,6 +22,13 @@ export async function POST(request: Request) {
     const now = new Date();
     const todayStr = now.toLocaleDateString('ja-JP'); 
 
+    // ★修正ポイント: モデル名をバージョン付きの正式名称に変更
+    // エイリアス(gemini-1.5-flash)が認識されない場合、バージョン(-001)を付けると通ることが多いです
+    // それでもダメな場合は、'gemini-pro' (1.0) を試してみてください。
+    const MODEL_NAME = 'gemini-1.5-flash-001'; 
+    
+    console.log(`[API] Requesting Gemini via fetch (${MODEL_NAME})...`);
+
     let prompt = '';
 
     if (type === 'summary') {
@@ -67,11 +74,9 @@ export async function POST(request: Request) {
       `;
     }
 
-    console.log(`[API] Requesting Gemini via fetch (gemini-1.5-flash)...`);
-
-    // ★ SDKを使わず、直接Fetchで叩く
+    // APIリクエスト
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: {
@@ -92,6 +97,11 @@ export async function POST(request: Request) {
     if (!response.ok) {
       const errorData = await response.json();
       console.error("[API] Gemini API Error:", JSON.stringify(errorData, null, 2));
+      
+      // もしまた404なら、モデルが存在しないためクライアントに通知
+      if (response.status === 404) {
+         throw new Error(`モデル(${MODEL_NAME})が見つかりません。APIキーの設定かモデル名を確認してください。`);
+      }
       throw new Error(`Gemini API Error: ${response.status} ${response.statusText}`);
     }
 
