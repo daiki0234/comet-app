@@ -30,16 +30,10 @@ async function callGemini(prompt: string) {
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "生成エラー";
 }
 
-// 次回予定の日付フォーマット (YYYY-MM-DD -> 次回M月D日利用予定)
-const formatNextVisit = (dateStr: string) => {
-  const d = new Date(dateStr);
-  return `次回${d.getMonth() + 1}月${d.getDate()}日利用予定`;
-};
-
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { year, month, staffName } = body; // staffNameを受け取る
+    const { year, month, staffName } = body; 
 
     console.log(`[Batch] Request: ${year}-${month} by ${staffName}`);
 
@@ -130,29 +124,9 @@ ${promptInputPart}
       }
 
       // ---------------------------------------------------
-      // 3. 次回予定の補完
+      // 3. 次回予定の補完 (削除済み)
       // ---------------------------------------------------
-      // 次回予定が空の場合、出欠記録から「欠席日の翌日以降」を探す
-      if (!data.nextVisit) {
-        try {
-          const nextVisitSnap = await recordsRef
-            .where('userId', '==', data.userId)
-            .where('date', '>', data.date) // 欠席日より後
-            .orderBy('date', 'asc')        // 近い順
-            .limit(1)                      // 最初の1件だけ
-            .get();
-
-          if (!nextVisitSnap.empty) {
-            const nextRecord = nextVisitSnap.docs[0].data();
-            // 見つかったらフォーマットしてセット
-            updates.nextVisit = formatNextVisit(nextRecord.date);
-          }
-        } catch (err) {
-          console.error(`[Batch] NextVisit Error for ${docSnap.id}:`, err);
-          // インデックスエラーが出る可能性があります（userId + date の複合インデックスが必要）
-          // ログにURLが出たらクリックして作成してください
-        }
-      }
+      // ※次回予定はフロントエンド側で動的に表示するため、DBには保存しない
 
       // ---------------------------------------------------
       // 更新実行

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
-import { collection, getDocs, query, where, doc, updateDoc, orderBy, Timestamp, limit } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, updateDoc, orderBy, Timestamp } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
 
@@ -75,57 +75,64 @@ export default function AbsenceManagementPage() {
   const years = useMemo(() => Array.from({ length: 5 }, (_, i) => now.getFullYear() - i), []);
   const months = useMemo(() => Array.from({ length: 12 }, (_, i) => i + 1), []);
 
-  // --- データ取得 ---
+  // --- データ取得 (リクエスト数削減・最適化版) ---
   const fetchAbsenceRecords = async () => {
     setLoading(true);
     try {
-      const startStr = `${currentYear}-${pad2(currentMonth)}-01`;
-      const endStr = `${currentYear}-${pad2(currentMonth)}-31`;
+      // 1. 取得範囲の決定: 今月1日 〜 来月末日
+      // ※次回予定を探すために、少し先まで一度に取得します
+      const startDate = new Date(currentYear, currentMonth - 1, 1);
+      const nextMonthDate = new Date(currentYear, currentMonth + 1, 0); // 来月末
 
+      const startStr = `${startDate.getFullYear()}-${pad2(startDate.getMonth() + 1)}-01`;
+      const searchEndStr = `${nextMonthDate.getFullYear()}-${pad2(nextMonthDate.getMonth() + 1)}-${pad2(nextMonthDate.getDate())}`;
+
+      // 2. 一括取得 (欠席だけでなく、次回予定の候補となる「利用日」も含めて全て取得)
+      // これによりクエリ回数を「1回」にします。
       const q = query(
         collection(db, 'attendanceRecords'),
-        where('usageStatus', '==', '欠席'),
         where('date', '>=', startStr),
-        where('date', '<=', endStr),
+        where('date', '<=', searchEndStr),
         orderBy('date', 'asc')
       );
 
       const snapshot = await getDocs(q);
+      
+      // 全データを配列化
+      const allDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
 
-      // 1件ずつ非同期で次回予定を補完するために Promise.all を使用
-      const data = await Promise.all(snapshot.docs.map(async (docSnap) => {
-        const d = docSnap.data();
+      // 3. 今月の欠席データのみを抽出
+      const thisMonthEndStr = `${currentYear}-${pad2(currentMonth)}-31`;
+      const absenceDocs = allDocs.filter(d => 
+        d.usageStatus === '欠席' && 
+        d.date <= thisMonthEndStr
+      );
+
+      // 4. メモリ上で次回予定をマッチング
+      const processedData = absenceDocs.map(d => {
         const notes = d.notes || '';
         const reason = d.reason || determineAbsenceCategory(notes);
         
         let nextVisit = d.nextVisit || '';
 
-        // ★ 次回予定が空の場合、自動取得を試みる
+        // 次回予定が空の場合、取得したデータの中から探す
         if (!nextVisit) {
-          try {
-            // この利用者の、欠席日(d.date)より未来の予定を取得
-            const nextVisitQuery = query(
-              collection(db, 'attendanceRecords'),
-              where('userId', '==', d.userId),
-              where('date', '>', d.date),
-              orderBy('date', 'asc'),
-              limit(1)
-            );
-            const nextSnap = await getDocs(nextVisitQuery);
-            if (!nextSnap.empty) {
-              const nextRec = nextSnap.docs[0].data();
-              // ★修正: フォーマットを「次回M月D日利用予定」に変更
-              const nd = new Date(nextRec.date);
-              nextVisit = `次回${nd.getMonth() + 1}月${nd.getDate()}日利用予定`;
-            }
-          } catch (err) {
-            console.error("次回予定の取得に失敗:", err);
-            // インデックス未作成エラー等の場合は空のまま続行
+          // 同じユーザーで、欠席日より未来で、かつ欠席ではない最初の日付を探す
+          const found = allDocs.find(x => 
+            x.userId === d.userId && 
+            x.date > d.date && 
+            x.usageStatus !== '欠席'
+          );
+          
+          if (found) {
+             const nd = new Date(found.date);
+             // フォーマット: 次回M月D日利用予定
+             nextVisit = `次回${nd.getMonth() + 1}月${nd.getDate()}日利用予定`;
           }
         }
 
         return {
-          id: docSnap.id,
+          id: d.id,
           date: d.date,
           userId: d.userId,
           userName: d.userName,
@@ -135,12 +142,18 @@ export default function AbsenceManagementPage() {
           staffName: d.staffName || '',
           nextVisit: nextVisit, 
         } as AbsenceRecord;
-      }));
+      });
 
-      setRecords(data);
-    } catch (error) {
+      setRecords(processedData);
+
+    } catch (error: any) {
       console.error("取得エラー:", error);
-      toast.error("欠席データの取得に失敗しました。");
+      // クオータエラーの場合の特別なメッセージ
+      if (error?.code === 'resource-exhausted' || error?.message?.includes('Quota')) {
+        toast.error("読み取り回数の上限に達しました。しばらく時間をおいてください。");
+      } else {
+        toast.error("欠席データの取得に失敗しました。");
+      }
     } finally {
       setLoading(false);
     }
@@ -202,11 +215,12 @@ export default function AbsenceManagementPage() {
     }
   };
 
-  // --- 一括AI作成機能 (月単位・不足情報補完) ---
+  // --- 一括AI作成機能 (月単位) ---
   const handleBatchGenerate = async () => {
-    if (!confirm(`${currentYear}年${currentMonth}月 の欠席データに対して、\nAI相談・担当者・次回予定を一括作成しますか？\n(空欄の項目のみ補完されます)`)) return;
+    // ★修正: メッセージから「次回予定」を削除し、実態に合わせました
+    if (!confirm(`${currentYear}年${currentMonth}月 の欠席データに対して、\nAI相談・担当者を一括作成しますか？\n(空欄の項目のみ補完されます)`)) return;
 
-    const loadingToast = toast.loading("データを処理中... (AI生成が含まれる場合は時間がかかります)");
+    const loadingToast = toast.loading("データを処理中...");
     try {
       const res = await fetch('/api/absence/batch-generate', {
         method: 'POST',
@@ -219,6 +233,7 @@ export default function AbsenceManagementPage() {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      
       toast.success(`${data.count}件のデータを更新しました`, { id: loadingToast });
       fetchAbsenceRecords();
     } catch (e: any) {
