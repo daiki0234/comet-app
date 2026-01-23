@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase/admin'; 
 
-// ★重要: firebase-adminを使っているため Edge Runtime は使えませんが、
-// APIリクエストを1回にまとめることでタイムアウトを防ぎます。
-
 const pad2 = (n: number) => n.toString().padStart(2, "0");
 
 export async function POST(request: Request) {
@@ -38,14 +35,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "対象データなし", count: 0 });
     }
 
-    // 2. 処理対象データの選定と、過去ログの取得（並列処理）
-    // AI生成が必要なデータだけをリストアップ
+    // 2. 処理対象データの選定
     const targets = snapshot.docs.filter(doc => !doc.data().aiAdvice);
-    
-    // 担当者名だけの更新が必要なデータ
     const staffOnlyTargets = snapshot.docs.filter(doc => doc.data().aiAdvice && !doc.data().staffName && staffName);
 
-    // AI対象がなければ、担当者名だけ更新して終了
     if (targets.length === 0) {
       if (staffOnlyTargets.length > 0 && staffName) {
         const batch = adminDb.batch();
@@ -58,38 +51,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "AI作成が必要なデータはありませんでした", count: 0 });
     }
 
-    // 3. AI生成用のコンテキストデータを準備（過去ログ取得も並列化）
+    // 3. AI生成用のコンテキストデータを準備
+    // ★修正: Firestoreの読み取り制限（Quota）を回避するため、
+    // 「過去の履歴(history)」を取得する処理を削除し、今回の連絡内容のみで生成させます。
     console.log(`[Batch] Preparing data for ${targets.length} records...`);
     
-    const promptData = await Promise.all(targets.map(async (docSnap) => {
+    const promptData = targets.map((docSnap) => {
       const data = docSnap.data();
-      
-      // 過去ログ取得
-      const historySnap = await recordsRef
-        .where('userId', '==', data.userId)
-        .where('usageStatus', '==', '欠席')
-        .where('date', '<', data.date)
-        .orderBy('date', 'desc')
-        .limit(3) // 過去3件あれば十分
-        .get();
-
-      const pastAdvices = historySnap.docs
-        .map(d => d.data().aiAdvice)
-        .filter(t => t)
-        .reverse()
-        .join(" / ");
-
       return {
         id: docSnap.id,
         name: data.userName,
         date: data.date,
         note: data.notes || '（連絡なし）',
-        history: pastAdvices || '（なし）'
+        // history: ... ← 削除（これがFirestoreのエラー原因）
       };
-    }));
+    });
 
     // 4. Geminiへの一括リクエスト
-    // ★モデル変更: gemini-flash-latest (1.5 Flash)
+    // モデル: gemini-flash-latest
     const MODEL_NAME = 'gemini-flash-latest';
     
     const systemPrompt = `
@@ -102,7 +81,7 @@ export async function POST(request: Request) {
     例: { "doc_id_1": "相談内容...", "doc_id_2": "相談内容..." }
 
     【作成ルール】
-    1. 保護者の連絡内容と過去の経緯から、状況や心理を分析すること。
+    1. 保護者の連絡内容から、状況や心理を分析すること。
     2. オウム返しは禁止。専門的な所見と今後の支援提案を含めること。
     3. 各150〜200文字程度の日本語で記述すること。
     4. 文末は「〜とお伝えした。」「〜とお話した。」「〜していく。」「〜を増やしていく。」のいずれかで統一すること。
@@ -125,8 +104,8 @@ export async function POST(request: Request) {
           contents: [{ parts: [{ text: systemPrompt + "\n" + userPrompt }] }],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 8192, // 長文対応
-            response_mime_type: "application/json" // JSON強制
+            maxOutputTokens: 8192,
+            response_mime_type: "application/json"
           }
         })
       }
@@ -150,16 +129,14 @@ export async function POST(request: Request) {
       throw new Error("AIの応答を解析できませんでした");
     }
 
-    // 5. Firestoreへの一括書き込み (Batch Write)
+    // 5. Firestoreへの一括書き込み
     const batch = adminDb.batch();
     let updateCount = 0;
 
-    // AI生成結果の反映
     targets.forEach(docSnap => {
       const advice = generatedMap[docSnap.id];
       if (advice) {
         const updateData: any = { aiAdvice: advice };
-        // 担当者名もついでに更新
         if (!docSnap.data().staffName && staffName) {
           updateData.staffName = staffName;
         }
@@ -168,9 +145,7 @@ export async function POST(request: Request) {
       }
     });
 
-    // 担当者名のみの更新分も反映
     staffOnlyTargets.forEach(docSnap => {
-      // 既にAI生成対象に含まれていない場合のみ
       if (!generatedMap[docSnap.id]) {
         batch.update(docSnap.ref, { staffName: staffName });
         updateCount++;
