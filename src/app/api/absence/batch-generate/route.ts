@@ -1,41 +1,20 @@
 import { NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase/admin'; 
 
+// ★重要: firebase-adminを使っているため Edge Runtime は使えませんが、
+// APIリクエストを1回にまとめることでタイムアウトを防ぎます。
+
 const pad2 = (n: number) => n.toString().padStart(2, "0");
-
-// 待機用関数
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// AI生成関数
-async function callGemini(prompt: string) {
-  const API_KEY = process.env.GEMINI_API_KEY;
-  if (!API_KEY) throw new Error("API Key not found");
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-    }
-  );
-  const data = await response.json();
-  
-  if (data.error) {
-    if (data.error.code === 429 || data.error.status === 'RESOURCE_EXHAUSTED') {
-      throw new Error("AI利用枠超過");
-    }
-    throw new Error(data.error.message || "AI生成エラー");
-  }
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || "生成エラー";
-}
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { year, month, staffName } = body; 
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
-    console.log(`[Batch] Request: ${year}-${month} by ${staffName}`);
+    if (!apiKey) {
+      return NextResponse.json({ error: "API Key not found" }, { status: 500 });
+    }
 
     if (!year || !month) {
       return NextResponse.json({ error: "year または month が不足しています" }, { status: 400 });
@@ -48,7 +27,7 @@ export async function POST(request: Request) {
 
     const recordsRef = adminDb.collection('attendanceRecords');
     
-    // その月の「欠席」データを取得
+    // 1. その月の「欠席」データを取得
     const snapshot = await recordsRef
       .where('usageStatus', '==', '欠席')
       .where('date', '>=', startStr)
@@ -59,94 +38,152 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "対象データなし", count: 0 });
     }
 
-    let processedCount = 0;
+    // 2. 処理対象データの選定と、過去ログの取得（並列処理）
+    // AI生成が必要なデータだけをリストアップ
+    const targets = snapshot.docs.filter(doc => !doc.data().aiAdvice);
+    
+    // 担当者名だけの更新が必要なデータ
+    const staffOnlyTargets = snapshot.docs.filter(doc => doc.data().aiAdvice && !doc.data().staffName && staffName);
 
-    for (const docSnap of snapshot.docs) {
-      const data = docSnap.data();
-      const updates: any = {}; // 更新する項目をここに溜める
-      let aiCalled = false;    // AIを呼んだかどうかのフラグ
-
-      // ---------------------------------------------------
-      // 1. AI相談内容の補完
-      // ---------------------------------------------------
-      if (!data.aiAdvice) {
-        console.log(`[Batch] Generating AI for ${data.userName}`);
-        
-        // 過去ログ取得
-        const historySnap = await recordsRef
-          .where('userId', '==', data.userId)
-          .where('usageStatus', '==', '欠席')
-          .where('date', '<', data.date)
-          .orderBy('date', 'desc')
-          .limit(5)
-          .get();
-
-        const pastAdvices = historySnap.docs
-          .map(d => d.data().aiAdvice)
-          .filter(t => t)
-          .reverse()
-          .join(" / ");
-
-        let promptInputPart = "";
-        if (pastAdvices.length > 0) {
-          promptInputPart = `[入力] 過去の相談内容：${pastAdvices} / 今回の連絡内容：${data.notes || ''}`;
-        } else {
-          promptInputPart = `[入力] ${data.notes || ''}`;
-        }
-
-        const prompt = `
-[役割] あなたは児童発達支援・放課後等デイサービスの専門スタッフです。
-${promptInputPart}
-[厳格な指示]
-1. 上記の「入力」は欠席連絡（および過去の経緯）です。この内容から本人の状況や心理を分析してください。
-2. 「入力」のオウム返しや単語の定義・翻訳は絶対に禁止します。
-3. 分析に基づき、「相談内容」として専門的な所見と今後の支援提案を作成してください。
-4. 回答は必ず日本語で、150文字から200文字の範囲に収めてください。
-5. 文末は「〜とお伝えした。」「〜とお話した。」「〜していく。」「〜を増やしていく。」のいずれかの形式で必ず終えてください。
-[タスク] 上記の5つの厳格な指示をすべて守り、「相談内容」を作成してください。
-        `;
-
-        try {
-          const advice = await callGemini(prompt);
-          updates.aiAdvice = advice;
-          aiCalled = true;
-        } catch (err) {
-          console.error(`[Batch] AI Error for ${docSnap.id}:`, err);
-        }
+    // AI対象がなければ、担当者名だけ更新して終了
+    if (targets.length === 0) {
+      if (staffOnlyTargets.length > 0 && staffName) {
+        const batch = adminDb.batch();
+        staffOnlyTargets.forEach(doc => {
+          batch.update(doc.ref, { staffName: staffName });
+        });
+        await batch.commit();
+        return NextResponse.json({ message: "担当者名のみ更新しました", count: staffOnlyTargets.length });
       }
-
-      // ---------------------------------------------------
-      // 2. 担当者の補完
-      // ---------------------------------------------------
-      // 担当者が空の場合、ボタンを押した人の名前を入れる
-      if (!data.staffName && staffName) {
-        updates.staffName = staffName;
-      }
-
-      // ---------------------------------------------------
-      // 3. 次回予定の補完 (削除済み)
-      // ---------------------------------------------------
-      // ※次回予定はフロントエンド側で動的に表示するため、DBには保存しない
-
-      // ---------------------------------------------------
-      // 更新実行
-      // ---------------------------------------------------
-      if (Object.keys(updates).length > 0) {
-        await docSnap.ref.update(updates);
-        processedCount++;
-        
-        // ★修正: Vercelのタイムアウトを防ぐため、待機時間を短くする（または削除）
-        // 3000msだと3件でタイムアウトするため、500ms程度にするか、削除してください。
-        if (aiCalled) {
-          await sleep(500); // 0.5秒に変更
-        }
-      }
+      return NextResponse.json({ message: "AI作成が必要なデータはありませんでした", count: 0 });
     }
 
-    return NextResponse.json({ message: "完了", count: processedCount });
+    // 3. AI生成用のコンテキストデータを準備（過去ログ取得も並列化）
+    console.log(`[Batch] Preparing data for ${targets.length} records...`);
+    
+    const promptData = await Promise.all(targets.map(async (docSnap) => {
+      const data = docSnap.data();
+      
+      // 過去ログ取得
+      const historySnap = await recordsRef
+        .where('userId', '==', data.userId)
+        .where('usageStatus', '==', '欠席')
+        .where('date', '<', data.date)
+        .orderBy('date', 'desc')
+        .limit(3) // 過去3件あれば十分
+        .get();
+
+      const pastAdvices = historySnap.docs
+        .map(d => d.data().aiAdvice)
+        .filter(t => t)
+        .reverse()
+        .join(" / ");
+
+      return {
+        id: docSnap.id,
+        name: data.userName,
+        date: data.date,
+        note: data.notes || '（連絡なし）',
+        history: pastAdvices || '（なし）'
+      };
+    }));
+
+    // 4. Geminiへの一括リクエスト
+    // ★モデル変更: gemini-flash-latest (1.5 Flash)
+    const MODEL_NAME = 'gemini-flash-latest';
+    
+    const systemPrompt = `
+    あなたは放課後等デイサービスの専門スタッフです。
+    提供された複数の欠席連絡データに対し、それぞれ適切な「相談援助内容（対応記録）」を一括で作成してください。
+
+    【出力形式】
+    JSON形式で出力してください。
+    キーを「データのID」、値を「作成した相談内容」にしてください。
+    例: { "doc_id_1": "相談内容...", "doc_id_2": "相談内容..." }
+
+    【作成ルール】
+    1. 保護者の連絡内容と過去の経緯から、状況や心理を分析すること。
+    2. オウム返しは禁止。専門的な所見と今後の支援提案を含めること。
+    3. 各150〜200文字程度の日本語で記述すること。
+    4. 文末は「〜とお伝えした。」「〜とお話した。」「〜していく。」「〜を増やしていく。」のいずれかで統一すること。
+    `;
+
+    const userPrompt = `
+    以下のデータを処理してください。
+    
+    ${JSON.stringify(promptData, null, 2)}
+    `;
+
+    console.log(`[Batch] Requesting Gemini (${MODEL_NAME}) for ${targets.length} items...`);
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: systemPrompt + "\n" + userPrompt }] }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 8192, // 長文対応
+            response_mime_type: "application/json" // JSON強制
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const err = await response.json();
+      console.error("[Batch] Gemini API Error:", err);
+      if (response.status === 429) throw new Error("AI利用枠超過(429)");
+      throw new Error(`AI API Error: ${response.status}`);
+    }
+
+    const aiRes = await response.json();
+    const rawText = aiRes.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+    
+    let generatedMap: Record<string, string> = {};
+    try {
+      generatedMap = JSON.parse(rawText);
+    } catch (e) {
+      console.error("[Batch] JSON Parse Error", rawText);
+      throw new Error("AIの応答を解析できませんでした");
+    }
+
+    // 5. Firestoreへの一括書き込み (Batch Write)
+    const batch = adminDb.batch();
+    let updateCount = 0;
+
+    // AI生成結果の反映
+    targets.forEach(docSnap => {
+      const advice = generatedMap[docSnap.id];
+      if (advice) {
+        const updateData: any = { aiAdvice: advice };
+        // 担当者名もついでに更新
+        if (!docSnap.data().staffName && staffName) {
+          updateData.staffName = staffName;
+        }
+        batch.update(docSnap.ref, updateData);
+        updateCount++;
+      }
+    });
+
+    // 担当者名のみの更新分も反映
+    staffOnlyTargets.forEach(docSnap => {
+      // 既にAI生成対象に含まれていない場合のみ
+      if (!generatedMap[docSnap.id]) {
+        batch.update(docSnap.ref, { staffName: staffName });
+        updateCount++;
+      }
+    });
+
+    await batch.commit();
+
+    console.log(`[Batch] Completed. Updated ${updateCount} records.`);
+    return NextResponse.json({ message: "完了", count: updateCount });
 
   } catch (error: any) {
     console.error("Batch Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
   }
 }

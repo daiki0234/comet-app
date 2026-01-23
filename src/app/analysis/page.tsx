@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
 import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
@@ -21,7 +21,6 @@ type AttendanceRecord = {
   reason?: string;
 };
 
-// ★ 追加: 予定データ型
 type CalendarEvent = {
   id: string;
   userId: string;
@@ -67,7 +66,6 @@ export default function AnalysisPage() {
   const [loading, setLoading] = useState(false);
   
   const [allRecords, setAllRecords] = useState<AttendanceRecord[]>([]);
-  // ★ 追加: 全予定データ
   const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]);
   
   const [users, setUsers] = useState<User[]>([]);
@@ -78,10 +76,9 @@ export default function AnalysisPage() {
     return toDateInputStr(d);
   });
   const [endDate, setEndDate] = useState(() => {
-    // デフォルトで来月末まで表示して「見込み」を見せる
     const d = new Date();
     d.setMonth(d.getMonth() + 1); 
-    d.setDate(0); // 来月末
+    d.setDate(0); 
     return toDateInputStr(d);
   });
 
@@ -91,21 +88,18 @@ export default function AnalysisPage() {
   const [aiUserData, setAiUserData] = useState<AiUserResponse | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
 
-  const hasRunSummary = useRef(false);
-  const hasRunUser = useRef(false);
+  // hasRunSummary, hasRunUser などの自動実行用フラグは削除しました
 
   // --- 初期データ取得 ---
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        // 1. ユーザー
         const userSnap = await getDocs(collection(db, 'users'));
         const userList = userSnap.docs.map(d => ({ id: d.id, ...d.data() } as User));
         userList.sort((a, b) => (a.lastName || '').localeCompare((b.lastName || ''), 'ja'));
         setUsers(userList);
 
-        // 検索範囲 (過去1年 〜 未来3ヶ月)
         const now = new Date();
         const pastDate = new Date();
         pastDate.setFullYear(now.getFullYear() - 1);
@@ -115,7 +109,6 @@ export default function AnalysisPage() {
         futureDate.setMonth(now.getMonth() + 3);
         const futureStr = toDateInputStr(futureDate);
 
-        // 2. 実績データ (attendanceRecords)
         const recQuery = query(
           collection(db, 'attendanceRecords'),
           where('date', '>=', pastStr),
@@ -125,11 +118,10 @@ export default function AnalysisPage() {
         const recs = recSnap.docs.map(d => ({ id: d.id, ...d.data() } as AttendanceRecord));
         setAllRecords(recs);
 
-        // 3. ★ 追加: 予定データ (events)
         const evtQuery = query(
           collection(db, 'events'),
           where('dateKeyJst', '>=', pastStr),
-          where('dateKeyJst', '<=', futureStr) // 未来も取得
+          where('dateKeyJst', '<=', futureStr)
         );
         const evtSnap = await getDocs(evtQuery);
         const evts = evtSnap.docs.map(d => ({ id: d.id, ...d.data() } as CalendarEvent));
@@ -145,18 +137,26 @@ export default function AnalysisPage() {
     fetchData();
   }, []);
 
-  // --- AI実行関数 ---
+  // --- AI実行関数 (手動トリガー用) ---
   const handleRunAI = async (type: 'summary' | 'user', contextData: any) => {
+    if (isAiLoading) return; // 連打防止
+    
+    if (!contextData || (type === 'summary' && contextData.totalCount === 0) || (type === 'user' && contextData.totalVisits === 0)) {
+      toast.error("分析対象のデータがありません");
+      return;
+    }
+
     setIsAiLoading(true);
+    const loadingId = toast.loading("AIが分析中... (30秒ほどかかります)");
+
     try {
       let context = {};
       if (type === 'summary') {
         context = {
-          // ★ AIに「実績」と「見込み(forecast)」を区別して渡す
           monthly: contextData.monthlyChartData.map((d:any) => ({
             month: d.month,
-            actual: d.houkago + d.kyuko, // 実績
-            forecast: d.forecast, // 見込み
+            actual: d.houkago + d.kyuko,
+            forecast: d.forecast,
             absence: d.absence,
             rate: d.rate
           })),
@@ -177,53 +177,50 @@ export default function AnalysisPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ context: JSON.stringify(context), type })
       });
+      
       const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || data.overall || "AI分析エラー");
+      }
       
       if (type === 'summary') setAiSummaryData(data);
       else setAiUserData(data);
 
-    } catch (e) {
+      toast.success("分析が完了しました", { id: loadingId });
+
+    } catch (e: any) {
       console.error(e);
+      toast.error(`分析失敗: ${e.message}`, { id: loadingId });
     } finally {
       setIsAiLoading(false);
     }
   };
 
   // ==========================================
-  // ① サマリー分析ロジック (予実統合)
+  // ① サマリー分析ロジック
   // ==========================================
   const summaryData = useMemo(() => {
     if (allRecords.length === 0) return null;
-
-    // 今日の日付
     const todayStr = toDateInputStr(new Date());
 
-    // フィルタリング
-    // 実績: 指定期間内
     const filteredRecords = allRecords.filter(r => r.date >= startDate && r.date <= endDate);
-    // 予定: 指定期間内 かつ 今日以降 (未来分)
     const filteredEvents = allEvents.filter(e => e.dateKeyJst >= startDate && e.dateKeyJst <= endDate && e.dateKeyJst >= todayStr);
 
-    // A. 月別推移 (実績 + 予定)
     const monthlyStats: Record<string, { month: string; houkago: number; kyuko: number; absence: number; forecast: number }> = {};
     
-    // 実績集計
     filteredRecords.forEach(rec => {
       const m = rec.month;
       if (!m) return;
       if (!monthlyStats[m]) monthlyStats[m] = { month: m, houkago: 0, kyuko: 0, absence: 0, forecast: 0 };
-      
       if (rec.usageStatus === '放課後') monthlyStats[m].houkago++;
       else if (rec.usageStatus === '休校日') monthlyStats[m].kyuko++;
       else if (rec.usageStatus === '欠席') monthlyStats[m].absence++;
     });
 
-    // ★ 予定集計 (未来分のみを "forecast" として加算)
     filteredEvents.forEach(evt => {
-      const m = evt.dateKeyJst.slice(0, 7); // YYYY-MM
+      const m = evt.dateKeyJst.slice(0, 7);
       if (!monthlyStats[m]) monthlyStats[m] = { month: m, houkago: 0, kyuko: 0, absence: 0, forecast: 0 };
-      
-      // 欠席予定以外をカウント
       if (evt.type === '放課後' || evt.type === '休校日') {
         monthlyStats[m].forecast++;
       }
@@ -232,14 +229,12 @@ export default function AnalysisPage() {
     const monthlyChartData = Object.values(monthlyStats)
       .sort((a, b) => (a.month || '').localeCompare((b.month || '')))
       .map(d => {
-        // 利用率計算: (実績利用 + 見込み) / (実績合計 + 見込み)
         const total = d.houkago + d.kyuko + d.absence + d.forecast;
         const usage = d.houkago + d.kyuko + d.forecast;
         const rate = total > 0 ? Math.round((usage / total) * 100) : 0;
         return { ...d, rate };
       });
 
-    // B. 曜日別欠席率 (実績ベース)
     const dayStats = [0, 1, 2, 3, 4, 5, 6].map(i => ({ dayIndex: i, name: ['日', '月', '火', '水', '木', '金', '土'][i], total: 0, absence: 0 }));
     filteredRecords.forEach(rec => {
       const d = new Date(rec.date);
@@ -253,7 +248,6 @@ export default function AnalysisPage() {
       count: d.absence
     }));
 
-    // C. ランキング (実績ベース)
     const usageRanking: Record<string, number> = {};
     const absenceRanking: Record<string, number> = {};
     filteredRecords.forEach(rec => {
@@ -265,7 +259,6 @@ export default function AnalysisPage() {
     const usageRankingData = Object.entries(usageRanking).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 10);
     const absenceRankingData = Object.entries(absenceRanking).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 10);
 
-    // D. 欠席理由 (実績ベース)
     const absenceReasonStats: Record<string, number> = {};
     filteredRecords.forEach(rec => {
       if (rec.usageStatus === '欠席') {
@@ -280,13 +273,12 @@ export default function AnalysisPage() {
 
 
   // ==========================================
-  // ② ユーザー分析ロジック (個人予実)
+  // ② ユーザー分析ロジック
   // ==========================================
   const userData = useMemo(() => {
     if (!selectedUserId || allRecords.length === 0) return null;
 
     const myRecords = allRecords.filter(r => r.userId === selectedUserId);
-    // ★ 予定も追加
     const todayStr = toDateInputStr(new Date());
     const myEvents = allEvents.filter(e => e.userId === selectedUserId && e.dateKeyJst >= todayStr);
 
@@ -294,7 +286,6 @@ export default function AnalysisPage() {
     
     const monthlyStats: Record<string, { month: string; usage: number; absence: number; forecast: number }> = {};
     
-    // 実績
     myRecords.forEach(rec => {
       if (!rec.month) return;
       if (!monthlyStats[rec.month]) monthlyStats[rec.month] = { month: rec.month, usage: 0, absence: 0, forecast: 0 };
@@ -302,7 +293,6 @@ export default function AnalysisPage() {
       else monthlyStats[rec.month].usage++;
     });
 
-    // 予定 (未来)
     myEvents.forEach(evt => {
       const m = evt.dateKeyJst.slice(0, 7);
       if (!monthlyStats[m]) monthlyStats[m] = { month: m, usage: 0, absence: 0, forecast: 0 };
@@ -326,24 +316,9 @@ export default function AnalysisPage() {
   }, [selectedUserId, allRecords, allEvents, users]);
 
 
-  // --- 自動実行 ---
-  useEffect(() => {
-    if (activeTab === 'summary' && summaryData && summaryData.totalCount > 0 && !hasRunSummary.current) {
-      handleRunAI('summary', summaryData);
-      hasRunSummary.current = true;
-    }
-  }, [summaryData, activeTab]);
-
-  useEffect(() => { hasRunSummary.current = false; setAiSummaryData(null); }, [startDate, endDate]);
-
-  useEffect(() => {
-    if (activeTab === 'user' && userData && userData.totalVisits > 0 && !hasRunUser.current) {
-      handleRunAI('user', userData);
-      hasRunUser.current = true;
-    }
-  }, [userData, activeTab]);
-
-  useEffect(() => { hasRunUser.current = false; setAiUserData(null); }, [selectedUserId]);
+  // ★修正: 自動実行useEffectを削除し、データ変更時に結果をリセットする処理のみ残す
+  useEffect(() => { setAiSummaryData(null); }, [startDate, endDate]);
+  useEffect(() => { setAiUserData(null); }, [selectedUserId]);
 
 
   return (
@@ -368,16 +343,40 @@ export default function AnalysisPage() {
         {/* ① サマリー分析 */}
         {activeTab === 'summary' && (
           <div className="space-y-6 animate-in fade-in zoom-in duration-300">
-            {/* 期間指定 */}
-            <div className="flex items-center gap-2 bg-white p-4 rounded-xl shadow-sm border border-gray-200 w-fit">
-              <span className="text-sm font-bold text-gray-600">期間指定:</span>
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border p-2 rounded-md text-sm" />
-              <span className="text-gray-400">~</span>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border p-2 rounded-md text-sm" />
-              {isAiLoading && <span className="text-xs text-purple-600 font-bold ml-2 animate-pulse">✨ 将来予測を含めて分析中...</span>}
+            {/* 期間指定 & AIボタン */}
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2 bg-white p-4 rounded-xl shadow-sm border border-gray-200 w-fit">
+                <span className="text-sm font-bold text-gray-600">期間指定:</span>
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border p-2 rounded-md text-sm" />
+                <span className="text-gray-400">~</span>
+                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border p-2 rounded-md text-sm" />
+              </div>
+
+              {/* ★ 追加: AI実行ボタン */}
+              <button
+                onClick={() => handleRunAI('summary', summaryData)}
+                disabled={isAiLoading || !summaryData || summaryData.totalCount === 0}
+                className={`flex items-center gap-2 px-6 py-4 rounded-xl font-bold text-white shadow-md transition-all ${
+                  isAiLoading || !summaryData || summaryData.totalCount === 0
+                    ? 'bg-purple-300 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:scale-105 active:scale-95'
+                }`}
+              >
+                {isAiLoading ? (
+                  <>
+                    <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    <span>分析中...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-xl">🤖</span>
+                    <span>AI分析を実行する</span>
+                  </>
+                )}
+              </button>
             </div>
 
-            {/* 総評 */}
+            {/* 総評 (ボタンを押すまでは表示されない) */}
             <AiCommentBox title="全体総評・予実分析" content={aiSummaryData?.overall} loading={isAiLoading} />
 
             {summaryData && summaryData.totalCount > 0 ? (
@@ -396,7 +395,6 @@ export default function AnalysisPage() {
                         <Legend />
                         <Bar yAxisId="left" dataKey="houkago" name="放課後(実)" stackId="a" fill="#3B82F6" />
                         <Bar yAxisId="left" dataKey="kyuko" name="休校日(実)" stackId="a" fill="#F59E0B" />
-                        {/* ★ 追加: 予定(Forecast) */}
                         <Bar yAxisId="left" dataKey="forecast" name="利用予定(未)" stackId="a" fill="#93C5FD"  />
                         <Bar yAxisId="left" dataKey="absence" name="欠席" stackId="a" fill="#EF4444" />
                         <Line yAxisId="right" type="monotone" dataKey="rate" name="稼働率(見込)" stroke="#10B981" strokeWidth={3} dot={{r:4}} />
@@ -496,13 +494,37 @@ export default function AnalysisPage() {
         {/* ② ユーザー分析 */}
         {activeTab === 'user' && (
           <div className="space-y-6 animate-in fade-in zoom-in duration-300">
-            <div className="flex items-center gap-2 w-full bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-              <span className="text-sm font-bold text-gray-600">利用者選択:</span>
-              <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} className="p-2 border rounded-md text-sm flex-1">
-                <option value="">選択してください</option>
-                {users.map(u => (<option key={u.id} value={u.id}>{u.lastName} {u.firstName}</option>))}
-              </select>
-              {isAiLoading && <span className="text-xs text-purple-600 font-bold ml-2 animate-pulse">✨ AI分析中...</span>}
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2 w-full max-w-md bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                <span className="text-sm font-bold text-gray-600">利用者選択:</span>
+                <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} className="p-2 border rounded-md text-sm flex-1">
+                  <option value="">選択してください</option>
+                  {users.map(u => (<option key={u.id} value={u.id}>{u.lastName} {u.firstName}</option>))}
+                </select>
+              </div>
+
+              {/* ★ 追加: AI実行ボタン（ユーザー分析用） */}
+              <button
+                onClick={() => handleRunAI('user', userData)}
+                disabled={isAiLoading || !userData || userData.totalVisits === 0}
+                className={`flex items-center gap-2 px-6 py-4 rounded-xl font-bold text-white shadow-md transition-all ${
+                  isAiLoading || !userData || userData.totalVisits === 0
+                    ? 'bg-purple-300 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:scale-105 active:scale-95'
+                }`}
+              >
+                {isAiLoading ? (
+                  <>
+                    <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    <span>分析中...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-xl">🤖</span>
+                    <span>AI分析を実行する</span>
+                  </>
+                )}
+              </button>
             </div>
 
             <AiCommentBox title="全体評価" content={aiUserData?.overall} loading={isAiLoading} />
@@ -520,7 +542,6 @@ export default function AnalysisPage() {
                         <Tooltip />
                         <Legend />
                         <Line type="monotone" dataKey="usage" name="実績" stroke="#3B82F6" strokeWidth={2} />
-                        {/* ★ 追加: ユーザー分析でも予定を表示 */}
                         <Line type="monotone" dataKey="forecast" name="予定" stroke="#93C5FD" strokeWidth={2} strokeDasharray="5 5" />
                         <Line type="monotone" dataKey="absence" name="欠席" stroke="#EF4444" strokeWidth={2} />
                       </LineChart>
