@@ -22,8 +22,7 @@ export async function POST(request: Request) {
     const now = new Date();
     const todayStr = now.toLocaleDateString('ja-JP'); 
 
-    // ★修正: あなたのモデル一覧リストに確実に存在していた名前を使用
-    // これ実体は Gemini 1.5 Flash なので、無料枠が使えるはずです
+    // ★成功したモデル名を使用
     const MODEL_NAME = 'gemini-flash-latest';
     
     console.log(`[API] Requesting Gemini via fetch (${MODEL_NAME})...`);
@@ -44,7 +43,7 @@ export async function POST(request: Request) {
       ${context}
 
       【指示】
-      以下のキーを持つJSONオブジェクトのみを出力してください（Markdown記法は不要）。
+      以下のキーを持つJSONオブジェクトのみを出力してください。
       1. "overall": 全体的な傾向と、経営視点での総評（200文字程度）。「予定」を含めた今後の見通しについても言及すること。
       2. "trends": 「月別コマ数・利用率推移」に対する分析。実績と予定（見込み）の差分や、当月の着地予想、季節変動について（150文字程度）
       3. "dayOfWeek": 「曜日別欠席率」に対する分析。特定の曜日に欠席が集中している理由の仮説と対策（150文字程度）
@@ -65,7 +64,7 @@ export async function POST(request: Request) {
       ${context}
 
       【指示】
-      以下のキーを持つJSONオブジェクトのみを出力してください（Markdown記法は不要）。
+      以下のキーを持つJSONオブジェクトのみを出力してください。
       1. "overall": この利用者の全体的な利用傾向と、現在の安定度（150文字程度）
       2. "trends": 「利用推移」グラフに対する分析。利用頻度の変化や、今後の利用予定（見込み）を踏まえたコメント（100文字程度）
       3. "absences": 「欠席理由」に対する分析。体調面・心理面の傾向や、保護者へのヒアリング事項（150文字程度）
@@ -87,7 +86,10 @@ export async function POST(request: Request) {
           }],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 2000,
+            // ★修正1: トークン数を増やして文章切れを防ぐ
+            maxOutputTokens: 8192, 
+            // ★修正2: JSONモードを強制する（これで形式エラーがほぼ無くなります）
+            response_mime_type: "application/json"
           }
         })
       }
@@ -100,9 +102,8 @@ export async function POST(request: Request) {
       const status = errorData.error?.status || response.statusText;
       const msg = errorData.error?.message || "Unknown Error";
       
-      // 429の場合のメッセージ
       if (response.status === 429) {
-         throw new Error(`AIの利用上限(Quota)を超えました(Limit: 0)。このAPIキーでは無料枠が使えない可能性があります。`);
+         throw new Error(`AIの利用上限(Quota)を超えました。しばらく待ってください。`);
       }
       throw new Error(`Gemini API Error (${status}): ${msg}`);
     }
@@ -119,8 +120,9 @@ export async function POST(request: Request) {
       return NextResponse.json(jsonResponse);
     } catch (e) {
       console.error("JSON Parse Error:", jsonStr);
+      // 万が一パースエラーが出た場合でも、切れたテキストを表示してデバッグしやすくする
       return NextResponse.json({ 
-        overall: "AIからの応答はありましたが、データの形式変換に失敗しました。",
+        overall: "AIからの応答が途中で途切れました。再実行してください。",
         trends: text,
         dayOfWeek: "",
         ranking: "",
