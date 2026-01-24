@@ -1,111 +1,93 @@
-// ▼ タイムアウト対策（60秒）
-export const maxDuration = 60;
+// src/app/api/absence/generate-advice/route.ts
 
 import { NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase/admin'; 
 
-// Gemini呼び出し関数
-async function callGemini(prompt: string) {
-  const API_KEY = process.env.GEMINI_API_KEY;
-  if (!API_KEY) return "（APIキー未設定のため生成不可）";
-
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      }
-    );
-    
-    if (!response.ok) {
-        const errorDetail = await response.text();
-        console.error("Gemini API Error Detail:", errorDetail);
-        throw new Error(`Gemini API Error: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "AI生成失敗";
-  } catch (e) {
-    console.error("Gemini Call Error:", e);
-    return "AI接続エラー";
-  }
-}
+// ★単発実行なので、ここでは過去履歴を取得してもAPI制限の心配はありません
+// AIに「文脈」を理解させるため、過去3件の履歴を取得します。
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { year, month, staffName } = body;
+    const { userId, date, currentNote } = await request.json();
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
-    console.log(`[Batch] Start: ${year}-${month}`);
-
-    // 日付範囲 (YYYY-MM-DD)
-    const y = year;
-    const m = month.toString().padStart(2, '0');
-    const startDate = `${y}-${m}-01`;
-    const endDate = `${y}-${m}-31`;
-
-    console.log(`[Batch] Querying 'attendanceRecords' from ${startDate} to ${endDate}`);
+    if (!apiKey) return NextResponse.json({ error: "API Key not found" }, { status: 500 });
+    if (!userId || !date) return NextResponse.json({ error: "必須項目が不足しています" }, { status: 400 });
 
     const recordsRef = adminDb.collection('attendanceRecords');
-    const snapshot = await recordsRef
+
+    // 1. 過去の欠席履歴を取得（直近3件）
+    // ※これにより「連続欠席」や「頻繁な体調不良」などをAIが察知できます
+    const historySnap = await recordsRef
+      .where('userId', '==', userId)
       .where('usageStatus', '==', '欠席')
-      .where('date', '>=', startDate)
-      .where('date', '<=', endDate)
+      .where('date', '<', date) // 今回より前の日付
+      .orderBy('date', 'desc')
+      .limit(3)
       .get();
 
-    console.log(`[Batch] Hit count: ${snapshot.size}`);
+    const pastAdvices = historySnap.docs
+      .map(d => {
+        const data = d.data();
+        return `・${data.date}: ${data.notes || 'なし'} (AI助言: ${data.aiAdvice || 'なし'})`;
+      })
+      .reverse() // 古い順に戻す
+      .join("\n");
 
-    if (snapshot.empty) {
-      return NextResponse.json({ count: 0, message: "対象データなし" });
-    }
+    // 2. プロンプト作成
+    const systemPrompt = `
+    あなたは児童発達支援・放課後等デイサービスの専門スタッフです。
+    保護者からの「欠席連絡」に対し、適切な「相談援助内容（対応記録）」を作成してください。
+    
+    【過去の経緯】
+    ${pastAdvices || '（過去の欠席記録なし）'}
 
-    let updateCount = 0;
+    【今回の連絡内容】
+    ${currentNote || '（連絡事項なし）'}
 
-    // AI生成処理ループ
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      
-      // 既にAIアドバイスがある場合はスキップ
-      if (data.aiAdvice && data.staffName) {
-        continue;
+    【作成ルール】
+    1. 上記の「今回の連絡」と「過去の経緯」を統合して状況を分析すること。
+    2. オウム返しは禁止。専門的な所見と、スタッフとしてどう関わるか（支援方針）を含めること。
+    3. 150〜200文字程度の日本語で記述すること。
+    4. 文末は「〜とお伝えした。」「〜とお話した。」「〜していく。」「〜を増やしていく。」のいずれかで統一すること。
+    5. JSONなどの形式ではなく、**アドバイスの文章のみ**をプレーンテキストで出力してください。
+    `;
+
+    // 3. Gemini呼び出し (gemini-flash-latest)
+    const MODEL_NAME = 'gemini-flash-latest';
+    
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: systemPrompt }] }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 1000, 
+          }
+        })
       }
+    );
 
-      // ★★★ 修正: プロンプトを省略せず、詳細な指示を適用 ★★★
-      const promptInputPart = `[入力] 欠席理由：${data.reason || 'なし'} / 連絡内容：${data.notes || 'なし'}`;
-
-      const prompt = `
-[役割] あなたは児童発達支援の専門スタッフです。
-${promptInputPart}
-[厳格な指示]
-1. 上記の「入力」は欠席連絡です。この内容から本人の状況や心理を分析してください。
-2. 「入力」のオウム返しや単語の定義・翻訳は絶対に禁止します。
-3. 分析に基づき、「相談内容」として専門的な所見と今後の支援提案を作成してください。
-4. 回答は必ず日本語で、150文字から200文字の範囲に収めてください。
-5. 文末は「〜とお伝えした。」「〜とお話した。」「〜していく。」「〜を増やしていく。」のいずれかの形式で必ず終えてください。
-[タスク] 上記の5つの厳格な指示をすべて守り、「相談内容」を作成してください。
-      `;
-
-      // AI生成
-      const aiAdvice = data.aiAdvice || await callGemini(prompt);
-      const staff = data.staffName || staffName || '担当者';
-
-      // 更新
-      await doc.ref.update({
-        aiAdvice: aiAdvice,
-        staffName: staff,
-        updatedAt: new Date(), 
-      });
-
-      updateCount++;
+    if (!response.ok) {
+      const err = await response.json();
+      console.error("[SingleGen] Gemini API Error:", err);
+      if (response.status === 429) {
+        throw new Error("AI利用枠が一時的に混雑しています。後ほどバッチ処理をお試しください。");
+      }
+      throw new Error(`AI API Error: ${response.status}`);
     }
 
-    console.log(`[Batch] Updated count: ${updateCount}`);
-    return NextResponse.json({ count: updateCount });
+    const aiRes = await response.json();
+    const adviceText = aiRes.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+    // 余計な改行などをトリム
+    return NextResponse.json({ advice: adviceText.trim() });
 
   } catch (error: any) {
-    console.error("[Batch] Error:", error);
+    console.error("[SingleGen] Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

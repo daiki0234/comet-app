@@ -370,21 +370,32 @@ export default function AttendancePage() {
 
   const handleScanFailure = (error: string) => {};
 
-  const generateAndSaveAdvice = async (docId: string, userId: string, date: string, notes: string) => {
+// 現在のコード（そのままでOK）
+const generateAndSaveAdvice = async (docId: string, userId: string, date: string, notes: string) => {
     const aiToast = toast.loading('AIが相談内容を自動生成中...');
     try {
+      // ★ここが先ほど作ったAPIを呼ぶようになります
       const res = await fetch('/api/absence/generate-advice', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, date, currentNote: notes })
       });
       const data = await res.json();
+      
       if (data.advice) {
+        // AIが生成したテキストをFirestoreに保存
         await updateDoc(doc(db, 'attendanceRecords', docId), { aiAdvice: data.advice });
         toast.success('AI相談内容を保存しました', { id: aiToast });
-        fetchData();
-      } else { toast.dismiss(aiToast); }
-    } catch (e) { toast.error('AI生成失敗', { id: aiToast }); }
-  };
+        fetchData(); // 画面再読み込み
+      } else { 
+        // エラーメッセージがあれば表示
+        throw new Error(data.error || '生成された内容が空でした');
+      }
+    } catch (e: any) { 
+       // エラー時はトーストで通知（コンソールにも出すとデバッグしやすい）
+       console.error(e);
+       toast.error(`AI生成失敗: ${e.message}`, { id: aiToast }); 
+    }
+};
 
   const handleAddAbsence = async () => {
     if (!absentUserId) { return toast.error('利用者を選択してください。'); }
