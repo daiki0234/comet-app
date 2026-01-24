@@ -11,9 +11,10 @@ import {
   getDocs, 
   doc, 
   updateDoc, 
-  deleteDoc // ★追加: 削除用
+  deleteDoc 
 } from 'firebase/firestore';
 import toast from 'react-hot-toast';
+import { useAuth } from '@/context/AuthContext'; // ★追加
 
 // 型定義
 type AttendanceRecord = {
@@ -30,6 +31,8 @@ type AttendanceRecord = {
 };
 
 export default function AbsenceManagementPage() {
+  const { currentUser } = useAuth(); // ★追加: ログインユーザー取得
+  
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth() + 1);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
@@ -43,13 +46,19 @@ export default function AbsenceManagementPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ staffName: '', aiAdvice: '' });
 
+  // ★追加: ログインユーザー名を担当者に自動セット
+  useEffect(() => {
+    if (currentUser?.displayName) {
+      setStaffName(currentUser.displayName);
+    }
+  }, [currentUser]);
+
   // データ取得
   const fetchRecords = async () => {
     setLoading(true);
     try {
       const strMonth = month.toString().padStart(2, '0');
       const startStr = `${year}-${strMonth}-01`;
-      // 月末日を計算
       const lastDay = new Date(year, month, 0).getDate();
       const endStr = `${year}-${strMonth}-${lastDay}`;
 
@@ -58,7 +67,7 @@ export default function AbsenceManagementPage() {
         where('usageStatus', '==', '欠席'),
         where('date', '>=', startStr),
         where('date', '<=', endStr),
-        orderBy('date', 'asc') // 日付順
+        orderBy('date', 'asc')
       );
 
       const snapshot = await getDocs(q);
@@ -76,7 +85,7 @@ export default function AbsenceManagementPage() {
     fetchRecords();
   }, [year, month]);
 
-  // ★追加: 削除機能
+  // 削除機能
   const handleDelete = async (id: string, userName: string, date: string) => {
     if (!window.confirm(`${date} の ${userName} さんの記録を削除しますか？\nこの操作は取り消せません。`)) {
       return;
@@ -86,7 +95,6 @@ export default function AbsenceManagementPage() {
     try {
       await deleteDoc(doc(db, 'attendanceRecords', id));
       toast.success('削除しました', { id: toastId });
-      // リストから除外（再取得より高速）
       setRecords(prev => prev.filter(r => r.id !== id));
     } catch (error) {
       console.error(error);
@@ -142,7 +150,6 @@ export default function AbsenceManagementPage() {
       toast.success("更新しました");
       setEditingId(null);
       
-      // ローカルstateも更新
       setRecords(prev => prev.map(r => 
         r.id === editingId ? { ...r, ...editForm } : r
       ));
@@ -179,6 +186,9 @@ export default function AbsenceManagementPage() {
 
           <div className="flex items-center gap-2 bg-blue-50 p-2 rounded-lg border border-blue-100">
             <span className="text-xs font-bold text-blue-800">AI一括作成:</span>
+            {/* ログインユーザー名が自動で入りますが、
+              修正したい場合のためにinputは表示したままにしています 
+            */}
             <input 
               type="text" 
               placeholder="担当者名" 
@@ -208,7 +218,6 @@ export default function AbsenceManagementPage() {
                   <th className="px-4 py-3">相談援助内容 (AI生成)</th>
                   <th className="px-4 py-3 w-24">担当者</th>
                   <th className="px-4 py-3 w-20 text-center">操作</th>
-                  {/* ★追加: 削除ボタン用の列 */}
                   <th className="px-4 py-3 w-16 text-center"></th>
                 </tr>
               </thead>
@@ -272,7 +281,6 @@ export default function AbsenceManagementPage() {
                         </>
                       )}
 
-                      {/* ★追加: 削除ボタン */}
                       <td className="px-4 py-3 text-center">
                         <button 
                           onClick={() => handleDelete(rec.id, rec.userName, rec.date)}
