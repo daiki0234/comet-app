@@ -1,388 +1,292 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
-import { db } from '@/lib/firebase/firebase';
-import { collection, addDoc, getDocs, query, where, orderBy, doc, updateDoc } from 'firebase/firestore';
+import React, { useState, useEffect } from 'react';
 import { AppLayout } from '@/components/Layout';
-import { useAuth } from '@/context/AuthContext';
+import { db } from '@/lib/firebase/firebase';
+import { 
+  collection, 
+  query, 
+  where, 
+  orderBy, 
+  getDocs, 
+  doc, 
+  updateDoc, 
+  deleteDoc // ★追加: 削除用
+} from 'firebase/firestore';
 import toast from 'react-hot-toast';
-import { useAutoRecord } from '@/hooks/useAutoRecord';
 
-type User = { id: string; lastName: string; firstName: string; };
-
-// ★追加: スタッフ型定義
-type Staff = { id: string; name: string; };
-
-const toDateString = (date: Date) => date.toISOString().split('T')[0];
-
-const determineAbsenceCategory = (text: string): string => {
-  if (!text) return 'その他';
-    if (text.includes('体調不良') || text.includes('熱') || text.includes('頭痛') || text.includes('風邪') || text.includes('痛')  || text.includes('インフル') || text.includes('病院')) return '体調不良';
-  else if (text.includes('用事') || text.includes('親戚') || text.includes('家族') || text.includes('家庭') || text.includes('私用')) return '私用';
-  else if (text.includes('クラブ') || text.includes('大会') || text.includes('練習試合') || text.includes('運動会') || text.includes('部活')) return '学校行事';
-  else return 'その他';
+// 型定義
+type AttendanceRecord = {
+  id: string;
+  userId: string;
+  userName: string;
+  date: string; // YYYY-MM-DD
+  month: string; // YYYY-MM
+  usageStatus: '欠席';
+  reason?: string;
+  notes?: string;
+  staffName?: string;
+  aiAdvice?: string; // AIによる相談援助内容
 };
 
-export default function RegisterAbsencePage() {
-  const router = useRouter();
-  const { currentUser, isGuest } = useAuth(); // ★追加: isGuest
-  const { createRecord } = useAutoRecord();
-
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // フォーム用State
-  const [absentUserId, setAbsentUserId] = useState('');
-  const [absenceDate, setAbsenceDate] = useState(toDateString(new Date()));
-  const [notes, setNotes] = useState('');
+export default function AbsenceManagementPage() {
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [month, setMonth] = useState(new Date().getMonth() + 1);
+  const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const [loading, setLoading] = useState(false);
   
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // AI一括生成用
+  const [isBatchLoading, setIsBatchLoading] = useState(false);
+  const [staffName, setStaffName] = useState('');
 
-  // 検索用State
-  const [userSearchQuery, setUserSearchQuery] = useState('');
+  // 編集用
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ staffName: '', aiAdvice: '' });
 
-  // 欠席回数管理用State (Key: userId, Value: 回数)
-  const [absenceCounts, setAbsenceCounts] = useState<Record<string, number>>({});
-
-  // ★追加: スタッフ選択用
-  const [staffList, setStaffList] = useState<Staff[]>([]);
-  const [selectedStaffId, setSelectedStaffId] = useState('');
-
-  // ★追加: ゲストの場合、スタッフリストを取得
-  useEffect(() => {
-    const fetchStaff = async () => {
-      if (!isGuest) return;
-      try {
-        const q = query(collection(db, 'admins'));
-        const snap = await getDocs(q);
-        const staffs = snap.docs
-          .map(d => {
-            const data = d.data();
-            return { id: d.id, name: data.name, isEnrolled: data.isEnrolled };
-          })
-          .filter((s: any) => s.isEnrolled !== false)
-          .map((s: any) => ({ id: s.id, name: s.name } as Staff));
-        
-        setStaffList(staffs);
-      } catch (e) {
-        console.error("スタッフ取得エラー", e);
-      }
-    };
-    fetchStaff();
-  }, [isGuest]);
-
-  // 1. ユーザー一覧取得
-  useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const q = query(collection(db, 'users'), orderBy('lastName'));
-        const usersSnapshot = await getDocs(q);
-        setUsers(usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as User[]);
-      } catch (e) {
-        console.error(e);
-        toast.error("利用者情報の取得に失敗しました");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchUsers();
-  }, []);
-
-  // 2. 日付が変わったら、その月の欠席回数を全ユーザー分集計する
-  useEffect(() => {
-    const fetchMonthlyAbsences = async () => {
-      if (!absenceDate) return;
-      try {
-        const targetMonth = absenceDate.substring(0, 7); // "YYYY-MM"
-        
-        const q = query(
-          collection(db, 'attendanceRecords'),
-          where('month', '==', targetMonth),
-          where('usageStatus', '==', '欠席')
-        );
-        const snapshot = await getDocs(q);
-
-        const counts: Record<string, number> = {};
-        snapshot.docs.forEach(doc => {
-          const uid = doc.data().userId;
-          counts[uid] = (counts[uid] || 0) + 1;
-        });
-        
-        setAbsenceCounts(counts);
-      } catch (e) {
-        console.error("欠席回数の取得に失敗", e);
-      }
-    };
-
-    fetchMonthlyAbsences();
-  }, [absenceDate]);
-
-  // 検索ロジック
-  const searchMatchedUsers = useMemo(() => {
-    const queryText = userSearchQuery.trim();
-    if (!queryText) return [];
-    
-    const lowerQuery = queryText.toLowerCase();
-    return users.filter(user => {
-      const fullName = `${user.lastName || ''}${user.firstName || ''}`;
-      return fullName.toLowerCase().includes(lowerQuery);
-    });
-  }, [userSearchQuery, users]);
-
-  // AI生成関数
-  const generateAndSaveAdvice = async (docId: string, userId: string, date: string, notes: string) => {
-    const aiToast = toast.loading('AIが相談内容を自動生成中...');
+  // データ取得
+  const fetchRecords = async () => {
+    setLoading(true);
     try {
-      const res = await fetch('/api/absence/generate-advice', {
+      const strMonth = month.toString().padStart(2, '0');
+      const startStr = `${year}-${strMonth}-01`;
+      // 月末日を計算
+      const lastDay = new Date(year, month, 0).getDate();
+      const endStr = `${year}-${strMonth}-${lastDay}`;
+
+      const q = query(
+        collection(db, 'attendanceRecords'),
+        where('usageStatus', '==', '欠席'),
+        where('date', '>=', startStr),
+        where('date', '<=', endStr),
+        orderBy('date', 'asc') // 日付順
+      );
+
+      const snapshot = await getDocs(q);
+      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as AttendanceRecord));
+      setRecords(data);
+    } catch (error) {
+      console.error(error);
+      toast.error("データの取得に失敗しました");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRecords();
+  }, [year, month]);
+
+  // ★追加: 削除機能
+  const handleDelete = async (id: string, userName: string, date: string) => {
+    if (!window.confirm(`${date} の ${userName} さんの記録を削除しますか？\nこの操作は取り消せません。`)) {
+      return;
+    }
+
+    const toastId = toast.loading('削除中...');
+    try {
+      await deleteDoc(doc(db, 'attendanceRecords', id));
+      toast.success('削除しました', { id: toastId });
+      // リストから除外（再取得より高速）
+      setRecords(prev => prev.filter(r => r.id !== id));
+    } catch (error) {
+      console.error(error);
+      toast.error('削除に失敗しました', { id: toastId });
+    }
+  };
+
+  // AI一括生成
+  const handleBatchGenerate = async () => {
+    if (!staffName) return toast.error("担当者名を入力してください");
+    if (!window.confirm(`${year}年${month}月の未作成データをAIで一括作成しますか？\n（APIリクエストを節約するため、数分かかる場合があります）`)) return;
+
+    setIsBatchLoading(true);
+    const toastId = toast.loading("AIが生成中... (このままお待ちください)");
+
+    try {
+      const res = await fetch('/api/absence/batch-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, date, currentNote: notes })
+        body: JSON.stringify({ year, month, staffName })
       });
+      
       const data = await res.json();
-      if (data.advice) {
-        const docRef = doc(db, 'attendanceRecords', docId);
-        await updateDoc(docRef, { aiAdvice: data.advice });
-        toast.success('AI相談内容を保存しました', { id: aiToast });
-      } else {
-        toast.dismiss(aiToast);
-      }
-    } catch (e) {
-      console.error("AI Generation Error:", e);
-      toast.error('AI生成に失敗しました（後で一括作成できます）', { id: aiToast });
-    }
-  };
+      if (!res.ok) throw new Error(data.error || "生成エラー");
 
-  const handleAddAbsence = async () => {
-    if (!absentUserId) { return toast.error('利用者を選択してください。'); }
-    
-    // ★追加: ゲストの場合の担当者チェック & 名前決定
-    let staffName = currentUser?.displayName || '担当者';
-    if (isGuest) {
-      if (!selectedStaffId) {
-        return toast.error('担当職員を選択してください。');
-      }
-      const staff = staffList.find(s => s.id === selectedStaffId);
-      if (staff) {
-        staffName = staff.name; // 選択された名前で上書き
-      }
-    }
-
-    const user = users.find(u => u.id === absentUserId);
-    if (!user) return;
-    
-    setIsSubmitting(true);
-    const loadingToast = toast.loading('欠席情報を登録中です...');
-
-    try {
-      const targetMonth = absenceDate.substring(0, 7);
-      
-      // 1. 回数制限チェック
-      const absenceQuery = query(
-        collection(db, "attendanceRecords"), 
-        where("userId", "==", absentUserId), 
-        where("month", "==", targetMonth), 
-        where("usageStatus", "==", "欠席")
-      );
-      const absenceSnapshot = await getDocs(absenceQuery);
-      
-      if (absenceSnapshot.size >= 4) {
-        throw new Error(`${user.lastName} ${user.firstName}さんは、この月の欠席回数が上限の4回に達しています。`);
-      }
-
-      // 2. 重複チェック
-      const q = query(
-        collection(db, "attendanceRecords"), 
-        where("userId", "==", absentUserId), 
-        where("date", "==", absenceDate)
-      );
-      const existingSnapshot = await getDocs(q);
-      if (!existingSnapshot.empty) {
-        throw new Error(`${absenceDate} に ${user.lastName} ${user.firstName} さんの記録は既にあります。`);
-      }
-
-      // 連絡内容から理由を自動判定
-      const autoReason = determineAbsenceCategory(notes);
-
-      // 3. 保存 (実績記録票)
-      const docRef = await addDoc(collection(db, "attendanceRecords"), {
-        userId: user.id,
-        userName: `${user.lastName} ${user.firstName}`,
-        date: absenceDate,
-        month: targetMonth,
-        usageStatus: '欠席',
-        reason: autoReason, 
-        notes: notes,
-        staffName: staffName, // ★変更: 決定した担当者名を保存
-        createdAt: new Date(),
-        // 必要なら recordedBy: staffName としても良いですが、既存が staffName を使っているようなのでそれに合わせました
-      });
-      
-      // ★★★ 追加: 支援記録の自動生成 ★★★
-      await createRecord({
-        date: absenceDate,
-        userId: user.id,
-        userName: `${user.lastName} ${user.firstName}`,
-        status: '欠席',
-        absenceReason: notes,
-      });
-
-      toast.success(`${absenceDate} に ${user.lastName} ${user.firstName} さんを欠席登録しました。`, { id: loadingToast });
-      
-      // AI生成を開始
-      generateAndSaveAdvice(docRef.id, user.id, absenceDate, notes);
-
-      // State更新
-      setAbsenceCounts(prev => ({
-        ...prev,
-        [user.id]: (prev[user.id] || 0) + 1
-      }));
-
-      // フォームリセット
-      setAbsentUserId('');
-      setUserSearchQuery('');
-      setNotes('');
-      setSelectedStaffId(''); // ★追加: リセット
-      
-    } catch (error: any) {
-      toast.error(error.message, { id: loadingToast });
+      toast.success(`完了しました！ (${data.count}件更新)`, { id: toastId });
+      fetchRecords(); // リロード
+    } catch (e: any) {
+      console.error(e);
+      toast.error(`エラー: ${e.message}`, { id: toastId });
     } finally {
-      setIsSubmitting(false);
+      setIsBatchLoading(false);
     }
   };
 
-  if (loading) return <AppLayout pageTitle="別日の欠席登録"><div className="p-8 text-center">読み込み中...</div></AppLayout>;
+  // 編集開始
+  const startEdit = (rec: AttendanceRecord) => {
+    setEditingId(rec.id);
+    setEditForm({ 
+      staffName: rec.staffName || '', 
+      aiAdvice: rec.aiAdvice || '' 
+    });
+  };
+
+  // 編集保存
+  const saveEdit = async () => {
+    if (!editingId) return;
+    try {
+      await updateDoc(doc(db, 'attendanceRecords', editingId), {
+        staffName: editForm.staffName,
+        aiAdvice: editForm.aiAdvice
+      });
+      toast.success("更新しました");
+      setEditingId(null);
+      
+      // ローカルstateも更新
+      setRecords(prev => prev.map(r => 
+        r.id === editingId ? { ...r, ...editForm } : r
+      ));
+    } catch (e) {
+      toast.error("更新失敗");
+    }
+  };
 
   return (
-    <AppLayout pageTitle="別日の欠席登録">
-      <div className="bg-white p-6 rounded-2xl shadow-ios border border-gray-200 max-w-2xl mx-auto">
-        <h3 className="text-lg font-bold text-gray-800 mb-1">欠席登録</h3>
-        <p className="text-sm text-gray-500 mb-6">先日付の欠席連絡などを登録します。</p>
+    <AppLayout pageTitle="欠席管理・AI相談記録">
+      <div className="space-y-6">
         
-        <div className="space-y-5">
-          {/* ★追加: ゲスト用 担当職員プルダウン */}
-          {isGuest && (
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1">
-                担当職員 <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={selectedStaffId}
-                onChange={(e) => setSelectedStaffId(e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-blue-50"
-              >
-                <option value="">担当者を選択してください</option>
-                {staffList.map((staff) => (
-                  <option key={staff.id} value={staff.id}>
-                    {staff.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* 日付 */}
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">日付 <span className="text-red-500">*</span></label>
-            <input 
-              type="date" 
-              value={absenceDate} 
-              onChange={(e) => setAbsenceDate(e.target.value)} 
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" 
-            />
-          </div>
-
-          {/* 利用者 (検索式 + 回数表示) */}
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">利用者 <span className="text-red-500">*</span></label>
-            <div className="relative">
-              <input
-                type="text"
-                value={userSearchQuery}
-                onChange={(e) => setUserSearchQuery(e.target.value)}
-                placeholder={users.length > 0 ? "氏名を入力して検索..." : "読み込み中..."}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100"
-                disabled={!!absentUserId}
-              />
-              
-              {!absentUserId && userSearchQuery && searchMatchedUsers.length > 0 && (
-                <ul className="absolute top-full left-0 z-10 w-full max-h-60 overflow-y-auto bg-white border border-blue-400 rounded-md shadow-lg mt-1">
-                  {searchMatchedUsers.map(user => {
-                    const count = absenceCounts[user.id] || 0; 
-                    return (
-                      <li
-                        key={user.id}
-                        onClick={() => {
-                          setAbsentUserId(user.id);
-                          setUserSearchQuery('');
-                        }}
-                        className="p-3 cursor-pointer hover:bg-blue-100 text-sm border-b last:border-b-0 flex justify-between items-center"
-                      >
-                        <span className="font-medium text-gray-800">
-                          {user.lastName} {user.firstName}
-                        </span>
-                        <span className={`font-bold ${count >= 4 ? 'text-red-600' : 'text-red-500'}`}>
-                          欠席: {count}回
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-
-            {absentUserId && (
-              <div className="mt-2 flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
-                <span className="text-blue-700 font-bold">
-                  選択中: {users.find(u => u.id === absentUserId)?.lastName} {users.find(u => u.id === absentUserId)?.firstName}
-                  <span className="ml-2 text-sm text-red-500">
-                    (今月欠席: {absenceCounts[absentUserId] || 0}回)
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAbsentUserId('');
-                    setUserSearchQuery('');
-                  }}
-                  className="text-sm text-gray-500 hover:text-red-500 underline"
-                >
-                  解除
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* 詳細メモ */}
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">連絡の内容 <span className="text-red-500">*</span></label>
-            <textarea 
-              value={notes} 
-              onChange={(e) => setNotes(e.target.value)} 
-              placeholder="例：当日母より「熱があるので休みます」"
-              rows={4}
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-              required
-            />
-            <p className="text-xs text-gray-400 mt-1">※内容から「体調不良」「私用」などの分類が自動で記録されます。</p>
-          </div>
-
-          {/* 登録ボタン */}
-          <div className="pt-4 text-center">
-            <button 
-              onClick={handleAddAbsence}
-              disabled={isSubmitting}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl transition-all shadow-md active:scale-95 disabled:bg-gray-400"
+        {/* コントロールバー */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap gap-4 items-center justify-between">
+          <div className="flex items-center gap-2">
+            <select 
+              value={year} 
+              onChange={(e) => setYear(Number(e.target.value))}
+              className="border p-2 rounded-md font-bold"
             >
-              {isSubmitting ? '登録中...' : '登録する'}
+              {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}年</option>)}
+            </select>
+            <select 
+              value={month} 
+              onChange={(e) => setMonth(Number(e.target.value))}
+              className="border p-2 rounded-md font-bold"
+            >
+              {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>{i+1}月</option>)}
+            </select>
+            <button onClick={fetchRecords} className="text-gray-500 hover:text-blue-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
             </button>
-            
-            {/* ゲストかどうかで注釈を出し分ける */}
-            <p className="text-xs text-gray-400 mt-2">
-              {isGuest 
-                ? '※ゲストアカウントで操作中のため、担当者の選択が必須です' 
-                : `※登録者（${currentUser?.displayName || 'あなた'}）が担当者として記録されます`}
-            </p>
+          </div>
+
+          <div className="flex items-center gap-2 bg-blue-50 p-2 rounded-lg border border-blue-100">
+            <span className="text-xs font-bold text-blue-800">AI一括作成:</span>
+            <input 
+              type="text" 
+              placeholder="担当者名" 
+              value={staffName} 
+              onChange={(e) => setStaffName(e.target.value)}
+              className="border p-1 rounded text-sm w-32"
+            />
+            <button 
+              onClick={handleBatchGenerate}
+              disabled={isBatchLoading}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-2 rounded-md font-bold disabled:bg-gray-400 transition-all"
+            >
+              {isBatchLoading ? '生成中...' : '実行'}
+            </button>
+          </div>
+        </div>
+
+        {/* テーブル */}
+        <div className="bg-white rounded-xl shadow-ios border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left text-gray-600">
+              <thead className="text-xs text-gray-700 uppercase bg-gray-50 border-b">
+                <tr>
+                  <th className="px-4 py-3 w-24">日付</th>
+                  <th className="px-4 py-3 w-32">利用者名</th>
+                  <th className="px-4 py-3 w-48">欠席理由 / 連絡</th>
+                  <th className="px-4 py-3">相談援助内容 (AI生成)</th>
+                  <th className="px-4 py-3 w-24">担当者</th>
+                  <th className="px-4 py-3 w-20 text-center">操作</th>
+                  {/* ★追加: 削除ボタン用の列 */}
+                  <th className="px-4 py-3 w-16 text-center"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={7} className="text-center py-10">読み込み中...</td></tr>
+                ) : records.length === 0 ? (
+                  <tr><td colSpan={7} className="text-center py-10 text-gray-400">データがありません</td></tr>
+                ) : (
+                  records.map((rec) => (
+                    <tr key={rec.id} className="border-b hover:bg-gray-50">
+                      <td className="px-4 py-3 font-medium">{rec.date}</td>
+                      <td className="px-4 py-3 font-bold text-gray-800">{rec.userName}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        <div className="font-bold text-gray-700 mb-1">{rec.reason}</div>
+                        {rec.notes}
+                      </td>
+                      
+                      {/* 編集モードか表示モードか */}
+                      {editingId === rec.id ? (
+                        <>
+                          <td className="px-4 py-3">
+                            <textarea 
+                              className="w-full border rounded p-2 text-sm focus:ring-2 focus:ring-blue-500"
+                              rows={4}
+                              value={editForm.aiAdvice}
+                              onChange={(e) => setEditForm({...editForm, aiAdvice: e.target.value})}
+                            />
+                          </td>
+                          <td className="px-4 py-3 align-top">
+                            <input 
+                              type="text" 
+                              className="w-full border rounded p-1"
+                              value={editForm.staffName}
+                              onChange={(e) => setEditForm({...editForm, staffName: e.target.value})}
+                            />
+                          </td>
+                          <td className="px-4 py-3 text-center align-top">
+                            <button onClick={saveEdit} className="text-green-600 hover:text-green-800 font-bold block mb-2">保存</button>
+                            <button onClick={() => setEditingId(null)} className="text-gray-400 hover:text-gray-600 text-xs">中止</button>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="px-4 py-3 whitespace-pre-wrap leading-relaxed text-gray-700">
+                            {rec.aiAdvice ? (
+                              rec.aiAdvice
+                            ) : (
+                              <span className="text-xs text-gray-300 italic">（未作成）</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-center">{rec.staffName || '-'}</td>
+                          <td className="px-4 py-3 text-center">
+                            <button 
+                              onClick={() => startEdit(rec)}
+                              className="text-blue-600 hover:text-blue-800"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                            </button>
+                          </td>
+                        </>
+                      )}
+
+                      {/* ★追加: 削除ボタン */}
+                      <td className="px-4 py-3 text-center">
+                        <button 
+                          onClick={() => handleDelete(rec.id, rec.userName, rec.date)}
+                          className="text-gray-400 hover:text-red-600 transition-colors p-1 rounded-full hover:bg-red-50"
+                          title="削除"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
