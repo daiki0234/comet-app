@@ -18,16 +18,12 @@ interface UserDataPDF {
 }
 
 // フォント登録
-// ★修正: hyphenationCallback で単語分割（ハイフン挿入）を無効化
 Font.register({
   family: 'NotoSansJP',
   fonts: [
     { src: '/fonts/NotoSansJP-Regular.ttf' },
   ],
-  // 文字列を1文字ずつに分解して返すことで、
-  // ライブラリ側に「ここは改行して良い」と伝えるが、「単語の途中ではない」と認識させる
   hyphenationCallback: (word: string) => {
-    // 1文字ずつ分割。ハイフンは挿入されない。
     return Array.from(word);
   },
 } as any);
@@ -83,7 +79,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#000',
     padding: 2, 
     justifyContent: 'center',
-    flexWrap: 'wrap', // 折り返しを有効化
+    flexWrap: 'wrap',
     overflow: 'hidden',
   },
   cellRight: {
@@ -107,7 +103,7 @@ const styles = StyleSheet.create({
     borderTopColor: '#000',
   },
 
-  // --- 幅設定 (合計100%) ---
+  // --- 幅設定 ---
   colNo: { width: '3%' },       
   colGoal: { width: '20%' },    
   colContent: { width: '36%' }, 
@@ -116,7 +112,6 @@ const styles = StyleSheet.create({
   colRemarks: { width: '22%' },
   colPriority: { width: '3%' },
   
-  // 時間割用
   wSchedule: { width: '14.28%' },
 
   // --- その他パーツ ---
@@ -249,47 +244,63 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
           </View>
 
           {/* データ行 */}
-          {plan.supportTargets.map((target, index) => (
-            <View key={index} style={styles.tableRow} wrap={false}>
-              <View style={[styles.cell, styles.td, styles.colNo, { textAlign: 'center' }]}>
-                <Text>{target.displayOrder}</Text>
-              </View>
-              
-              <View style={[styles.cell, styles.td, styles.colGoal]}>
-                <Text>{target.goal}</Text>
-              </View>
-              
-              <View style={[styles.cell, styles.td, styles.colContent]}>
-                <Text>
-                  {target.supportCategories && target.supportCategories.length > 0 && (
-                    <Text style={{ fontWeight: 'bold' }}>
-                       {`【${target.supportCategories.join('・')}】\n`}
-                    </Text>
-                  )}
-                  {target.content}
-                </Text>
-              </View>
+          {plan.supportTargets.map((target: any, index: number) => {
+            // ★修正ポイント: 5領域を表示するための整形処理
+            // target.fiveDomain が配列なら結合、文字列ならそのまま、なければ空文字
+            const fiveDomainStr = Array.isArray(target.fiveDomain) 
+              ? target.fiveDomain.join('・') 
+              : (target.fiveDomain || '');
+            
+            // 支援項目（既存のsupportCategories）
+            const categoryStr = target.supportCategories && target.supportCategories.length > 0
+              ? `【${target.supportCategories.join('・')}】`
+              : '';
 
-              <View style={[styles.cell, styles.td, styles.colPeriod, { textAlign: 'center' }]}>
-                <Text>{target.achievementPeriod === 'その他' ? target.achievementPeriodOther : target.achievementPeriod}</Text>
-              </View>
-              
-              {/* 変更後: replaceでスペースを改行コードに置換 */}
-              <View style={[styles.cell, styles.td, styles.colStaff]}>
-                <Text style={{ fontSize: 6.5, ...({ wordBreak: 'break-all' } as any) }}>
-                  {(target.staff || '').replace(/[ 　]+/g, '\n')}
-                </Text>
-              </View>
-              
-              <View style={[styles.cell, styles.td, styles.colRemarks]}>
-                <Text>{target.remarks}</Text>
-              </View>
+            // 5領域と支援項目を「｜」で繋ぐ
+            // 例: "健康・生活｜【生活自立】"
+            const headerText = [fiveDomainStr, categoryStr].filter(Boolean).join('｜');
 
-              <View style={[styles.cell, styles.td, styles.cellRight, styles.colPriority, { textAlign: 'center' }]}>
-                <Text>{target.priority}</Text>
+            return (
+              <View key={index} style={styles.tableRow} wrap={false}>
+                <View style={[styles.cell, styles.td, styles.colNo, { textAlign: 'center' }]}>
+                  <Text>{target.displayOrder}</Text>
+                </View>
+                
+                <View style={[styles.cell, styles.td, styles.colGoal]}>
+                  <Text>{target.goal}</Text>
+                </View>
+                
+                <View style={[styles.cell, styles.td, styles.colContent]}>
+                  <Text>
+                    {headerText && (
+                      <Text style={{ fontWeight: 'bold' }}>
+                         {`${headerText}\n`}
+                      </Text>
+                    )}
+                    {target.content}
+                  </Text>
+                </View>
+
+                <View style={[styles.cell, styles.td, styles.colPeriod, { textAlign: 'center' }]}>
+                  <Text>{target.achievementPeriod === 'その他' ? target.achievementPeriodOther : target.achievementPeriod}</Text>
+                </View>
+                
+                <View style={[styles.cell, styles.td, styles.colStaff]}>
+                  <Text style={{ fontSize: 6.5, ...({ wordBreak: 'break-all' } as any) }}>
+                    {(target.staff || '').replace(/[ 　]+/g, '\n')}
+                  </Text>
+                </View>
+                
+                <View style={[styles.cell, styles.td, styles.colRemarks]}>
+                  <Text>{target.remarks}</Text>
+                </View>
+
+                <View style={[styles.cell, styles.td, styles.cellRight, styles.colPriority, { textAlign: 'center' }]}>
+                  <Text>{target.priority}</Text>
+                </View>
               </View>
-            </View>
-          ))}
+            );
+          })}
         </View>
       </Page>
 
@@ -304,7 +315,6 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
         <View style={styles.headerSeparator} />
 
         <View style={{ width: '100%', marginTop: 5 }}>
-          
           {/* 1. 標準時間 */}
           <View style={{ marginBottom: 10 }}>
             <Text style={styles.sectionTitle}>支援の標準的な提供時間等</Text>
@@ -406,7 +416,6 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
             <View style={{ width: '50%' }}>
               <Text>本計画書に基づき支援の説明を受け、内容に同意しました。</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 }}>
-                {/* ★修正: 年月日の記入スペースを全角スペースで確保 */}
                 <View style={{ width: '40%', borderBottomWidth: 1, borderColor: '#000', paddingBottom: 2 }}>
                   <Text>年月日:　　　　　　年　　　月　　　日</Text>
                 </View>
