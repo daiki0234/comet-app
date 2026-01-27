@@ -245,13 +245,10 @@ export const PlanPDFDocument: React.FC<Props> = ({ plan, user, managerName }) =>
 
           {/* データ行 */}
           {plan.supportTargets.map((target: any, index: number) => {
-            // ★修正ポイント: 5領域を表示するための整形処理
-            // target.fiveDomain が配列なら結合、文字列ならそのまま、なければ空文字
-            const fiveDomainStr = Array.isArray(target.fiveDomain) 
-              ? target.fiveDomain.join('・') 
-              : (target.fiveDomain || '');
+            // ★修正ポイント: 入力フォームに合わせて 'fiveDomains' (複数形) を参照
+            const domainList = target.fiveDomains || target.fiveDomain || [];
+            const fiveDomainStr = Array.isArray(domainList) ? domainList.join('・') : '';
             
-            // 支援項目（既存のsupportCategories）
             const categoryStr = target.supportCategories && target.supportCategories.length > 0
               ? `【${target.supportCategories.join('・')}】`
               : '';
