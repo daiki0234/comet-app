@@ -558,9 +558,9 @@ export default function DashboardPage() {
         await new Promise<void>((resolve) => {
           root.render(
             <React.StrictMode>
-              <ServiceRecordSheet record={toSheetRecord(pair[0])} />
-              <ServiceRecordSheet record={toSheetRecord(pair[1])} />
-            </React.StrictMode>
+    <ServiceRecordSheet record={toSheetRecord(pair[0])} index={0} />
+    <ServiceRecordSheet record={toSheetRecord(pair[1])} index={1} />
+  </React.StrictMode>
           );
           setTimeout(resolve, 500);
         });

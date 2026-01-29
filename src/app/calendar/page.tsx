@@ -418,7 +418,12 @@ export default function CalendarPage() {
       tempDiv.style.width = '182mm'; tempDiv.style.position = 'absolute'; tempDiv.style.left = '-2000px';
       document.body.appendChild(tempDiv);
       const root = createRoot(tempDiv);
-      root.render(<React.StrictMode><ServiceRecordSheet record={toSheetRecord(recordToPrint)} /><ServiceRecordSheet record={null} /></React.StrictMode>);
+      root.render(
+  <React.StrictMode>
+    <ServiceRecordSheet record={toSheetRecord(recordToPrint)} index={0} />
+    <ServiceRecordSheet record={null} index={1} />
+  </React.StrictMode>
+);
       await new Promise(r => setTimeout(r, 500)); 
       const canvas = await html2canvas(tempDiv, { scale: 3 });
       const imgData = canvas.toDataURL('image/png');
@@ -461,9 +466,12 @@ export default function CalendarPage() {
       
       root.render(
         <React.StrictMode>
-          <ServiceRecordSheet record={toSheetRecord(pair[0])} />
-          <ServiceRecordSheet record={toSheetRecord(pair[1])} />
-        </React.StrictMode>
+    {/* 上段: index 0 (偶数) なので線が出る */}
+    <ServiceRecordSheet record={toSheetRecord(pair[0])} index={0} />
+    
+    {/* 下段: index 1 (奇数) なので線が消える */}
+    <ServiceRecordSheet record={toSheetRecord(pair[1])} index={1} />
+  </React.StrictMode>
       );
       
       await new Promise(r => setTimeout(r, 500)); 
