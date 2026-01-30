@@ -16,61 +16,69 @@ interface Props {
   user?: UserData | null;
 }
 
-// 名前付きエクスポート (export const ...)
 export const MonitoringPDFDownloadButton: React.FC<Props> = ({ monitoring, plan: initialPlan, user: initialUser }) => {
   const [isGenerating, setIsGenerating] = useState(false);
 
   const handleDownload = async (e: React.MouseEvent) => {
+    // 親の行クリックイベント（詳細画面への遷移など）を止める
     e.stopPropagation();
 
     try {
       setIsGenerating(true);
       const toastId = toast.loading('PDFを生成しています...');
 
+      // --- 1. 足りないデータを補完する処理 ---
       let currentPlan = initialPlan || null;
       let currentUser = initialUser || null;
 
-      // 計画書の取得
-      // ★修正: planIdが型定義にない場合のエラー回避のため as any を使用
-      const planId = (monitoring as any).planId; 
-      if (!currentPlan && planId) {
-        try {
-          const planSnap = await getDoc(doc(db, 'supportPlans', planId));
-          if (planSnap.exists()) {
-            currentPlan = { id: planSnap.id, ...planSnap.data() } as SupportPlan;
+      // 計画書 (SupportPlan) が渡されていない場合、IDを使って取りに行く
+      if (!currentPlan) {
+        // 型定義に planId がなくてもデータとして持っていれば取り出す
+        const planId = (monitoring as any).planId || (monitoring as any).supportPlanId;
+        
+        if (planId) {
+          try {
+            const planSnap = await getDoc(doc(db, 'supportPlans', planId));
+            if (planSnap.exists()) {
+              currentPlan = { id: planSnap.id, ...planSnap.data() } as SupportPlan;
+              console.log("✅ [一覧] 計画書データを取得しました:", currentPlan);
+            } else {
+              console.warn("⚠️ 指定されたIDの計画書が見つかりませんでした:", planId);
+            }
+          } catch (err) {
+            console.error("計画書取得エラー:", err);
           }
-        } catch (err) {
-          console.warn("計画書データの取得に失敗しましたが、続行します", err);
+        } else {
+          console.warn("⚠️ monitoringデータ内に planId がありません。");
         }
       }
 
-      // 利用者の取得
+      // 利用者 (User) が渡されていない場合、IDを使って取りに行く
       if (!currentUser && monitoring.userId) {
         try {
           const userSnap = await getDoc(doc(db, 'users', monitoring.userId));
           if (userSnap.exists()) {
             currentUser = { id: userSnap.id, ...userSnap.data() } as UserData;
+            console.log("✅ [一覧] 利用者データを取得しました:", currentUser);
           }
         } catch (err) {
-          console.warn("利用者データの取得に失敗しましたが、続行します", err);
+          console.error("利用者取得エラー:", err);
         }
       }
 
-      // ★重要: データが見つからなくても中断せず、ログだけ出して進む
-      if (!currentPlan) console.log('計画書データなしで作成します');
-      if (!currentUser) console.log('利用者マスタデータなしで作成します');
-
-      // PDF生成
-      // 上記の MonitoringPDFDocument 修正により、null が渡されてもクラッシュしません
+      // --- 2. PDF生成 ---
       const docElement = <MonitoringPDFDocument monitoring={monitoring} plan={currentPlan} user={currentUser} />;
       const blob = await pdf(docElement).toBlob();
 
-      // ダウンロード
+      // --- 3. ダウンロード ---
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      const dateStr = monitoring.creationDate ? monitoring.creationDate.replace(/\//g, '-') : '日付なし';
-      link.download = `${monitoring.userName}_モニタリング_${dateStr}.pdf`;
+      
+      // ファイル名生成 (日付のスラッシュをハイフンに置換)
+      const dateStr = monitoring.creationDate ? String(monitoring.creationDate).replace(/\//g, '-') : '日付なし';
+      const userName = monitoring.userName || '利用者';
+      link.download = `${userName}_モニタリング_${dateStr}.pdf`;
       
       document.body.appendChild(link);
       link.click();
@@ -79,9 +87,9 @@ export const MonitoringPDFDownloadButton: React.FC<Props> = ({ monitoring, plan:
 
       toast.success('ダウンロードしました', { id: toastId });
 
-    } catch (e) {
-      console.error(e);
-      toast.error('PDF生成に失敗しました');
+    } catch (e: any) {
+      console.error("PDF生成エラー:", e);
+      toast.error(`PDF生成失敗: ${e.message}`);
     } finally {
       setIsGenerating(false);
     }
