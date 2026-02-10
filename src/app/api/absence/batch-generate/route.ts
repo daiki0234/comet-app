@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 
     // 5件ずつ分割
     const chunks = chunkArray(targets, 5); 
-    const MODEL_NAME = 'gemini-3-flash-preview';
+    const MODEL_NAME = 'gemini-2.5-flash';
     
     let totalUpdated = 0;
     const batchWriter = adminDb.batch();
