@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     const todayStr = now.toLocaleDateString('ja-JP'); 
 
     // ★成功したモデル名を使用
-    const MODEL_NAME = 'gemini-flash-latest';
+    const MODEL_NAME = 'gemini-3-flash-preview';
     
     console.log(`[API] Requesting Gemini via fetch (${MODEL_NAME})...`);
 
