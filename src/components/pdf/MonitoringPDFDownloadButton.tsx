@@ -57,28 +57,62 @@ export const MonitoringPDFDownloadButton: React.FC<Props> = ({ monitoring, plan:
           }
         }
         
-        // ★★★ 追加: IDがない、または取得に失敗した場合のバックアップ検索 ★★★
+       // ★★★ 修正: IDがない、または取得に失敗した場合は「モニタリング期間」で検索 ★★★
         if (!currentPlan && monitoring.userId) {
-          console.log("紐づく計画書が見つからないため、最新の計画書を検索します...");
+          console.log("紐づく計画書が見つからないため、モニタリング期間に合致する計画書を検索します...");
           try {
-            // その利用者の、最新の「本番」または「原案」の計画書を探す
+            // その利用者の「本番」の計画書をすべて取得
             const q = query(
               collection(db, 'supportPlans'),
               where('userId', '==', monitoring.userId),
-              // ステータスでの絞り込みは必須ではないが、本番を優先したい場合はソート順で調整可能
-              // ここでは単純に作成日が新しいものを取得
-              orderBy('creationDate', 'desc'),
-              limit(1)
+              where('status', '==', '本番'),
+              orderBy('createdAt', 'desc') // ★変更: firebaseの標準的な作成日時でソート
             );
             
             const querySnapshot = await getDocs(q);
-            if (!querySnapshot.empty) {
-              const docSnap = querySnapshot.docs[0];
-              currentPlan = { id: docSnap.id, ...docSnap.data() } as SupportPlan;
-              console.log("✅ 最新の計画書を自動適用しました:", currentPlan);
-              toast.success("最新の計画書データを適用しました", { id: toastId });
+            const userPlans = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as SupportPlan));
+
+            if (userPlans.length > 0) {
+              const { periodStart, periodEnd } = monitoring;
+              
+              if (periodStart && periodEnd) {
+                // モニタリング期間に合致するものを探す
+                currentPlan = userPlans.find(p => {
+                  // as any を使って型エラーを回避しつつ、作成日を取得
+                  const planDate = p.creationDate || (p as any).createdAt; 
+                  if (!planDate) return false;
+                  
+                  // FirestoreのTimestamp型（secondsがある場合）と、ただの文字列の場合を両方カバー
+                  let dateStr = '';
+                  if (typeof planDate === 'string') {
+                    dateStr = planDate;
+                  } else if (planDate.seconds) {
+                    // Timestamp型を "YYYY-MM-DD" の文字列に変換
+                    dateStr = new Date(planDate.seconds * 1000).toISOString().split('T')[0];
+                  } else if (planDate.toDate) {
+                    dateStr = planDate.toDate().toISOString().split('T')[0];
+                  } else {
+                    return false;
+                  }
+                  
+                  return dateStr >= periodStart && dateStr <= periodEnd;
+                }) || null;
+              }
+
+              // ★超重要: 期間に合致するものが無かった場合、絶対に最新のものをセットする
+              if (!currentPlan) {
+                currentPlan = userPlans[0];
+                console.warn("⚠️ 期間に合致する計画書が見つからなかったため、最新の計画書を適用しました。");
+              } else {
+                console.log("✅ 期間内の計画書を自動適用しました:", currentPlan);
+              }
+
             } else {
-              console.warn("⚠️ この利用者の計画書が1件も見つかりませんでした。");
+              console.warn("⚠️ この利用者の「本番」の計画書が1件も見つかりませんでした。");
+              // ★アラートを出して処理を止める（空のPDFを出さない）
+              toast.error('有効な個別支援計画（本番）が見つかりません。', { id: toastId });
+              setIsGenerating(false);
+              return; 
             }
           } catch (err) {
             console.error("計画書自動検索エラー:", err);
