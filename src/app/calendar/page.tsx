@@ -29,11 +29,12 @@ async function fetchJapaneseHolidays(year: number): Promise<string[]> {
   }
 }
 
-type ScheduleStatus = '放課後' | '休校日' | 'キャンセル待ち' | '欠席' | '取り消し';
+type ScheduleStatus = '放課後' | '休校日' | 'キャンセル待ち' | '欠席' | '取り消し' | '体験';
 
 const STATUS_TILE_CLASS: Partial<Record<ScheduleStatus, string>> = {
   放課後: 'bg-green-200',
   休校日: 'bg-orange-200',
+  体験: 'bg-emerald-200', // 追加: 体験の場合は少し違う緑背景
 };
 
 const USER_SCHEDULE_CLASS: Partial<Record<ScheduleStatus, string>> = {
@@ -42,6 +43,7 @@ const USER_SCHEDULE_CLASS: Partial<Record<ScheduleStatus, string>> = {
   'キャンセル待ち': 'bg-gray-200 border-2 border-gray-500',
   '欠席': 'bg-red-100 border-2 border-red-500',
   '取り消し': 'bg-pink-100 border-2 border-pink-500',
+  '体験': 'bg-green-100 border-2 border-green-500', // 追加
 };
 
 const USER_SCHEDULE_TEXT_CLASS: Partial<Record<ScheduleStatus, string>> = {
@@ -50,9 +52,10 @@ const USER_SCHEDULE_TEXT_CLASS: Partial<Record<ScheduleStatus, string>> = {
   'キャンセル待ち': 'text-gray-600',
   '欠席': 'text-red-600',
   '取り消し': 'text-pink-600',
+  '体験': 'text-green-700', // 追加
 };
 
-const STATUS_PRIORITY: ScheduleStatus[] = ['休校日', '放課後', 'キャンセル待ち', '欠席', '取り消し'];
+const STATUS_PRIORITY: ScheduleStatus[] = ['休校日', '放課後', '体験' , 'キャンセル待ち', '欠席', '取り消し'];
 
 function buildEventsMap(
   events: Array<{ dateKeyJst: string; type: ScheduleStatus; userId: string }>
@@ -144,11 +147,13 @@ const formatDateSlash = (val: any) => {
     return '-';
   }
 };
+  
 
 export default function CalendarPage() {
   const [activeTab, setActiveTab] = useState('management');
   const [users, setUsers] = useState<User[]>([]);
   const [allEvents, setAllEvents] = useState<EventData[]>([]);
+  const [allAttendances, setAllAttendances] = useState<EventData[]>([]); // ★追加: 実績データ用
   
   const [businessDays, setBusinessDays] = useState<Record<string, string>>({});
 
@@ -187,19 +192,56 @@ export default function CalendarPage() {
     });
   }, []);
 
+// --- ★修正: ハイブリッドデータの生成 ---
+  const hybridEvents = useMemo(() => {
+    const todayStr = toDateString(new Date());
+    const eventMap = new Map<string, EventData>();
+
+    // 1. まずベースとなる「予定（events）」の処理
+    allEvents.forEach(ev => {
+      if (!ev.dateKeyJst) return;
+      const key = `${ev.dateKeyJst}_${ev.userId}`;
+
+      if (ev.dateKeyJst >= todayStr) {
+        // 今日以降の予定は、無条件ですべてマップに入れる
+        eventMap.set(key, ev);
+      } else {
+        // 過去（昨日以前）の予定は、「キャンセル待ち」「取り消し」「体験」だけを残す
+        if (ev.type === 'キャンセル待ち' || ev.type === '取り消し' || ev.type === '体験') {
+          eventMap.set(key, ev);
+        }
+      }
+    });
+
+    // 2. その上から「実績（attendanceRecords）」を重ね塗りする
+    allAttendances.forEach(att => {
+      if (!att.dateKeyJst) return;
+      const key = `${att.dateKeyJst}_${att.userId}`;
+
+      if (att.dateKeyJst < todayStr) {
+        eventMap.set(key, att);
+      }
+    });
+
+    return Array.from(eventMap.values());
+  }, [allEvents, allAttendances]);
+
+  // --- eventsMap の変更 ---
+  // allEvents ではなく、上で作った hybridEvents を元にマップを作る
   const eventsMap = useMemo(
     () => buildEventsMap(
-      allEvents.map(ev => ({
+      hybridEvents.map(ev => ({ // ★変更
         dateKeyJst: ev.dateKeyJst as string,
         type: ev.type as ScheduleStatus,
         userId: ev.userId as string,
       }))
     ),
-    [allEvents]
+    [hybridEvents] // ★変更
   );
 
   const fetchInitialData = useCallback(async () => {
     try {
+      // --- 1. ユーザー情報取得 (変更なし) ---
       const usersSnapshot = await getDocs(collection(db, 'users'));
       const usersDataRaw = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
       const usersData = usersDataRaw.map(u => ({
@@ -210,6 +252,7 @@ export default function CalendarPage() {
       })) as User[];
       setUsers(usersData);
 
+      // --- 2. events（予定）取得 (変更なし) ---
       const eventsSnapshot = await getDocs(collection(db, "events"));
       const eventsData = eventsSnapshot.docs.map(doc => {
         const data = doc.data() as any;
@@ -226,16 +269,30 @@ export default function CalendarPage() {
             key = toDateString(dateObj);
           } catch (e) {}
         }
-        
         return {
           ...(data as EventData),
           id: doc.id,
           dateKeyJst: key,
         };
       });
-
       setAllEvents(eventsData);
 
+      // --- 3. ★追加: attendanceRecords（実績）取得 ---
+      const attSnapshot = await getDocs(collection(db, "attendanceRecords"));
+      const attData = attSnapshot.docs.map(doc => {
+        const data = doc.data() as any;
+        return {
+          id: doc.id,
+          userId: data.userId,
+          dateKeyJst: data.date, // attendanceRecords側は 'date' に入っている
+          type: data.usageStatus, // attendanceRecords側は 'usageStatus' に入っている
+          createdAt: data.createdAt,
+          updatedAt: data.updatedAt,
+        } as EventData;
+      });
+      setAllAttendances(attData);
+
+      // --- 4. 営業日カレンダー取得 (変更なし) ---
       const busSnapshot = await getDocs(collection(db, 'businessDays'));
       const busData: Record<string, string> = {};
       busSnapshot.forEach(doc => {
@@ -246,7 +303,7 @@ export default function CalendarPage() {
 
     } catch (error) {
       console.error("データの初期読み込みに失敗しました:", error);
-      alert("カレンダーデータの読み込みに失敗しました。");
+      toast.error("カレンダーデータの読み込みに失敗しました。");
     }
   }, []);
 
@@ -254,26 +311,36 @@ export default function CalendarPage() {
     fetchInitialData();
   }, []);
 
+  // --- ★修正: 月別サマリーの集計 ---
   const monthlySummary = useMemo(() => {
     const year = activeStartDate.getFullYear();
     const month = activeStartDate.getMonth() + 1;
     const prefix = `${year}-${pad2(month)}`;
+    const todayStr = toDateString(new Date());
 
     let totalUnits = 0;
+    let totalAttended = 0;
     let totalAbsences = 0;
+    let totalTrials = 0;
 
-    allEvents.forEach(ev => {
+    hybridEvents.forEach(ev => {
       if (ev.dateKeyJst && ev.dateKeyJst.startsWith(prefix)) {
         if (ev.type === '放課後' || ev.type === '休校日') {
-          totalUnits++;
+          totalUnits++; // コマ数合計（予定＋実績）
+          
+          if (ev.dateKeyJst < todayStr) {
+            totalAttended++; // 出席数合計（今日より前の実績）
+          }
         } else if (ev.type === '欠席') {
-          totalAbsences++;
+          totalAbsences++; // 欠席数
+        } else if (ev.type === '体験') {
+          totalTrials++; // 体験数
         }
       }
     });
 
-    return { totalUnits, totalAbsences };
-  }, [allEvents, activeStartDate]);
+    return { totalUnits, totalAttended, totalAbsences, totalTrials };
+  }, [hybridEvents, activeStartDate]);
 
   const onActiveStartDateChange = ({ activeStartDate }: { activeStartDate: Date | null }) => {
     if (activeStartDate) {
@@ -281,17 +348,17 @@ export default function CalendarPage() {
     }
   };
 
-  const dailyScheduledUsers = useMemo(() => {
+const dailyScheduledUsers = useMemo(() => {
     if (!selectedDate || users.length === 0) return [];
     const dateKey = jstDateKey(selectedDate!);
-    return allEvents
+    return hybridEvents // ★ allEvents を hybridEvents に変更
         .filter(event => (event.dateKeyJst ?? event.date) === dateKey)
         .map(event => {
           const user = users.find(u => u.id === event.userId);
           return { ...event, userName: user ? `${user.lastName} ${user.firstName}` : '不明', user: user! };
         })
         .filter(e => e.user);
-  }, [selectedDate, users, allEvents]);
+  }, [selectedDate, users, hybridEvents]); // ★依存配列も変更
 
   const groupedUsers = useMemo(() => {
     const groups: Record<string, typeof dailyScheduledUsers> = {};
@@ -305,8 +372,8 @@ export default function CalendarPage() {
   }, [dailyScheduledUsers]);
 
   const userSchedule = useMemo(() => {
-    return allEvents.filter(event => event.userId === selectedUserId);
-  }, [selectedUserId, allEvents]);
+    return hybridEvents.filter(event => event.userId === selectedUserId); // ★ allEvents を hybridEvents に変更
+  }, [selectedUserId, hybridEvents]); // ★依存配列も変更
 
   const handleQuickStatusChange = async (event: EventData, newStatus: ScheduleStatus) => {
     if (!event.id) return;
@@ -527,13 +594,15 @@ export default function CalendarPage() {
     return classes.join(' ');
   }, [userSchedule, selectedUserId, holidays, eventsMap, businessDays]);
 
+  // --- ★修正: managementTileContent ---
   const managementTileContent = ({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month') return null;
     const key = toDateString(date);
     const day = eventsMap.get(key);
     if (!day) return null; 
 
-    const counts: Record<ScheduleStatus, number> = { 放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0 };
+    // ★ '体験' を追加
+    const counts: Record<ScheduleStatus, number> = { 放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0, 体験: 0 };
     let houkagoHasJihatsu = false, kyukouHasJihatsu = false;
 
     day.items.forEach(it => { 
@@ -545,12 +614,22 @@ export default function CalendarPage() {
       }
     });
 
+    // 欠席・取り消し・体験の文字列を動的に組み立てる
+    const additionalInfo = [];
+    if (counts['欠席'] > 0) additionalInfo.push(`欠:${counts['欠席']}`);
+    if (counts['取り消し'] > 0) additionalInfo.push(`取:${counts['取り消し']}`);
+    if (counts['体験'] > 0) additionalInfo.push(`体験:${counts['体験']}`);
+
     return (
       <div className="px-1 pb-1 pointer-events-none text-[12px] leading-tight font-medium">
         {counts['放課後'] > 0 && <div className="text-green-700">放課後: {counts['放課後']}人 {houkagoHasJihatsu && <span className="ml-1 text-[10px] text-blue-600 font-bold border border-blue-400 rounded px-[2px] bg-white leading-none">児発含</span>}</div>}
         {counts['休校日'] > 0 && <div className="text-orange-700">休校日: {counts['休校日']}人 {kyukouHasJihatsu && <span className="ml-1 text-[10px] text-blue-600 font-bold border border-blue-400 rounded px-[2px] bg-white leading-none">児発含</span>}</div>}
         {counts['キャンセル待ち'] > 0 && <div className="text-gray-600">ｷｬﾝｾﾙ待ち: {counts['キャンセル待ち']}人</div>}
-        {(counts['欠席'] > 0 || counts['取り消し'] > 0) && <div className="text-red-600">欠:{counts['欠席']} 取:{counts['取り消し']}</div>}
+        {additionalInfo.length > 0 && (
+          <div className="text-red-600 mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis">
+            {additionalInfo.join(' ')}
+          </div>
+        )}
       </div>
     );
   };
@@ -562,8 +641,9 @@ export default function CalendarPage() {
 
     let totalCountsContent = null;
     if (day) {
+      // ★修正: '体験' を追加
       const counts: Record<ScheduleStatus, number> = {
-        放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0,
+        放課後: 0, 休校日: 0, キャンセル待ち: 0, 欠席: 0, 取り消し: 0, 体験: 0,
       };
       
       let houkagoHasJihatsu = false;
@@ -588,11 +668,24 @@ export default function CalendarPage() {
         </span>
       );
 
+      // ★追加: 欠席・取り消し・体験の文字列を動的に組み立てる
+      const additionalInfo = [];
+      if (counts['欠席'] > 0) additionalInfo.push(`欠:${counts['欠席']}`);
+      if (counts['取り消し'] > 0) additionalInfo.push(`取:${counts['取り消し']}`);
+      if (counts['体験'] > 0) additionalInfo.push(`体験:${counts['体験']}`);
+
       totalCountsContent = (
         <div className="text-[12px] leading-tight text-gray-700">
           {houkagoCount > 0 && <div className="flex items-center flex-wrap">放課後: {houkagoCount}人 {houkagoHasJihatsu && <Badge />}</div>}
           {kyukouCount > 0 && <div className="flex items-center flex-wrap">休校日: {kyukouCount}人 {kyukouHasJihatsu && <Badge />}</div>}
           {waitCount > 0 && <div>ｷｬﾝｾﾙ: {waitCount}人</div>}
+          
+          {/* ★追加: 欠・取・体験の表示エリア */}
+          {additionalInfo.length > 0 && (
+            <div className="text-red-600 mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis">
+              {additionalInfo.join(' ')}
+            </div>
+          )}
         </div>
       );
     }
@@ -690,6 +783,7 @@ export default function CalendarPage() {
                                   >
                                     <option value="放課後" className="text-blue-700">放課後</option>
                                     <option value="休校日" className="text-yellow-700">休校日</option>
+                                    <option value="体験" className="text-green-700">体験</option> {/* ★追加 */}
                                     <option value="キャンセル待ち" className="text-gray-600">キャンセル待ち</option>
                                     <option value="欠席" className="text-red-600">欠席</option>
                                     <option value="取り消し" className="text-pink-600">取り消し</option>
@@ -733,6 +827,7 @@ export default function CalendarPage() {
                   <select value={eventType} onChange={(e) => setEventType(e.target.value as ScheduleStatus)} className="p-2 border rounded w-full">
                     <option value="放課後">放課後</option>
                     <option value="休校日">休校日</option>
+                    <option value="体験">体験</option> {/* ★追加 */}
                     <option value="キャンセル待ち">キャンセル待ち</option>
                     <option value="欠席">欠席</option>
                     <option value="取り消し">取り消し</option>
@@ -778,14 +873,22 @@ export default function CalendarPage() {
             <div className="grid grid-cols-1 gap-8 items-start">
               <div className="w-full">
                 {/* サマリー表示エリア */}
-                <div className="mb-4 grid grid-cols-2 gap-4">
-                  <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 text-center">
-                    <div className="text-sm text-blue-600 font-bold">当月合計コマ数</div>
+                <div className="mb-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 text-center shadow-sm">
+                    <div className="text-sm text-blue-600 font-bold">当月コマ数合計</div>
                     <div className="text-2xl font-bold text-blue-800">{monthlySummary.totalUnits}</div>
                   </div>
-                  <div className="bg-red-50 p-3 rounded-lg border border-red-200 text-center">
-                    <div className="text-sm text-red-600 font-bold">当月欠席数</div>
+                  <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 text-center shadow-sm">
+                    <div className="text-sm text-blue-600 font-bold">当月出席数合計</div>
+                    <div className="text-2xl font-bold text-blue-800">{monthlySummary.totalAttended}</div>
+                  </div>
+                  <div className="bg-red-50 p-3 rounded-lg border border-red-200 text-center shadow-sm">
+                    <div className="text-sm text-red-600 font-bold">当月欠席数合計</div>
                     <div className="text-2xl font-bold text-red-800">{monthlySummary.totalAbsences}</div>
+                  </div>
+                  <div className="bg-green-50 p-3 rounded-lg border border-green-200 text-center shadow-sm">
+                    <div className="text-sm text-green-600 font-bold">当月体験数</div>
+                    <div className="text-2xl font-bold text-green-800">{monthlySummary.totalTrials}</div>
                   </div>
                 </div>
 

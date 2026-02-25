@@ -41,7 +41,8 @@ export default function NewMonitoringPage() {
     shortMessage: '',
   });
 
-  // 取得した計画書データ
+// 取得した計画書データ
+  const [userPlans, setUserPlans] = useState<SupportPlan[]>([]); // ← これを追加
   const [activePlan, setActivePlan] = useState<SupportPlan | null>(null);
   
   // 支援目標ごとの評価入力用 { targetId: evaluationText }
@@ -65,37 +66,72 @@ export default function NewMonitoringPage() {
     fetchMasters();
   }, []);
 
-  // 利用者選択時の処理 -> 最新の本番計画書を取得
+  // 利用者選択時の処理 -> 本番計画書をすべて取得してセットする
   const handleSelectUser = async (user: UserData) => {
     setFormData({ ...formData, userId: user.id, userName: `${user.lastName} ${user.firstName}` });
     setSearchTerm(`${user.lastName} ${user.firstName}`);
     setShowSuggestions(false);
     setActivePlan(null); // リセット
     setTargetEvals({});  // リセット
+    setUserPlans([]);    // リセット
 
-    // 最新の本番計画書を取得
     try {
+      // limit(1) を外し、対象ユーザーの「本番」計画書をすべて取得（新しい順）
       const q = query(
         collection(db, 'supportPlans'),
         where('userId', '==', user.id),
         where('status', '==', '本番'),
-        orderBy('createdAt', 'desc'),
-        limit(1)
+        orderBy('createdAt', 'desc')
       );
       const snap = await getDocs(q);
       
-      if (!snap.empty) {
-        const planData = { id: snap.docs[0].id, ...snap.docs[0].data() } as SupportPlan;
-        setActivePlan(planData);
-        toast.success("最新の個別支援計画を読み込みました");
-      } else {
-        toast("本番の個別支援計画が見つかりませんでした");
-      }
+      const plans = snap.docs.map(d => ({ id: d.id, ...d.data() } as SupportPlan));
+      setUserPlans(plans);
+
     } catch (e) {
       console.error(e);
       toast.error("計画書の取得に失敗しました");
     }
   };
+
+  // モニタリング期間が変更されたら、期間内の個別支援計画を自動でセットする
+  useEffect(() => {
+    if (!formData.userId || userPlans.length === 0) return;
+
+    const { periodStart, periodEnd } = formData;
+    let targetPlan = null;
+
+    if (periodStart && periodEnd) {
+      // 計画書の作成日(creationDate)が、モニタリング期間内にあるものを探す
+      targetPlan = userPlans.find(p => {
+        if (!p.creationDate) return false;
+        return p.creationDate >= periodStart && p.creationDate <= periodEnd;
+      }) || null;
+    } else {
+      // 期間が未入力の場合は、とりあえず一番新しい計画書をセットしておく
+      targetPlan = userPlans[0] || null;
+    }
+
+    setActivePlan(prev => {
+      // すでに同じ計画書がセットされている場合は何もしない（無限ループ防止）
+      if (prev?.id === targetPlan?.id) return prev;
+      
+      // 違う計画書がセットされる場合
+      if (targetPlan) {
+        if (periodStart && periodEnd) {
+          toast.success("期間内の個別支援計画を読み込みました");
+        } else {
+          toast.success("最新の個別支援計画を読み込みました");
+        }
+      } else {
+        toast("指定された期間内の個別支援計画が見つかりません");
+      }
+      
+      setTargetEvals({}); // 計画書が変わったら評価入力もリセットする
+      return targetPlan;
+    });
+
+  }, [formData.userId, userPlans, formData.periodStart, formData.periodEnd]);
 
   // 保存処理
   const handleSubmit = async (e: React.FormEvent) => {
@@ -164,6 +200,19 @@ export default function NewMonitoringPage() {
                   <span>〜</span>
                   <input type="date" value={formData.periodEnd} onChange={e => setFormData({...formData, periodEnd: e.target.value})} className="w-full border p-2 rounded" />
                 </div>
+                {/* 🔽🔽🔽 ここから追加 🔽🔽🔽 */}
+                {activePlan ? (
+                  <div className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-200">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                    適用中の個別支援計画: {activePlan.creationDate || '日付不明'} 作成
+                  </div>
+                ) : formData.userId ? (
+                  <div className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 bg-red-50 text-red-600 text-xs font-bold rounded border border-red-200">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                    期間内に作成された計画書が見つかりません
+                  </div>
+                ) : null}
+                {/* 🔼🔼🔼 ここまで追加 🔼🔼🔼 */}
               </div>
             </div>
 
