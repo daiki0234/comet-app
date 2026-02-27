@@ -208,21 +208,32 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
 
     let determinedDuration = '';
 
-    if (activePlan) {
+    // --- 🔽 修正ポイント: 休校日かどうかを先に判定する 🔽 ---
+
+    if (formData.status === '休校日') {
+      // 1. 利用状況が「休校日」の場合
+      // もし計画書に「休業日（standardではなくholidayなどの枠）」があればそこを見るロジックも組めますが、
+      // 一旦、ご要望に合わせて「休校日なら3.5h」を最優先にします。
+      determinedDuration = '3.5';
+
+    } else if (activePlan) {
+      // 2. 利用状況が「放課後」かつ「計画書がある」場合
       const dateObj = new Date(formData.date);
       const jsDay = dateObj.getDay(); 
       const appDayIndex = jsDay === 0 ? 6 : jsDay - 1; 
       const schedule = activePlan.schedules?.standard?.[appDayIndex];
+      
       if (schedule && schedule.duration) {
         determinedDuration = schedule.duration;
       }
     }
 
-    // ★修正: 判定文字列を「放課後」「休校日」に統一
+    // 3. それでも決まらない場合の最終フォールバック
     if (!determinedDuration) {
       if (formData.status === '放課後') determinedDuration = '2.0';
       else if (formData.status === '休校日') determinedDuration = '3.5';
     }
+    // --- 🔼 修正ここまで 🔼 ---
 
     let newClass = '';
     if (determinedDuration) {
@@ -477,11 +488,13 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs font-bold text-gray-500 block mb-1">長期目標</label>
-                    <div className="bg-gray-50 p-2 rounded text-sm border">{activePlan.longTermGoal}</div>
+                    {/* whitespace-pre-wrap を追加 */}
+                    <div className="bg-gray-50 p-2 rounded text-sm border whitespace-pre-wrap">{activePlan.longTermGoal}</div>
                   </div>
                   <div>
                     <label className="text-xs font-bold text-gray-500 block mb-1">短期目標</label>
-                    <div className="bg-gray-50 p-2 rounded text-sm border">{activePlan.shortTermGoal}</div>
+                    {/* whitespace-pre-wrap を追加 */}
+                    <div className="bg-gray-50 p-2 rounded text-sm border whitespace-pre-wrap">{activePlan.shortTermGoal}</div>
                   </div>
                 </div>
                 {activePlan.supportTargets?.sort((a:any,b:any)=>Number(a.displayOrder)-Number(b.displayOrder)).map((target: any, idx: number) => (
@@ -490,15 +503,16 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
                       <span className="bg-blue-100 text-blue-800 text-xs font-bold px-2 py-1 rounded">支援目標 {target.displayOrder}</span>
                     </div>
                     <div className="grid grid-cols-1 gap-2 mb-2">
-                      <div className="text-sm font-bold text-gray-800">{target.goal}</div>
-                      <div className="text-xs text-gray-600 bg-gray-50 p-2 rounded">{target.content}</div>
-                    </div>
+                  <div className="text-sm font-bold text-gray-800">{target.goal}</div>
+                  {/* 内容表示部分にも追加 */}
+                  <div className="text-xs text-gray-600 bg-gray-50 p-2 rounded whitespace-pre-wrap">{target.content}</div>
+                </div>
                     <div>
                       <label className="text-xs font-bold text-gray-500">コメント</label>
-                      <input 
-                        type="text" 
-                        className="w-full border p-2 rounded text-sm"
-                        placeholder="この目標に対するコメント"
+                      {/* 🔽 input から textarea に変更 🔽 */}
+                      <textarea 
+                        className="w-full border p-2 rounded text-sm h-20 resize-y" // h-20（約3行分）と resize-y（高さ調整可）を追加
+                        placeholder="この目標に対するコメントを入力してください..."
                         value={targetComments[target.id] || ''}
                         onChange={(e) => setTargetComments({...targetComments, [target.id]: e.target.value})}
                       />
