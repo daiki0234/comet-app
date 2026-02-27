@@ -229,7 +229,11 @@ export default function SupportRecordListPage() {
                         {r.endTime || '-'}
                       </td>
                       <td className="px-6 py-4 text-center font-bold">
-                        {r.duration ? `${r.duration}h` : '-'}
+                         {/* 🔽 保存データが2.0でも、ステータスが休校日なら3.5と表示する 🔽 */}
+                           {(() => {
+                                if (r.status === '休校日') return '3.5h';
+                                return r.duration ? `${r.duration}h` : '-';      
+                          })()}
                       </td>
                       {/* 🔽 コメント列の追加 🔽 */}
                       <td className="px-6 py-4">
