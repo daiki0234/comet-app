@@ -179,31 +179,48 @@ export default function SupportRecordListPage() {
                   <th className="px-6 py-3 text-center">開始時間</th>
                   <th className="px-6 py-3 text-center">終了時間</th>
                   <th className="px-6 py-3 text-center">算定時間数</th>
+                  {/* 🔽 追加 🔽 */}
+                  <th className="px-6 py-3">コメント</th>
                   <th className="px-6 py-3 text-center">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {loading ? (
-                  <tr><td colSpan={7} className="p-8 text-center text-gray-500">読み込み中...</td></tr>
+                  <tr><td colSpan={8} className="p-8 text-center text-gray-500">読み込み中...</td></tr>
                 ) : paginatedRecords.length === 0 ? (
-                  <tr><td colSpan={7} className="p-8 text-center text-gray-500">データが見つかりません</td></tr>
+                  <tr><td colSpan={8} className="p-8 text-center text-gray-500">データが見つかりません</td></tr>
                 ) : (
-                  paginatedRecords.map((r) => (
-                    <tr key={r.id} className="hover:bg-gray-50">
+                  paginatedRecords.map((r) => {
+                    // --- 🔽 表示用コメント抽出ロジック 🔽 ---
+                    let commentRows: string[] = [];
+                    if (r.targetComments && r.targetComments.length > 0) {
+                      commentRows = r.targetComments
+                      .filter((tc: any) => tc.comment && tc.comment.trim() !== "")
+                      .sort((a: any, b: any) => Number(a.order) - Number(b.order))
+                      .map((tc: any) => `支援目標${tc.order || '?'}: ${tc.comment}`);
+                    }
+                      // 目標コメントがない場合は支援内容を1行目に入れる
+                      if (commentRows.length === 0 && r.supportContent && r.supportContent.trim() !== "") {
+                        commentRows = [r.supportContent];
+                      }
+                      // --- 🔼 抽出ロジック終了 🔼 ---
+                    return (
+                    
+                    <tr key={r.id} className="hover:bg-gray-50 align-top">
                       <td className="px-6 py-4 font-bold text-gray-800">
                         {new Date(r.date).toLocaleDateString('ja-JP')}
                       </td>
                       <td className="px-6 py-4">
                         {r.userName}
                       </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className={`px-2 py-1 rounded text-xs font-bold ${
-                          r.status === '欠席' ? 'bg-red-100 text-red-700' :
-                          r.status === '休校日利用' ? 'bg-orange-100 text-orange-700' :
-                          'bg-blue-100 text-blue-700'
+                     <td className="px-6 py-4 text-center">
+                      <span className={`px-2 py-1 rounded text-xs font-bold ${
+                        r.status === '欠席' ? 'bg-red-100 text-red-700' :
+                        r.status === '休校日' ? 'bg-emerald-100 text-emerald-700' : // 🔽 緑系（エメラルド）に変更
+                        'bg-blue-100 text-blue-700' // 放課後
                         }`}>
                           {r.status}
-                        </span>
+                      </span>
                       </td>
                       <td className="px-6 py-4 text-center font-mono text-gray-600">
                         {r.startTime || '-'}
@@ -213,6 +230,24 @@ export default function SupportRecordListPage() {
                       </td>
                       <td className="px-6 py-4 text-center font-bold">
                         {r.duration ? `${r.duration}h` : '-'}
+                      </td>
+                      {/* 🔽 コメント列の追加 🔽 */}
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col gap-1 max-w-[300px]">
+                          {commentRows.length > 0 ? (
+                            commentRows.map((row, i) => (
+                            <div 
+                            key={i} 
+                            className="text-xs text-gray-600 truncate" 
+                            title={row} // マウスを乗せた時だけ全文を表示
+                            >
+                              {row}
+                              </div>
+                              ))
+                            ) : (
+                        <div className="text-xs text-gray-400">未入力</div>
+                        )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-center">
                         <div className="flex justify-center gap-2">
@@ -232,8 +267,9 @@ export default function SupportRecordListPage() {
                         </div>
                       </td>
                     </tr>
-                  ))
-                )}
+                  );
+    })
+  )}
               </tbody>
             </table>
           </div>
