@@ -84,6 +84,27 @@ export default function SupportRecordListPage() {
     });
   }, [records, startDate, endDate, filterUser]);
 
+// --- filteredRecords の定義の下に追加 ---
+const alerts = useMemo(() => {
+  // 1. 時間未入力チェック（欠席以外で duration が空）
+  const missingTime = filteredRecords.filter(r => 
+    r.status !== '欠席' && (!r.duration || String(r.duration).trim() === '')
+  );
+
+  // 2. コメント未入力チェック（欠席以外で 支援内容 も 目標コメント も空）
+  const missingComment = filteredRecords.filter(r => {
+    if (r.status === '欠席') return false;
+    const hasSupport = r.supportContent && r.supportContent.trim() !== "";
+    const hasTarget = r.targetComments && r.targetComments.some((tc: any) => tc.comment && tc.comment.trim() !== "");
+    return !hasSupport && !hasTarget;
+  });
+
+  return {
+    timeCount: missingTime.length,
+    commentCount: missingComment.length,
+  };
+}, [filteredRecords]);
+
   // 現在のページに表示するデータ
   const paginatedRecords = useMemo(() => {
     const start = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -107,6 +128,29 @@ export default function SupportRecordListPage() {
   return (
     <AppLayout pageTitle="支援記録一覧">
       <div className="space-y-6">
+
+        {/* 🔽 不備・漏れチェックアラート 🔽 */}
+    {(alerts.timeCount > 0 || alerts.commentCount > 0) && (
+      <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl shadow-sm space-y-2">
+        <div className="flex items-center gap-2 text-red-700 font-bold text-sm">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          要確認：入力不備または未作成の可能性があります
+        </div>
+        <ul className="text-xs text-red-600 list-disc list-inside space-y-1 ml-1 font-medium">
+          {alerts.timeCount > 0 && (
+            <li>算定時間が未設定の記録が <span className="text-base font-black px-1">{alerts.timeCount}</span> 件あります。</li>
+          )}
+          {alerts.commentCount > 0 && (
+            <li>コメント（支援内容/目標）が未記入の記録が <span className="text-base font-black px-1">{alerts.commentCount}</span> 件あります。</li>
+          )}
+          <li className="text-gray-500 list-none mt-2 text-[10px] italic">
+            ※来所記録があるのにここに名前がない場合は、自動作成が失敗している可能性があります。
+          </li>
+        </ul>
+      </div>
+    )}
+
+    {/* --- 検索フィルター --- */}
         
         {/* --- 検索フィルター & 新規作成 --- */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-end md:items-center gap-4">
@@ -229,7 +273,11 @@ export default function SupportRecordListPage() {
                         {r.endTime || '-'}
                       </td>
                       <td className="px-6 py-4 text-center font-bold">
-                        {r.duration ? `${r.duration}h` : '-'}
+                         {/* 🔽 保存データが2.0でも、ステータスが休校日なら3.5と表示する 🔽 */}
+                           {(() => {
+                                if (r.status === '休校日') return '3.5h';
+                                return r.duration ? `${r.duration}h` : '-';      
+                          })()}
                       </td>
                       {/* 🔽 コメント列の追加 🔽 */}
                       <td className="px-6 py-4">
