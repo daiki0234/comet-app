@@ -4,9 +4,11 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
-import { collection, getDocs, query, where, orderBy, doc, getDoc, updateDoc, serverTimestamp, limit } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, doc, getDoc, updateDoc, serverTimestamp, limit, onSnapshot, deleteField} from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import { UserData } from '@/types/billing';
+import { auth } from '@/lib/firebase/firebase'; 
+import { onAuthStateChanged } from 'firebase/auth';
 
 // --- 選択肢定数 ---
 const CONDITIONS = ['良好', '注意', '悪化'];
@@ -36,6 +38,27 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
   const router = useRouter();
   
   const [loading, setLoading] = useState(true);
+  const [isReadOnly, setIsReadOnly] = useState(false); // 🔽 追加：読み取り専用フラグ
+  const [lockInfo, setLockInfo] = useState<{ staffName: string; updatedAt: any } | null>(null); // 🔽 追加：ロック情報
+  
+// 🔽 ここを修正（固定値を消してステートにする）
+  const [currentStaff, setCurrentStaff] = useState<{id: string, name: string} | null>(null);
+
+  // 🔽 追加：Googleログイン状態を監視してセットする
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setCurrentStaff({
+          id: user.email || user.uid,
+          name: user.displayName || "不明なスタッフ"
+        });
+      } else {
+        toast.error("ログインが必要です");
+        router.push('/login');
+      }
+    });
+    return () => unsubscribeAuth();
+  }, [router]);
   const [users, setUsers] = useState<UserData[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -81,6 +104,40 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
 
   // --- データ取得 ---
   useEffect(() => {
+
+// 🔽 currentStaffが取れるまで実行しない
+    if (!currentStaff) return;
+
+    const recordRef = doc(db, 'supportRecords', params.recordId);
+
+    // --- 🔽 ロックのリアルタイム監視ロジック 🔽 ---
+    const unsubscribe = onSnapshot(recordRef, (snapshot) => {
+      const data = snapshot.data();
+      // 🔽 currentStaffId を currentStaff.id に変更
+      if (data?.lock && data.lock.staffId !== currentStaff.id) {
+        const lockTime = data.lock.updatedAt?.toMillis() || 0;
+        const now = Date.now();
+        if (now - lockTime < 5 * 60 * 1000) {
+          setLockInfo(data.lock);
+          setIsReadOnly(true);
+          return;
+        }
+      }
+      setLockInfo(null);
+      setIsReadOnly(false);
+    });
+// --- 🔽 自分が編集を開始したことを宣言（ロック取得） 🔽 ---
+    const acquireLock = async () => {
+      await updateDoc(recordRef, {
+        lock: {
+          staffId: currentStaff.id,    // 🔽 修正
+          staffName: currentStaff.name, // 🔽 修正
+          updatedAt: serverTimestamp()
+        }
+      });
+    };
+    acquireLock();
+
     const initData = async () => {
       try {
         const uSnap = await getDocs(collection(db, 'users'));
@@ -195,7 +252,16 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
       }
     };
     initData();
-  }, [params.recordId, router]);
+
+    return () => {
+      unsubscribe();
+      // 🔽 修正：currentStaffがある場合のみ解除を実行
+      if (currentStaff) {
+        updateDoc(recordRef, { lock: deleteField() }).catch(e => console.error(e));
+      }
+    };
+    // 🔽 依存配列に currentStaff を追加
+  }, [params.recordId, router, currentStaff]);
 
   // --- 算定時間・区分ロジック ---
   useEffect(() => {
@@ -300,6 +366,7 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
   };
 
   const handleUpdate = async () => {
+    if (isReadOnly) return toast.error("他のスタッフが編集中のため保存できません");
     if (!formData.userId) return toast.error("利用者を選択してください");
     
     const commentsArray = Object.entries(targetComments).map(([key, val]) => ({
@@ -311,17 +378,24 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
     const toastId = toast.loading("更新中...");
     try {
       const recordRef = doc(db, 'supportRecords', params.recordId);
+      
+      // 🔽 ここで一気に「データの保存」と「ロック解除」を行う
       await updateDoc(recordRef, {
         ...formData,
         targetComments: commentsArray,
         updatedAt: serverTimestamp(),
+        lock: deleteField(), // ★ここに追加して一発で済ませる！
       });
+
       toast.success("更新しました", { id: toastId });
       router.push('/support/records'); 
+
     } catch(e) {
       console.error(e);
       toast.error("更新失敗", { id: toastId });
     }
+    
+    // ⚠️ tryの外にあった「解除処理」と「router.push」は削除してOKです！
   };
 
   if (loading) {
@@ -330,7 +404,25 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
 
   return (
     <AppLayout pageTitle="支援記録 編集">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full pb-20">
+      {/* 🔽 編集ロック警告アラート 🔽 */}
+    {isReadOnly && lockInfo && (
+      <div className="mb-6 bg-red-100 border-l-4 border-red-500 p-4 rounded-r shadow-md animate-pulse">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">⚠️</span>
+          <div>
+            <p className="text-red-800 font-bold">
+              現在、<span className="underline">{lockInfo.staffName}</span> さんがこの記録を編集しています。
+            </p>
+            <p className="text-red-700 text-xs mt-1">
+              データの衝突を防ぐため、現在は読み取り専用モードになっています。
+            </p>
+          </div>
+        </div>
+      </div>
+    )}
+
+    
+    <div className={`grid grid-cols-1 lg:grid-cols-2 gap-6 h-full pb-20 ${isReadOnly ? 'opacity-50 pointer-events-none' : ''}`}>
         
         <div className="space-y-6 overflow-y-auto pr-2">
           
@@ -524,10 +616,13 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
           </div>
         </div>
 
-        <div className="fixed bottom-0 left-0 w-full bg-white border-t p-4 flex justify-end gap-4 z-20 shadow-lg lg:col-span-2">
-           <button onClick={() => router.back()} className="px-6 py-2 bg-gray-100 rounded hover:bg-gray-200 font-bold text-gray-600">キャンセル</button>
-           <button onClick={handleUpdate} className="px-8 py-2 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow-md">更新</button>
-        </div>
+        {/* 下部のボタンエリア */}
+    <div className="fixed bottom-0 left-0 w-full bg-white border-t p-4 flex justify-end gap-4 z-20 shadow-lg lg:col-span-2">
+       <button onClick={() => router.back()} className="px-6 py-2 bg-gray-100 rounded font-bold">戻る</button>
+       {!isReadOnly && (
+         <button onClick={handleUpdate} className="px-8 py-2 bg-blue-600 text-white font-bold rounded shadow-md">更新</button>
+       )}
+    </div>
 
       </div>
     </AppLayout>
