@@ -64,6 +64,7 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
   // 1. ログイン状態の監視
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+
       if (user) {
         setCurrentStaff({
           id: user.email || user.uid,
@@ -83,22 +84,21 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
 
     const recordRef = doc(db, 'supportRecords', params.recordId);
 
-    // リアルタイム監視
     const unsubscribe = onSnapshot(recordRef, (snapshot) => {
-      const data = snapshot.data();
-      // 自分自身のロックでも「他人」と判定するように強制
-      // if (data?.lock && data.lock.staffId === currentStaff.id) {
-      if (data?.lock && data.lock.staffId !== currentStaff.id) {
-        const lockTime = data.lock.updatedAt?.toMillis() || 0;
-        if (Date.now() - lockTime < 5 * 60 * 1000) {
-          setLockInfo(data.lock);
-          setIsReadOnly(true);
-          return;
-        }
-      }
-      setLockInfo(null);
-      setIsReadOnly(false);
-    });
+  const data = snapshot.data();
+  // 🔽 「ロックが存在する」かつ「自分自身のIDではない」ことを確実にチェック
+  if (data?.lock && currentStaff && data.lock.staffId !== currentStaff.id) {
+    const lockTime = data.lock.updatedAt?.toMillis() || 0;
+    if (Date.now() - lockTime < 5 * 60 * 1000) {
+      setLockInfo(data.lock);
+      setIsReadOnly(true);
+      return;
+    }
+  }
+  // 自分がロックの主、またはロックがない場合は解除
+  setLockInfo(null);
+  setIsReadOnly(false);
+});
 
     const initPage = async () => {
       try {
@@ -461,10 +461,20 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
           </div>
         </div>
 
-        <div className="fixed bottom-0 left-0 w-full bg-white border-t p-4 flex justify-end gap-4 z-20 shadow-lg lg:col-span-2">
-           <button onClick={() => router.back()} className="px-6 py-2 bg-gray-100 rounded font-bold">戻る</button>
-           {!isReadOnly && <button onClick={handleUpdate} className="px-8 py-2 bg-blue-600 text-white font-bold rounded shadow-md">更新</button>}
-        </div>
+        {/* 🔽 修正：ボタンエリアをスモークの外に出す */}
+      <div className="fixed bottom-0 left-0 w-full bg-white border-t p-4 flex justify-end gap-4 z-30 shadow-lg">
+         <button 
+           onClick={() => router.back()} 
+           className="px-6 py-2 bg-gray-100 rounded font-bold hover:bg-gray-200 transition-colors"
+         >
+           戻る
+         </button>
+         {!isReadOnly && (
+           <button onClick={handleUpdate} className="px-8 py-2 bg-blue-600 text-white font-bold rounded shadow-md">
+             更新
+           </button>
+         )}
+      </div>
       </div>
     </AppLayout>
   );
