@@ -173,19 +173,31 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
 
         // --- 2-3. データ表示の準備ができたらロックを取得 ---
         setLoading(false); // 先に表示
+        
+// --- 3. 【重要】ロックの取得ロジックを修正 ---
+        const currentLock = rData.lock;
+        const now = Date.now();
+        const isLockActive = currentLock && (now - currentLock.updatedAt?.toMillis() < 5 * 60 * 1000);
 
-        await updateDoc(recordRef, {
-          lock: {
-            staffId: currentStaff.id,
-            staffName: currentStaff.name,
-            updatedAt: serverTimestamp()
-          }
-        });
-        console.log("正常にデータを表示し、ロックを取得しました。");
+        if (!isLockActive || currentLock.staffId === currentStaff.id) {
+          // ロックが空、または期限切れ、または既に自分が持っている場合のみ取得
+          await updateDoc(recordRef, {
+            lock: {
+              staffId: currentStaff.id,
+              staffName: currentStaff.name,
+              updatedAt: serverTimestamp()
+            }
+          });
+          console.log("あなたがロックを保持しました");
+        } else {
+          // 他の誰かが有効なロックを持っている場合
+          console.log("他の人が編集中なのでロックを取得しませんでした");
+          setIsReadOnly(true);
+          setLockInfo(currentLock);
+        }
 
       } catch (e) {
         console.error("初期化エラー:", e);
-        toast.error("データの読み込みに失敗しました");
         setLoading(false);
       }
     };
@@ -297,6 +309,9 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
           </div>
         </div>
       )}
+
+      {/* 🔽 修正：pointer-events-none をボタンエリアの「手前」で終わらせる */}
+      <div className="relative h-full pb-20">
 
       <div className={`grid grid-cols-1 lg:grid-cols-2 gap-6 h-full pb-20 ${isReadOnly ? 'opacity-50 pointer-events-none' : ''}`}>
         <div className="space-y-6 overflow-y-auto pr-2">
@@ -459,6 +474,7 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
               </div>
             )}
           </div>
+        </div>
         </div>
 
         {/* 🔽 修正：ボタンエリアをスモークの外に出す */}
