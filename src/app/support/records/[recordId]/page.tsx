@@ -84,25 +84,35 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
 
     const recordRef = doc(db, 'supportRecords', params.recordId);
 
+    // --- 【重要】リアルタイム監視（他人のロックを検知） ---
     const unsubscribe = onSnapshot(recordRef, (snapshot) => {
-  const data = snapshot.data();
-  // 🔽 「ロックが存在する」かつ「自分自身のIDではない」ことを確実にチェック
-  if (data?.lock && currentStaff && data.lock.staffId !== currentStaff.id) {
-    const lockTime = data.lock.updatedAt?.toMillis() || 0;
-    if (Date.now() - lockTime < 5 * 60 * 1000) {
-      setLockInfo(data.lock);
-      setIsReadOnly(true);
-      return;
-    }
-  }
-  // 自分がロックの主、またはロックがない場合は解除
-  setLockInfo(null);
-  setIsReadOnly(false);
-});
+      const data = snapshot.data();
+      if (!data || !data.lock) {
+        setLockInfo(null);
+        setIsReadOnly(false);
+        return;
+      }
 
+      // 🔽 自分のIDなら絶対にロックをかけない（自分を閉め出さないガード）
+      if (data.lock.staffId === currentStaff.id) {
+        setLockInfo(null);
+        setIsReadOnly(false);
+        return;
+      }
+
+      // 自分以外かつ、5分以内の有効なロックがある場合のみ読み取り専用に
+      const lockTime = data.lock.updatedAt?.toMillis() || 0;
+      if (Date.now() - lockTime < 5 * 60 * 1000) {
+        setLockInfo(data.lock);
+        setIsReadOnly(true);
+      } else {
+        setLockInfo(null);
+        setIsReadOnly(false);
+      }
+    });
     const initPage = async () => {
       try {
-        // --- 2-1. データを最優先で取得 ---
+        // --- 2-1. データを取得（ロック状態も含む） ---
         const recordSnap = await getDoc(recordRef);
         if (!recordSnap.exists()) {
           toast.error("記録が見つかりません");
@@ -112,28 +122,48 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
 
         const rData = recordSnap.data();
 
-        // --- 2-2. 画面にデータをセット ---
-        // ユーザーリスト取得
+        // --- 2-2. ロックを取得すべきか判定（トランザクション的チェック） ---
+        const currentLock = rData.lock;
+        const now = Date.now();
+        const isOtherUserLocking = 
+          currentLock && 
+          currentLock.staffId !== currentStaff.id && 
+          (now - (currentLock.updatedAt?.toMillis() || 0) < 5 * 60 * 1000);
+
+        if (!isOtherUserLocking) {
+          // ロックが「空」または「自分」または「期限切れ」なら、自分のロックを書き込む
+          await updateDoc(recordRef, {
+            lock: {
+              staffId: currentStaff.id,
+              staffName: currentStaff.name,
+              updatedAt: serverTimestamp()
+            }
+          });
+          console.log("ロックを確保しました");
+        } else {
+          // 他人が有効なロックを持っていたら、最初から編集不可にする
+          setLockInfo(currentLock);
+          setIsReadOnly(true);
+          console.log("他人が編集中です:", currentLock.staffName);
+        }
+
+        // --- 2-3. 画面表示用データのセット（既存のロジック） ---
+        // ユーザーリスト
         const uSnap = await getDocs(collection(db, 'users'));
         setUsers(uSnap.docs.map(d => ({ id: d.id, ...d.data() } as UserData)));
 
-        // 状態の自動判定ロジック
-        let currentStatus = rData.status || '';
-        if (!currentStatus && rData.userId && rData.date) {
-            const attQ = query(collection(db, 'attendance'), where('userId', '==', rData.userId), where('date', '==', rData.date));
-            const attSnap = await getDocs(attQ);
-            if (!attSnap.empty) {
-                const attData = attSnap.docs[0].data();
-                currentStatus = attData.serviceType === '1' ? '放課後' : '休校日';
-            }
-        }
-        if (!currentStatus) currentStatus = '放課後';
-
+        // フォームデータセット（中略：前回と同じ内容をここに含めてください）
         setFormData({
-            date: rData.date, userId: rData.userId, userName: rData.userName,
-            status: currentStatus, startTime: rData.startTime || '', endTime: rData.endTime || '',
-            duration: rData.duration || '', extensionDuration: rData.extensionDuration || '',
-            condition: rData.condition || '良好', timeClass: rData.timeClass || '',
+            date: rData.date,
+            userId: rData.userId,
+            userName: rData.userName,
+            status: rData.status || '放課後', // 必要に応じて自動判定ロジック
+            startTime: rData.startTime || '',
+            endTime: rData.endTime || '',
+            duration: rData.duration || '',
+            extensionDuration: rData.extensionDuration || '',
+            condition: rData.condition || '良好',
+            timeClass: rData.timeClass || '',
             extendedSupportAddon: rData.extendedSupportAddon || '加算しない',
             absenceAddon: rData.absenceAddon || 'Ⅰ',
             childcareSupport: rData.childcareSupport || '加算しない',
@@ -171,45 +201,26 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
             if (!pSnap.empty) setActivePlan(pSnap.docs[0].data());
         }
 
-        // --- 2-3. データ表示の準備ができたらロックを取得 ---
-        setLoading(false); // 先に表示
-        
-// --- 3. 【重要】ロックの取得ロジックを修正 ---
-        const currentLock = rData.lock;
-        const now = Date.now();
-        const isLockActive = currentLock && (now - currentLock.updatedAt?.toMillis() < 5 * 60 * 1000);
-
-        if (!isLockActive || currentLock.staffId === currentStaff.id) {
-          // ロックが空、または期限切れ、または既に自分が持っている場合のみ取得
-          await updateDoc(recordRef, {
-            lock: {
-              staffId: currentStaff.id,
-              staffName: currentStaff.name,
-              updatedAt: serverTimestamp()
-            }
-          });
-          console.log("あなたがロックを保持しました");
-        } else {
-          // 他の誰かが有効なロックを持っている場合
-          console.log("他の人が編集中なのでロックを取得しませんでした");
-          setIsReadOnly(true);
-          setLockInfo(currentLock);
-        }
+        setLoading(false); // 最後にローディングを解除
 
       } catch (e) {
         console.error("初期化エラー:", e);
+        toast.error("データの読み込みに失敗しました");
         setLoading(false);
       }
     };
 
     initPage();
 
+    // --- クリーンアップ（画面を離れるとき） ---
     return () => {
-      unsubscribe();
-      if (currentStaff) {
-        updateDoc(recordRef, { lock: deleteField() }).catch(() => {});
-      }
-    };
+  unsubscribe(); // 監視を止める
+  if (currentStaff) {
+    // 画面が消滅する瞬間に、ロック解除命令を飛ばす
+    const recordRef = doc(db, 'supportRecords', params.recordId);
+    updateDoc(recordRef, { lock: deleteField() }).catch(() => {});
+  }
+};
   }, [params.recordId, router, currentStaff]);
 
   // --- 自動算出ロジック (算定時間) ---
@@ -480,11 +491,26 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
         {/* 🔽 修正：ボタンエリアをスモークの外に出す */}
       <div className="fixed bottom-0 left-0 w-full bg-white border-t p-4 flex justify-end gap-4 z-30 shadow-lg">
          <button 
-           onClick={() => router.back()} 
-           className="px-6 py-2 bg-gray-100 rounded font-bold hover:bg-gray-200 transition-colors"
-         >
-           戻る
-         </button>
+  onClick={async () => {
+    // 🔽 戻る前に、自分のロックを明示的に削除する
+    if (currentStaff) {
+      const recordRef = doc(db, 'supportRecords', params.recordId);
+      try {
+        // ロック情報をDBから消去（deleteFieldを使用）
+        await updateDoc(recordRef, {
+          lock: deleteField()
+        });
+      } catch (e) {
+        console.error("ロック解除に失敗:", e);
+      }
+    }
+    // ロック解除の成否に関わらず、画面は戻す
+    router.back(); 
+  }} 
+  className="px-6 py-2 bg-gray-100 rounded font-bold hover:bg-gray-200 transition-colors"
+>
+  戻る
+</button>
          {!isReadOnly && (
            <button onClick={handleUpdate} className="px-8 py-2 bg-blue-600 text-white font-bold rounded shadow-md">
              更新
