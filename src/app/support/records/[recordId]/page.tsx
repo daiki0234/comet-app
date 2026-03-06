@@ -125,13 +125,20 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
         // --- 2-2. ロックを取得すべきか判定（トランザクション的チェック） ---
         const currentLock = rData.lock;
         const now = Date.now();
-        const isOtherUserLocking = 
+
+        // 🔽 ここを修正：他人が「今まさに」編集しているかどうかの判定
+        const isAlreadyLockedByOther = 
           currentLock && 
           currentLock.staffId !== currentStaff.id && 
           (now - (currentLock.updatedAt?.toMillis() || 0) < 5 * 60 * 1000);
 
-        if (!isOtherUserLocking) {
-          // ロックが「空」または「自分」または「期限切れ」なら、自分のロックを書き込む
+        if (isAlreadyLockedByOther) {
+          // 1. すでに他人が編集中の場合：自分はロックを書き込まず、読み取り専用にする
+          setLockInfo(currentLock);
+          setIsReadOnly(true);
+          console.log("【拒否】他人が編集中なのでロックを試みません:", currentLock.staffName);
+        } else {
+          // 2. ロックが空、自分、または期限切れの場合：自分がロックを「奪取/更新」する
           await updateDoc(recordRef, {
             lock: {
               staffId: currentStaff.id,
@@ -139,12 +146,9 @@ export default function EditRecordPage({ params }: { params: { recordId: string 
               updatedAt: serverTimestamp()
             }
           });
-          console.log("ロックを確保しました");
-        } else {
-          // 他人が有効なロックを持っていたら、最初から編集不可にする
-          setLockInfo(currentLock);
-          setIsReadOnly(true);
-          console.log("他人が編集中です:", currentLock.staffName);
+          setIsReadOnly(false);
+          setLockInfo(null);
+          console.log("【成功】あなたがロックを確保しました");
         }
 
         // --- 2-3. 画面表示用データのセット（既存のロジック） ---
