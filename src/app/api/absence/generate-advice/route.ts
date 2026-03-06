@@ -53,8 +53,8 @@ export async function POST(request: Request) {
     5. JSONなどの形式ではなく、**アドバイスの文章のみ**をプレーンテキストで出力してください。
     `;
 
-    // 3. Gemini呼び出し (gemini-flash-latest)
-    const MODEL_NAME = 'gemini-flash-latest';
+    // 3. Gemini呼び出し (gemini-2.5-flash)
+    const MODEL_NAME = 'gemini-2.5-flash';
     
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`,
