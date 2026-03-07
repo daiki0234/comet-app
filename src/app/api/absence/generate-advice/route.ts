@@ -44,9 +44,7 @@ export async function POST(request: Request) {
 
     【今回の連絡内容】
     ${currentNote || '（連絡事項なし）'}
-
-    【出力形式】
-     JSON形式。キーは「データのID」、値は「相談内容」。
+    
 
     【作成ルール】
           1. 連絡内容から状況・心理を分析し、専門的所見と支援提案を含めること。
