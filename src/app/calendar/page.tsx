@@ -192,39 +192,63 @@ export default function CalendarPage() {
     });
   }, []);
 
-// --- ★修正: ハイブリッドデータの生成 ---
-  const hybridEvents = useMemo(() => {
+// --- ★修正: 実績を「正」とし、実績未登録の場合のみアラートを出す（体験はスルー） ---
+  const { hybridEvents, missingRecords } = useMemo(() => {
     const todayStr = toDateString(new Date());
     const eventMap = new Map<string, EventData>();
+    
+    // 実績未登録（アラート対象）を格納する配列
+    const missingList: { date: string; userName: string; eventType: string; userId: string }[] = [];
 
-    // 1. まずベースとなる「予定（events）」の処理
+    // 1. 過去のデータは「実績」を優先してマップに入れる（実績が正）
+    allAttendances.forEach(att => {
+      if (!att.dateKeyJst) return;
+      if (att.dateKeyJst < todayStr) {
+        const key = `${att.dateKeyJst}_${att.userId}`;
+        eventMap.set(key, att);
+      }
+    });
+
+    // 2. 予定を上から被せていく
     allEvents.forEach(ev => {
       if (!ev.dateKeyJst) return;
       const key = `${ev.dateKeyJst}_${ev.userId}`;
 
       if (ev.dateKeyJst >= todayStr) {
-        // 今日以降の予定は、無条件ですべてマップに入れる
+        // 今日以降は「予定」を正として上書き
         eventMap.set(key, ev);
       } else {
-        // 過去（昨日以前）の予定は、「キャンセル待ち」「取り消し」「体験」だけを残す
-        if (ev.type === 'キャンセル待ち' || ev.type === '取り消し' || ev.type === '体験') {
+        // 昨日以前の予定について
+        const hasAttendance = eventMap.has(key); // すでに実績が入っているか
+
+        if (!hasAttendance) {
+          // 実績が存在しない場合、カレンダーには予定をとりあえず残す
           eventMap.set(key, ev);
+
+          // 🔽 修正: 「体験」もアラートの対象外（スルー）に追加
+          if (ev.type !== 'キャンセル待ち' && ev.type !== '取り消し' && ev.type !== '体験') {
+            const user = users.find(u => u.id === ev.userId);
+            const userName = user ? `${user.lastName} ${user.firstName}` : '不明';
+            
+            missingList.push({
+              date: ev.dateKeyJst,
+              userName,
+              userId: ev.userId,
+              eventType: ev.type
+            });
+          }
         }
       }
     });
 
-    // 2. その上から「実績（attendanceRecords）」を重ね塗りする
-    allAttendances.forEach(att => {
-      if (!att.dateKeyJst) return;
-      const key = `${att.dateKeyJst}_${att.userId}`;
+    // アラートリストを日付の新しい順にソート
+    missingList.sort((a, b) => b.date.localeCompare(a.date));
 
-      if (att.dateKeyJst < todayStr) {
-        eventMap.set(key, att);
-      }
-    });
-
-    return Array.from(eventMap.values());
-  }, [allEvents, allAttendances]);
+    return { 
+      hybridEvents: Array.from(eventMap.values()), 
+      missingRecords: missingList 
+    };
+  }, [allEvents, allAttendances, users]);
 
   // --- eventsMap の変更 ---
   // allEvents ではなく、上で作った hybridEvents を元にマップを作る
@@ -718,6 +742,30 @@ const dailyScheduledUsers = useMemo(() => {
           <button onClick={() => setActiveTab('management')} className={`py-3 px-4 text-sm font-medium ${activeTab === 'management' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>利用管理</button>
           <button onClick={() => setActiveTab('schedule')} className={`py-3 px-4 text-sm font-medium ${activeTab === 'schedule' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>利用者予定管理</button>
         </div>
+
+        {/* 🔽🔽 追加: 実績未登録のアラート表示 🔽🔽 */}
+        {missingRecords.length > 0 && (
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 shadow-sm">
+            <h3 className="text-red-700 font-bold mb-3 flex items-center">
+              <span className="text-xl mr-2">⚠️</span> 予定に対する実績の登録漏れがあります
+            </h3>
+            <div className="max-h-40 overflow-y-auto bg-white border border-red-100 rounded p-2">
+              <ul className="space-y-1">
+                {missingRecords.map((m, i) => (
+                  <li key={i} className="text-sm flex items-center gap-4 border-b border-dashed border-red-100 last:border-none py-1">
+                    <span className="font-semibold text-gray-700 w-24">{m.date}</span>
+                    <span className="font-bold text-gray-800 w-32">{m.userName}</span>
+                    <span className="text-red-600">
+                      （<span className="font-bold">{m.eventType}</span> と予定登録されていますが、実績がありません）
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <p className="text-xs text-red-500 mt-2 font-medium">※ 支援記録から実績データを登録すると、このアラートは消え、カレンダーも実績に更新されます。</p>
+          </div>
+        )}
+        {/* 🔼🔼 ここまで 🔼🔼 */}
         
         {/* --- モーダル (汎用) --- */}
         {isModalOpen && (
