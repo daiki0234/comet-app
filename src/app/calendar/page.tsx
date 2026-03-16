@@ -265,7 +265,7 @@ export default function CalendarPage() {
 
   const fetchInitialData = useCallback(async () => {
     try {
-      // --- 1. ユーザー情報取得 (変更なし) ---
+      // --- 1. ユーザー情報取得 ---
       const usersSnapshot = await getDocs(collection(db, 'users'));
       const usersDataRaw = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
       const usersData = usersDataRaw.map(u => ({
@@ -274,9 +274,9 @@ export default function CalendarPage() {
         serviceJihatsu: toServiceStatus(u.serviceJihatsu),
         serviceSoudan: toServiceStatus(u.serviceSoudan),
       })) as User[];
-      setUsers(usersData);
+      // ❌ ここにあった setUsers(usersData); を最後に移動
 
-      // --- 2. events（予定）取得 (変更なし) ---
+      // --- 2. events（予定）取得 ---
       const eventsSnapshot = await getDocs(collection(db, "events"));
       const eventsData = eventsSnapshot.docs.map(doc => {
         const data = doc.data() as any;
@@ -299,30 +299,35 @@ export default function CalendarPage() {
           dateKeyJst: key,
         };
       });
-      setAllEvents(eventsData);
+      // ❌ ここにあった setAllEvents(eventsData); を最後に移動
 
-      // --- 3. ★追加: attendanceRecords（実績）取得 ---
+      // --- 3. attendanceRecords（実績）取得 ---
       const attSnapshot = await getDocs(collection(db, "attendanceRecords"));
       const attData = attSnapshot.docs.map(doc => {
         const data = doc.data() as any;
         return {
           id: doc.id,
           userId: data.userId,
-          dateKeyJst: data.date, // attendanceRecords側は 'date' に入っている
-          type: data.usageStatus, // attendanceRecords側は 'usageStatus' に入っている
+          dateKeyJst: data.date,
+          type: data.usageStatus,
           createdAt: data.createdAt,
           updatedAt: data.updatedAt,
         } as EventData;
       });
-      setAllAttendances(attData);
+      // ❌ ここにあった setAllAttendances(attData); を最後に移動
 
-      // --- 4. 営業日カレンダー取得 (変更なし) ---
+      // --- 4. 営業日カレンダー取得 ---
       const busSnapshot = await getDocs(collection(db, 'businessDays'));
       const busData: Record<string, string> = {};
       busSnapshot.forEach(doc => {
         const d = doc.data();
         busData[d.date] = d.status;
       });
+
+      // 🔽🔽 全てのデータが揃ってから、一気に画面（State）を更新する 🔽🔽
+      setUsers(usersData);
+      setAllEvents(eventsData);
+      setAllAttendances(attData);
       setBusinessDays(busData);
 
     } catch (error) {
