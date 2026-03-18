@@ -67,7 +67,8 @@ type AttendanceRecord = {
   } | null;
   hasFamilySupport?: boolean;        
   hasIndependenceSupport?: boolean; 
-  recordedBy?: string; // 代理登録者名
+  recordedBy?: string;
+  isVirtual?: boolean; // ★ 追加: 予定のみで実績がまだ無いデータかどうかの判定フラグ
 };
 
 const toDateString = (date: Date) => {
@@ -104,6 +105,10 @@ export default function AttendancePage() {
   // スタッフ選択用state
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [selectedStaffId, setSelectedStaffId] = useState('');
+
+  // ★★★ 追加: 一括編集用 State ★★★
+  const [isBulkEditing, setIsBulkEditing] = useState(false);
+  const [bulkEditDraft, setBulkEditDraft] = useState<Record<string, AttendanceRecord>>({});
 
   // ゲストの場合、スタッフリストを取得
   useEffect(() => {
@@ -155,13 +160,48 @@ export default function AttendancePage() {
     usersData.sort((a, b) => `${a.lastName}${a.firstName}`.localeCompare(`${b.lastName}${b.firstName}`, 'ja'));
     setUsers(usersData);
 
-    // 2. 表示中日付の出欠記録
+    // 2. 表示中日付の出欠記録取得
     const dateStr = toDateString(viewDate);
+    const monthStr = dateStr.substring(0, 7);
+    
     const q = query(collection(db, "attendanceRecords"), where("date", "==", dateStr));
     const attendanceSnapshot = await getDocs(q);
     const records = attendanceSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as AttendanceRecord[];
-    records.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
-    setAttendanceRecords(records);
+    
+    // ★★★ 追加: カレンダーの予定（events）を取得してマージする ★★★
+    const eventsQ = query(collection(db, "events"), where("dateKeyJst", "==", dateStr));
+    const eventsSnapshot = await getDocs(eventsQ);
+    
+    const mergedRecords = [...records];
+    
+    eventsSnapshot.docs.forEach(docSnap => {
+      const ev = docSnap.data();
+      // 放課後・休校日・体験などの予定を拾う（キャンセル待ち・取り消しは除外）
+      if (ev.type === '放課後' || ev.type === '休校日' || ev.type === '体験') {
+        // すでに実績（attendanceRecords）が存在しているかチェック
+        const alreadyExists = records.some(r => r.userId === ev.userId);
+        if (!alreadyExists) {
+          const user = usersData.find(u => u.id === ev.userId);
+          if (user) {
+            mergedRecords.push({
+              id: `virtual_${ev.userId}`, // 一意の仮ID
+              userId: user.id,
+              userName: `${user.lastName} ${user.firstName}`,
+              date: dateStr,
+              month: monthStr,
+              usageStatus: ev.type === '体験' ? '放課後' : ev.type, // UI互換のため一旦放課後扱いに
+              arrivalTime: '',
+              departureTime: '',
+              notes: '',
+              isVirtual: true // ★ 予定のみのフラグ
+            });
+          }
+        }
+      }
+    });
+
+    mergedRecords.sort((a, b) => a.userName.localeCompare(b.userName, 'ja'));
+    setAttendanceRecords(mergedRecords);
 
     // 3. 今月の欠席集計
     const targetMonth = dateStr.substring(0, 7);
@@ -201,13 +241,150 @@ export default function AttendancePage() {
     fetchData();
   }, [fetchData]);
 
+  // ★★★ 追加: 一括編集のコントロール関数 ★★★
+  const handleStartBulkEdit = () => {
+    const draft: Record<string, AttendanceRecord> = {};
+    attendanceRecords.forEach(r => {
+      draft[r.id] = { ...r };
+    });
+    setBulkEditDraft(draft);
+    setIsBulkEditing(true);
+    setIsTabActive(false); // 編集に集中するためカメラを一時停止
+  };
+
+  const handleCancelBulkEdit = () => {
+    setIsBulkEditing(false);
+    setIsTabActive(true); // カメラ再開
+  };
+
+  const handleBulkEditChange = (id: string, field: keyof AttendanceRecord, value: string) => {
+    setBulkEditDraft(prev => ({
+      ...prev,
+      [id]: {
+        ...prev[id],
+        [field]: value
+      }
+    }));
+  };
+
+  const handleBulkSave = async () => {
+    const loadingToast = toast.loading('一括保存中...');
+    try {
+      for (const record of attendanceRecords) {
+        const draft = bulkEditDraft[record.id];
+        
+        // 変更があったか、もしくは新規(virtual)で値が入力されたかチェック
+        const isChanged = 
+          draft.usageStatus !== record.usageStatus ||
+          draft.arrivalTime !== record.arrivalTime ||
+          draft.departureTime !== record.departureTime ||
+          draft.notes !== record.notes;
+
+        // Virtual レコードの場合、時間が入力されるか欠席に変わっていなければスキップ
+        if (record.isVirtual && !draft.arrivalTime && !draft.departureTime && draft.usageStatus !== '欠席' && !draft.notes) {
+          continue;
+        }
+        
+        if (!isChanged && !record.isVirtual) continue;
+
+        // 延長計算
+        let ext = null;
+        if (draft.usageStatus === '放課後' || draft.usageStatus === '休校日' || draft.usageStatus === '欠席') {
+          ext = computeExtension(draft.usageStatus as '放課後' | '休校日' | '欠席', draft.arrivalTime, draft.departureTime);
+        }
+        
+        let newNotes = stripExtensionNote(draft.notes);
+        if (ext && ext.display) {
+          newNotes = newNotes ? `${newNotes} / ${ext.display}` : ext.display;
+        }
+
+        const isPresent = draft.usageStatus === '放課後' || draft.usageStatus === '休校日';
+        const isAbsent = draft.usageStatus === '欠席';
+        const hasTime = draft.arrivalTime && draft.departureTime;
+
+        if (record.isVirtual) {
+          // 予定のみ(未打刻)だった人の新規保存
+          const docId = `${draft.date}_${draft.userId}`;
+          const newRecordRef = doc(db, 'attendanceRecords', docId);
+          await setDoc(newRecordRef, {
+            userId: draft.userId,
+            userName: draft.userName,
+            date: draft.date,
+            month: draft.month,
+            usageStatus: draft.usageStatus,
+            arrivalTime: draft.arrivalTime || '',
+            departureTime: draft.departureTime || '',
+            notes: newNotes,
+            extension: ext ?? null,
+            source: "bulk-edit",
+            updatedAt: new Date()
+          }, { merge: true });
+
+          // 支援日誌の作成
+          if ((isPresent && hasTime) || isAbsent) {
+            await createRecord({
+              date: draft.date,
+              userId: draft.userId,
+              userName: draft.userName,
+              status: draft.usageStatus as '放課後' | '休校日' | '欠席',
+              startTime: draft.arrivalTime || '',
+              endTime: draft.departureTime || '',
+              extensionMinutes: ext ? ext.minutes : 0,
+              absenceReason: isAbsent ? newNotes : '',
+            });
+          }
+          if (isAbsent && newNotes) {
+            generateAndSaveAdvice(docId, draft.userId, draft.date, newNotes);
+          }
+        } else {
+          // 既存実績の更新
+          const recordRef = doc(db, 'attendanceRecords', record.id);
+          await updateDoc(recordRef, {
+            usageStatus: draft.usageStatus,
+            arrivalTime: draft.arrivalTime || '',
+            departureTime: draft.departureTime || '',
+            notes: newNotes,
+            extension: ext ?? null,
+            updatedAt: new Date()
+          });
+
+          // 支援日誌の作成
+          if ((isPresent && hasTime) || isAbsent) {
+            await createRecord({
+              date: draft.date,
+              userId: draft.userId,
+              userName: draft.userName,
+              status: draft.usageStatus as '放課後' | '休校日' | '欠席',
+              startTime: draft.arrivalTime || '',
+              endTime: draft.departureTime || '',
+              extensionMinutes: ext ? ext.minutes : 0,
+              absenceReason: isAbsent ? newNotes : '',
+            });
+          }
+        }
+      }
+
+      toast.success('一括保存が完了しました', { id: loadingToast });
+      setIsBulkEditing(false);
+      setIsTabActive(true); // カメラ再開
+      await fetchData();
+    } catch (error: any) {
+      console.error(error);
+      toast.error(`一括保存に失敗しました: ${error.message}`, { id: loadingToast });
+    }
+  };
+
+
   useEffect(() => {
     const handleVisibilityChange = () => {
-      setIsTabActive(!document.hidden);
+      // 一括編集中はタブがアクティブになってもカメラをつけない
+      if (!isBulkEditing) {
+        setIsTabActive(!document.hidden);
+      }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, []);
+  }, [isBulkEditing]);
 
   const searchMatchedUsers = useMemo(() => {
     const queryText = userSearchQuery.trim();
@@ -374,7 +551,6 @@ export default function AttendancePage() {
 const generateAndSaveAdvice = async (docId: string, userId: string, date: string, notes: string) => {
     const aiToast = toast.loading('AIが相談内容を自動生成中...');
     try {
-      // ★ここが先ほど作ったAPIを呼ぶようになります
       const res = await fetch('/api/absence/generate-advice', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, date, currentNote: notes })
@@ -382,16 +558,13 @@ const generateAndSaveAdvice = async (docId: string, userId: string, date: string
       const data = await res.json();
       
       if (data.advice) {
-        // AIが生成したテキストをFirestoreに保存
         await updateDoc(doc(db, 'attendanceRecords', docId), { aiAdvice: data.advice });
         toast.success('AI相談内容を保存しました', { id: aiToast });
-        fetchData(); // 画面再読み込み
+        fetchData(); 
       } else { 
-        // エラーメッセージがあれば表示
         throw new Error(data.error || '生成された内容が空でした');
       }
     } catch (e: any) { 
-       // エラー時はトーストで通知（コンソールにも出すとデバッグしやすい）
        console.error(e);
        toast.error(`AI生成失敗: ${e.message}`, { id: aiToast }); 
     }
@@ -470,14 +643,18 @@ const generateAndSaveAdvice = async (docId: string, userId: string, date: string
     }
   };
 
-  const handleOpenEditModal = (record: AttendanceRecord) => { setEditingRecord(record); setIsEditModalOpen(true); };
+  const handleOpenEditModal = (record: AttendanceRecord) => { 
+    if(record.isVirtual) return; // 予定のみの場合は個別編集モーダルは開かない
+    setEditingRecord(record); 
+    setIsEditModalOpen(true); 
+  };
   
   const handleUpdateRecord = async () => {
     if (!editingRecord) return;
     const loadingToast = toast.loading('記録を更新中です...');
     try {
       const ext = computeExtension(
-        editingRecord.usageStatus,
+        editingRecord.usageStatus as '放課後' | '休校日' | '欠席',
         editingRecord.arrivalTime,
         editingRecord.departureTime
       );
@@ -506,7 +683,7 @@ const generateAndSaveAdvice = async (docId: string, userId: string, date: string
           date: editingRecord.date,
           userId: editingRecord.userId,
           userName: editingRecord.userName,
-          status: editingRecord.usageStatus,
+          status: editingRecord.usageStatus as '放課後' | '休校日' | '欠席',
           startTime: editingRecord.arrivalTime,
           endTime: editingRecord.departureTime,
           extensionMinutes: ext ? ext.minutes : 0,
@@ -664,49 +841,136 @@ const generateAndSaveAdvice = async (docId: string, userId: string, date: string
 
         {/* 右カラム（一覧） */}
         <section className="lg:col-span-2 bg-white p-4 md:p-5 rounded-2xl shadow-ios border border-gray-200">
-          <div className="flex flex-wrap items-center gap-3 mb-3">
-            <label htmlFor="view-date" className="text-sm font-medium text-gray-700">表示日</label>
-            <input id="view-date" type="date" value={toDateString(viewDate)} onChange={(e) => setViewDate(new Date(e.target.value))} className="h-10 px-3 border border-gray-300 rounded-lg text-sm" />
+          <div className="flex flex-wrap items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <label htmlFor="view-date" className="text-sm font-medium text-gray-700">表示日</label>
+              <input id="view-date" type="date" value={toDateString(viewDate)} onChange={(e) => setViewDate(new Date(e.target.value))} className="h-10 px-3 border border-gray-300 rounded-lg text-sm" disabled={isBulkEditing} />
+            </div>
+            {/* ★★★ 一括編集ボタン ★★★ */}
+            <div>
+              {isBulkEditing ? (
+                <div className="flex gap-2">
+                  <button onClick={handleCancelBulkEdit} className="bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-bold py-2 px-4 rounded-lg transition-colors">キャンセル</button>
+                  <button onClick={handleBulkSave} className="bg-green-600 hover:bg-green-700 text-white text-sm font-bold py-2 px-4 rounded-lg shadow-sm transition-colors">一括保存する</button>
+                </div>
+              ) : (
+                <button 
+                  onClick={handleStartBulkEdit} 
+                  disabled={attendanceRecords.length === 0}
+                  className="bg-blue-100 text-blue-700 border border-blue-300 hover:bg-blue-200 text-sm font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  一括編集
+                </button>
+              )}
+            </div>
           </div>
 
-          <h3 className="text-base md:text-lg font-bold text-gray-800 mb-3">{viewDate.toLocaleDateString()} の出欠状況</h3>
+          <h3 className="text-base md:text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+            {viewDate.toLocaleDateString()} の出欠状況
+            {isBulkEditing && <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded font-bold animate-pulse">編集中</span>}
+          </h3>
 
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-gray-700">
               <thead className="text-xs text-gray-600 uppercase bg-gray-50">
                 <tr>
                   <th className="px-4 py-2 sticky left-0 bg-gray-50 z-10">利用者名</th>
-                  <th className="px-4 py-2 text-center">利用状況</th>
-                  <th className="px-4 py-2">来所</th>
-                  <th className="px-4 py-2">退所</th>
+                  <th className="px-4 py-2 text-center w-24">利用状況</th>
+                  <th className="px-4 py-2 w-28">来所</th>
+                  <th className="px-4 py-2 w-28">退所</th>
                   <th className="px-4 py-2">特記事項</th>
                 </tr>
               </thead>
               <tbody>
                 {attendanceRecords.map(rec => (
-                  <tr key={rec.id} className="border-b hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap sticky left-0 bg-white z-10">
-                      <span onClick={() => handleOpenEditModal(rec)} className="flex items-center cursor-pointer group touch-manipulation">
+                  isBulkEditing ? (
+                    // ★★★ 一括編集モード時の行UI ★★★
+                    <tr key={rec.id} className="border-b bg-yellow-50 hover:bg-yellow-100 transition-colors">
+                      <td className="px-3 py-2 font-medium text-gray-900 whitespace-nowrap sticky left-0 z-10 bg-yellow-50 border-r border-yellow-200">
                         {rec.userName}
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="ml-2 text-gray-400 group-hover:text-blue-600 transition-colors">
-                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                        </svg>
-                      </span>
-                      {rec.recordedBy && (
-                         <div className="text-xs text-gray-400 mt-1">受付: {rec.recordedBy}</div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={rec.usageStatus === '欠席' ? 'font-bold text-red-600' : ''}>
-                        {getUsageStatusSymbol(rec.usageStatus, rec.id)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">{rec.arrivalTime}</td>
-                    <td className="px-4 py-3">{rec.departureTime}</td>
-                    <td className="px-4 py-3">{rec.notes}</td>
-                  </tr>
+                        {rec.isVirtual && <span className="text-[10px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded ml-2 border border-blue-200">予定</span>}
+                      </td>
+                      <td className="px-2 py-2">
+                        <select 
+                          value={bulkEditDraft[rec.id]?.usageStatus || '放課後'} 
+                          onChange={(e) => handleBulkEditChange(rec.id, 'usageStatus', e.target.value)}
+                          className="w-full p-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-300 outline-none"
+                        >
+                          <option value="放課後">放課後</option>
+                          <option value="休校日">休校日</option>
+                          <option value="欠席">欠席</option>
+                        </select>
+                      </td>
+                      <td className="px-2 py-2">
+                        <input 
+                          type="time" 
+                          value={bulkEditDraft[rec.id]?.arrivalTime || ''} 
+                          onChange={(e) => handleBulkEditChange(rec.id, 'arrivalTime', e.target.value)} 
+                          className="w-full p-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-300 outline-none"
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <input 
+                          type="time" 
+                          value={bulkEditDraft[rec.id]?.departureTime || ''} 
+                          onChange={(e) => handleBulkEditChange(rec.id, 'departureTime', e.target.value)} 
+                          className="w-full p-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-300 outline-none"
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <input 
+                          type="text" 
+                          value={bulkEditDraft[rec.id]?.notes || ''} 
+                          onChange={(e) => handleBulkEditChange(rec.id, 'notes', e.target.value)} 
+                          className="w-full p-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-300 outline-none" 
+                          placeholder="メモ"
+                        />
+                      </td>
+                    </tr>
+                  ) : (
+                    // ★★★ 通常モード時の行UI ★★★
+                    <tr key={rec.id} className="border-b hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap sticky left-0 bg-white z-10 group">
+                        {rec.isVirtual ? (
+                          <span className="flex items-center text-gray-500">
+                            {rec.userName}
+                            <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded ml-2 border border-blue-200">予定</span>
+                          </span>
+                        ) : (
+                          <>
+                            <span onClick={() => handleOpenEditModal(rec)} className="flex items-center cursor-pointer touch-manipulation text-gray-900">
+                              {rec.userName}
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="ml-2 text-gray-300 group-hover:text-blue-600 transition-colors">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                              </svg>
+                            </span>
+                            {rec.recordedBy && (
+                               <div className="text-xs text-gray-400 mt-1">受付: {rec.recordedBy}</div>
+                            )}
+                          </>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {rec.isVirtual ? (
+                          <span className="text-gray-400 text-xs bg-gray-100 px-2 py-1 rounded">未打刻</span>
+                        ) : (
+                          <span className={rec.usageStatus === '欠席' ? 'font-bold text-red-600' : ''}>
+                            {getUsageStatusSymbol(rec.usageStatus, rec.id)}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">{rec.arrivalTime || (rec.isVirtual ? '-' : '')}</td>
+                      <td className="px-4 py-3 text-gray-600">{rec.departureTime || (rec.isVirtual ? '-' : '')}</td>
+                      <td className="px-4 py-3 text-gray-600">{rec.notes}</td>
+                    </tr>
+                  )
                 ))}
+                {attendanceRecords.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-gray-500">本日の予定・出欠記録はありません</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -727,7 +991,6 @@ const generateAndSaveAdvice = async (docId: string, userId: string, date: string
                 </select>
               </div>
               
-              {/* ★ここが復活箇所です★ */}
               <div><label className="block text-sm font-medium text-gray-700">来所時間</label><input type="time" value={editingRecord.arrivalTime || ''} onChange={(e) => setEditingRecord({ ...editingRecord, arrivalTime: e.target.value })} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm" /></div>
               <div><label className="block text-sm font-medium text-gray-700">退所時間</label><input type="time" value={editingRecord.departureTime || ''} onChange={(e) => setEditingRecord({ ...editingRecord, departureTime: e.target.value })} className="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm" /></div>
               

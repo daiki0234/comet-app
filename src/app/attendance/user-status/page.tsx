@@ -5,6 +5,8 @@ import { AppLayout } from '@/components/Layout';
 import { db } from '@/lib/firebase/firebase';
 import { collection, getDocs, query, where, doc, updateDoc, deleteDoc, orderBy, addDoc } from 'firebase/firestore'; // ★ addDocを追加
 import toast from 'react-hot-toast';
+import { computeExtension, stripExtensionNote } from '@/lib/attendance/extension';
+import { useAutoRecord } from '@/hooks/useAutoRecord';
 
 // --- 型定義 ---
 type RecordStatus = '放課後' | '休校日' | '欠席' | 'キャンセル待ち' | '取り消し';
@@ -30,6 +32,7 @@ const formatDisplayDate = (dateStr: string) => {
 
 export default function UserAttendanceListPage() {
   const now = new Date();
+  const { createRecord } = useAutoRecord();
   const [allUsers, setAllUsers] = useState<User[]>([]);
   
   // 選択状態
@@ -165,6 +168,21 @@ export default function UserAttendanceListPage() {
 
     const loadingToast = toast.loading('登録中...');
     try {
+      // 🔽 1. 延長時間の計算をここで行う（対象ステータスのみ計算するよう修正！）
+      let ext = null;
+      if (newRecordStatus === '放課後' || newRecordStatus === '休校日' || newRecordStatus === '欠席') {
+        ext = computeExtension(
+          newRecordStatus as '放課後' | '休校日' | '欠席', // TSに「絶対この3つのどれかだから安心して」と伝える
+          newRecordArrival,
+          newRecordDeparture
+        );
+      }
+      
+      let finalNotes = newRecordNotes;
+      if (ext && ext.display) {
+        finalNotes = finalNotes ? `${finalNotes} / ${ext.display}` : ext.display;
+      }
+
       const newRecord = {
         userId: selectedUserId,
         userName: `${targetUser.lastName} ${targetUser.firstName}`,
@@ -172,12 +190,31 @@ export default function UserAttendanceListPage() {
         usageStatus: newRecordStatus,
         arrivalTime: newRecordArrival,
         departureTime: newRecordDeparture,
-        notes: newRecordNotes,
-        // 検索用フィールドがあれば追加 (例: month: '2025-11')
+        notes: finalNotes,
+        extension: ext ?? null,
       };
 
       await addDoc(collection(db, 'attendanceRecords'), newRecord);
-      toast.success('出欠記録を登録しました', { id: loadingToast });
+
+      // 🔽 2. ここで支援日誌（ひな形）を自動生成！
+      const isPresent = newRecordStatus === '放課後' || newRecordStatus === '休校日';
+      const isAbsent = newRecordStatus === '欠席';
+      const hasTime = newRecordArrival && newRecordDeparture;
+
+      if ((isPresent && hasTime) || isAbsent) {
+        await createRecord({
+          date: newRecordDate,
+          userId: selectedUserId,
+          userName: `${targetUser.lastName} ${targetUser.firstName}`,
+          status: newRecordStatus as '放課後' | '休校日' | '欠席', // 念のためここにも as を追加
+          startTime: newRecordArrival,
+          endTime: newRecordDeparture,
+          extensionMinutes: ext ? ext.minutes : 0,
+          absenceReason: isAbsent ? finalNotes : '',
+        });
+      }
+
+      toast.success('出欠記録と支援日誌を登録しました', { id: loadingToast });
       setIsRegisterModalOpen(false);
       fetchRecords(); // リストを更新
     } catch (error) {
